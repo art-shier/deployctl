@@ -1,5 +1,18 @@
 # 验证记录
 
+## v1.3.0工具自更新与skill补充（2026-10-07）
+
+- 新增self-update，复用标准库安装器，沿用安装目录、平台仓库、自定义命令名和别名选择；旧版安装记录兼容。工具更新不调用服务运行管理器。
+- 全仓本地测试67项：65通过，2项因Windows环境跳过；新用例覆盖两入口更新、自定义目录/命令名、无别名、旧安装记录、非受管理入口、命令被修改、冲突、坏校验、写入失败恢复及验证超时。
+- [main CI](https://github.com/art-shier/deployctl/actions/runs/37596193551) 与 [v1.3.0发布流水线](https://github.com/art-shier/deployctl/actions/runs/37596325046) 全部通过，Linux完整运行测试，并执行真实Docker、安装器、一键入口和self-update。
+- 发布前从真实草稿资产执行指定版本self-update；发布后通过PATH调用ctl self-update解析latest，两个命令均验证为1.3.0。
+- [v1.3.0 Release](https://github.com/art-shier/deployctl/releases/tag/v1.3.0) 已正式发布，latest解析为v1.3.0。再次下载的全部资产SHA256与总清单匹配。
+- skill-creator格式校验通过；独立Agent仅凭skill及引用即可处理Linux PATH、私有在线/离线安装、v1.2.0重新安装、v1.3.0自更新及Windows本地接入，无需阅读安装器源码。
+- 独立代码复核未发现待修正的问题；补充检查验证了独立摘要不匹配、安装记录写入失败恢复，以及旧版自定义命令名/无别名兼容。
+- 本地已安装skill同步到正式v1.3.0分发资源，保留原UI metadata；隔离Python环境下版本、self-update帮助和CLI校验和均通过。
+
+本次没有操作生产业务服务。下面保留先前版本的验证记录。
+
 ## v1.2.0正式发布与安装验证（2026-10-07）
 
 - [更新Actions后的main CI](https://github.com/art-shier/deployctl/actions/runs/37589710522) 和 [v1.2.0发布流水线](https://github.com/art-shier/deployctl/actions/runs/37589829877) 全部通过，包括Linux/Windows检查、真实Docker与CLI安装。
