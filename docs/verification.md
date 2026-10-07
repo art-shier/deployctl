@@ -1,4 +1,14 @@
-# 验证记录（2026-10-04）
+# 验证记录
+
+## v1.2.0正式发布与安装验证（2026-10-07）
+
+- [更新Actions后的main CI](https://github.com/art-shier/deployctl/actions/runs/37589710522) 和 [v1.2.0发布流水线](https://github.com/art-shier/deployctl/actions/runs/37589829877) 全部通过，包括Linux/Windows检查、真实Docker与CLI安装。
+- [v1.2.0 Release](https://github.com/art-shier/deployctl/releases/tag/v1.2.0) 已正式发布，latest解析为v1.2.0；共9个资产，含CLI、installer、skill ZIP、wheel及校验文件。
+- 发布前通过草稿ID从真实GitHub API下载CLI，并校验/安装两个命令；GitHub Contents API取得的安装脚本一键入口也成功执行。
+- 发布后通过正式标签再次下载、安装并运行ctl，实际版本为1.2.0。
+- 本地重新下载全部正式Release资产，4个独立SHA256和总清单均匹配；已安装skill同步到正式分发资源，隔离环境下CLI报告1.2.0。
+
+本记录仅补充文档；发布标签指向的代码和Release资产保持不变。尚未执行真实云服务器SSH部署或生产验收。
 
 ## 平台接入验证（CLI v1.2.0，2026-10-07）
 
@@ -12,7 +22,7 @@
 
 以下为早期本地开发记录，当时尚未执行的GitHub和Docker验证现已由上面的CI补齐。SSH云服务器和生产环境验收仍需要实际目标，当前没有操作生产服务器。
 
-## 已执行
+## 早期本地检查（2026-10-04）
 
 | 检查 | 结果 |
 |---|---|
