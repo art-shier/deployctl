@@ -77,7 +77,7 @@ class RuntimeTests(unittest.TestCase):
         folder = self.configure()
         secret = (folder / 'secrets.env').read_bytes()
         manager.deploy('project-a', 'production', self.package('v1.0.0'))
-        self.assertEqual(self.state()['current'], 'v1.0.0')
+        self.assertEqual(self.state()['current']['version'], 'v1.0.0')
         self.assertIsNone(self.state()['transaction'])
         self.assertEqual((folder / 'secrets.env').read_bytes(), secret)
         self.assertEqual(self.driver.active, 'v1.0.0')
@@ -95,7 +95,7 @@ class RuntimeTests(unittest.TestCase):
         self.driver.fail_versions.add('v1.1.0')
         with self.assertRaisesRegex(RuntimeError, 'restored'):
             manager.deploy('project-a', 'production', self.package('v1.1.0'), upgrade=True)
-        self.assertEqual(self.state()['current'], 'v1.0.0')
+        self.assertEqual(self.state()['current']['version'], 'v1.0.0')
         self.assertIsNone(self.state()['transaction'])
         self.assertEqual(self.driver.active, 'v1.0.0')
 
@@ -106,7 +106,7 @@ class RuntimeTests(unittest.TestCase):
         self.driver.fail_pull = True
         with self.assertRaises(RuntimeError):
             manager.deploy('project-a', 'production', self.package('v1.1.0'), upgrade=True)
-        self.assertEqual(self.state()['current'], 'v1.0.0')
+        self.assertEqual(self.state()['current']['version'], 'v1.0.0')
         self.assertEqual(self.driver.active, 'v1.0.0')
         self.assertIsNone(self.state()['transaction'])
 
@@ -117,7 +117,7 @@ class RuntimeTests(unittest.TestCase):
         self.driver.fail_versions.update({'v1.1.0', 'v1.0.0'})
         with self.assertRaisesRegex(RuntimeError, 'recovery failed'):
             manager.deploy('project-a', 'production', self.package('v1.1.0'), upgrade=True)
-        self.assertEqual(self.state()['current'], 'v1.0.0')
+        self.assertEqual(self.state()['current']['version'], 'v1.0.0')
         self.assertIsNotNone(self.state()['transaction'])
         with self.assertRaisesRegex(RuntimeError, 'pending'):
             manager.deploy('project-a', 'production', self.package('v1.2.0'), upgrade=True)
@@ -132,8 +132,8 @@ class RuntimeTests(unittest.TestCase):
         manager.deploy('project-a', 'production', self.package('v1.0.0'), port=19001)
         manager.deploy('project-a', 'production', self.package('v1.1.0'), upgrade=True)
         manager.rollback('project-a', 'production')
-        self.assertEqual(self.state()['current'], 'v1.0.0')
-        self.assertEqual(self.state()['previous'], 'v1.1.0')
+        self.assertEqual(self.state()['current']['version'], 'v1.0.0')
+        self.assertEqual(self.state()['previous']['version'], 'v1.1.0')
         self.assertEqual(self.state()['binding']['port'], 19001)
 
     def test_wrong_application_cannot_touch_other_project(self):
@@ -171,7 +171,7 @@ class RuntimeTests(unittest.TestCase):
         self.driver.interrupt_versions.add('v1.1.0')
         with self.assertRaises(KeyboardInterrupt):
             manager.deploy('project-a', 'production', self.package('v1.1.0'), upgrade=True)
-        self.assertEqual(self.state()['current'], 'v1.0.0')
+        self.assertEqual(self.state()['current']['version'], 'v1.0.0')
         self.assertIsNotNone(self.state()['transaction'])
         manager.rollback('project-a', 'production')
         self.assertIsNone(self.state()['transaction'])
@@ -210,7 +210,7 @@ class RuntimeTests(unittest.TestCase):
         latest = self.package('v1.1.0')
         manager.deploy('project-a', 'production', latest, upgrade=True)
         manager.deploy('project-a', 'production', latest, upgrade=True)
-        self.assertEqual(self.state()['previous'], 'v1.0.0')
+        self.assertEqual(self.state()['previous']['version'], 'v1.0.0')
         manager.rollback('project-a', 'production')
         self.assertEqual(self.driver.active, 'v1.0.0')
 

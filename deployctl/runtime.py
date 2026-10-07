@@ -17,6 +17,10 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
 
 from .contract import ENV_NAME, integer, read_yaml, validate_name, validate_release, version
 from .release import unpack_release
+from .deployment_state import DeploymentRef, collect_legacy_values, normalize_state, promote_state
+from .hooks import HookRunner, validate_hook_values
+from .runtime_config import read_raw_env, merge_runtime_values, validate_values, validate_unset
+from .runtime_snapshot import create_snapshot, load_snapshot, reject_links, verify_snapshot
 
 
 def project_name(app, environment):
@@ -89,17 +93,7 @@ def atomic_json(path, value):
 
 
 def parse_env(path):
-    result = {}
-    for line in path.read_text(encoding='utf-8').splitlines():
-        if not line.strip() or line.lstrip().startswith('#'):
-            continue
-        if '=' not in line:
-            raise ValueError(f'{path.name}: use raw KEY=value format')
-        key, value = line.split('=', 1)
-        if not ENV_NAME.fullmatch(key) or key in result:
-            raise ValueError(f'{path.name}: invalid or duplicate variable name')
-        result[key] = value
-    return result
+    return read_raw_env(path)
 
 
 class DockerDriver:
@@ -179,59 +173,67 @@ class DockerDriver:
 
 
 class Manager:
-    def __init__(self, root='/opt/deployments', config_root='/etc/deployctl', driver=None):
+    def __init__(self, root='/opt/deployments', config_root='/etc/deployctl', driver=None, hook_runner=None):
         self.root = Path(root).resolve()
         self.config_root = Path(config_root).resolve()
         self.driver = driver or DockerDriver()
+        self.hook_runner = hook_runner or HookRunner()
 
     def paths(self, app, env):
         validate_name(app)
         validate_name(env, 'environment', 32)
         home = self.root / app / env
+        reject_links(home)
+        reject_links(self.config_root / app / env)
         home.mkdir(parents=True, exist_ok=True)
         (home / 'releases').mkdir(exist_ok=True)
         return home, self.config_root / app / env
 
     def state(self, home, app, env):
-        if not (home / 'state.json').exists():
-            return {'schema_version': 1, 'application': app, 'environment': env,
-                    'current': None, 'previous': None, 'transaction': None, 'binding': None}
-        value = json.loads((home / 'state.json').read_text(encoding='utf-8'))
-        if value.get('application') != app or value.get('environment') != env:
-            raise ValueError('state belongs to a different application/environment')
-        for field in ('current', 'previous'):
-            if value.get(field) is not None:
-                version(value[field])
-        if value.get('transaction'):
-            transaction = value['transaction']
-            if transaction.get('from'):
-                version(transaction['from'])
-            version(transaction['to'])
-        return value
+        path = home / 'state.json'
+        reject_links(path)
+        value = json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+        # v1 did not save a binding before the first successful install. Its
+        # interrupted candidate used the release defaults; infer only in memory.
+        if (isinstance(value, dict) and value.get('schema_version') == 1
+                and value.get('binding') is None and isinstance(value.get('transaction'), dict)):
+            _, candidate = self.stored_release(home, value['transaction'].get('to'), app)
+            value['binding'] = self.binding(candidate)
+        return normalize_state(value, app, env)
 
     def save(self, home, state, event):
         state['updated_at'] = datetime.now(timezone.utc).isoformat()
         atomic_json(home / 'state.json', state)
         # state.json is authoritative; this is only a human-readable pointer.
-        (home / 'current').write_text((state['current'] or '') + '\n', encoding='utf-8')
-        with (home / 'events.jsonl').open('a', encoding='utf-8') as handle:
-            handle.write(json.dumps({'time': state['updated_at'], 'event': event,
-                                     'current': state['current'], 'pending': bool(state['transaction'])}) + '\n')
+        try:
+            (home / 'current').write_text((state['current']['version'] if state['current'] else '') + '\n', encoding='utf-8')
+            with (home / 'events.jsonl').open('a', encoding='utf-8') as handle:
+                handle.write(json.dumps({'time': state['updated_at'], 'event': event,
+                                         'current': state['current'], 'pending': bool(state['transaction'])}) + '\n')
+        except OSError:
+            pass  # The authoritative commit must not fail because a secondary pointer/log failed.
 
-    def configuration(self, folder, release):
+    def configuration(self, folder, release=None):
+        reject_links(folder)
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        values = {}
+        layers = []
         for name in ('config.env', 'secrets.env'):
             path = folder / name
+            reject_links(path)
             if not path.exists():
                 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 os.close(fd)
             if name == 'secrets.env' and os.name != 'nt' and path.stat().st_mode & 0o077:
                 raise ValueError('secrets.env must have permissions 600 (chmod 600)')
-            values.update(parse_env(path))
+            layers.append(parse_env(path))
+        if release is not None:
+            self.required_configuration(dict(layers[0], **layers[1]), release)
+        return tuple(layers)
+
+    def required_configuration(self, values, release):
         missing = [key for key in release['deployment']['required_config'] if not values.get(key)]
         if missing:
-            raise ValueError(f'Missing required configuration: {", ".join(missing)}; fill {folder}')
+            raise ValueError(f'Missing required configuration: {", ".join(missing)}; fill server files or use --env-var')
 
     def docker_environment(self, folder, binding, snapshot=None):
         environment = {key: value for key, value in os.environ.items()
@@ -267,6 +269,9 @@ class Manager:
     def stored_release(self, home, release_version, app):
         version(release_version)
         directory = home / 'releases' / release_version
+        reject_links(directory)
+        reject_links(directory / 'release.yaml')
+        reject_links(directory / 'compose.yaml')
         release = validate_release(read_yaml(directory / 'release.yaml'))
         if release['application'] != app or release['version'] != release_version:
             raise ValueError('stored release application/version mismatch')
@@ -274,6 +279,10 @@ class Manager:
         from .release import render_compose
         if read_yaml(directory / 'compose.yaml') != render_compose(release):
             raise ValueError('stored compose.yaml has been modified')
+        from .release import read_hook_script
+        for descriptor in release.get('hooks', {}).values():
+            if hashlib.sha256(read_hook_script(directory, descriptor['path'])).hexdigest() != descriptor['sha256']:
+                raise ValueError('stored hook script has been modified')
         return directory, release
 
     def stage(self, home, package, app):
@@ -284,6 +293,7 @@ class Manager:
             if release['application'] != app:
                 raise ValueError('release application does not match requested application')
             target = home / 'releases' / release['version']
+            reject_links(target)
             checksum = hashlib.sha256(Path(package).read_bytes()).hexdigest()
             if target.exists():
                 recorded = (target / 'archive.sha256').read_text().strip()
@@ -315,7 +325,36 @@ class Manager:
             handle.write(logs[-65536:])
         path.chmod(0o600)
 
-    def deploy(self, app, env, package, upgrade=False, port=None, bind=None):
+    def reference_environment(self, home, folder, ref, app):
+        directory, release = self.stored_release(home, ref['version'], app)
+        snapshot = None if ref['legacy'] else load_snapshot(folder, ref, release)
+        if snapshot is None:
+            self.configuration(folder, release)
+        environment = self.docker_environment(folder, ref['binding'], snapshot)
+        return directory, release, snapshot, environment
+
+    def capture_legacy(self, home, folder, ref, app, project, configured_names):
+        directory, release = self.stored_release(home, ref['version'], app)
+        environment = self.docker_environment(folder, ref['binding'])
+        info = self.driver.inspect_container(directory, project, environment)
+        if (not info or info.get('image') != release['image']
+                or info.get('labels', {}).get('io.team-deploy.application') != app
+                or info.get('labels', {}).get('io.team-deploy.version') != ref['version']):
+            raise ValueError('legacy migration requires the actual matching container; restore it before upgrading')
+        values = collect_legacy_values(info.get('environment') or [],
+                                       self.driver.inspect_image_environment(release['image']),
+                                       configured_names | set(release['deployment']['required_config']), ref['version'])
+        snapshot = create_snapshot(folder, app, home.name, release, values, {}, {})
+        return DeploymentRef(ref['version'], snapshot.id, snapshot.sha256, ref['binding']).as_dict()
+
+    def deploy(self, app, env, package, upgrade=False, port=None, bind=None,
+               runtime_env=None, unset_env=None, install_params=None):
+        updates = validate_values(runtime_env or {}, 'env-var')
+        unset = list(unset_env or [])
+        validate_unset(unset)
+        params = validate_values(install_params or {}, 'installation parameters', False)
+        if unset and not upgrade:
+            raise ValueError('unset-env is only available for upgrade')
         home, folder = self.paths(app, env)
         with service_lock(home / '.lock'):
             state = self.state(home, app, env)
@@ -326,44 +365,92 @@ class Manager:
             if not upgrade and state['current']:
                 raise ValueError('application is already installed; use upgrade')
             directory, release = self.stage(home, package, app)
-            self.configuration(folder, release)
+            if params and not release.get('hooks'):
+                raise ValueError('installation parameters require a package declaring hooks')
+            config, secrets = self.configuration(folder)
+            old_snapshot = None
+            if state['current'] and not state['current']['legacy']:
+                _, _, old_snapshot, _ = self.reference_environment(home, folder, state['current'], app)
+            values, overrides = merge_runtime_values(config, secrets,
+                old_snapshot.overrides if old_snapshot else {}, updates, unset, release['version'])
+            self.required_configuration(values, release)
+            if release.get('hooks'):
+                validate_hook_values(values)
+                self.hook_runner.check()
             binding = self.binding(release, state['binding'], port, bind)
-            environment = self.docker_environment(folder, binding)
             project = project_name(app, env)
             self.driver.check()
+            if state['current'] and state['current']['legacy']:
+                state['current'] = self.capture_legacy(home, folder, state['current'], app, project,
+                                                      set(config) | set(secrets))
+                _, _, old_snapshot, _ = self.reference_environment(home, folder, state['current'], app)
+            snapshot = create_snapshot(folder, app, env, release, values, overrides, params)
+            candidate = DeploymentRef(release['version'], snapshot.id, snapshot.sha256, binding).as_dict()
+            environment = self.docker_environment(folder, binding, snapshot)
             self.driver.pull(directory, project, environment)
-            before = dict(state)
-            state['transaction'] = {'from': state['current'], 'to': release['version']}
+            import copy
+            before = copy.deepcopy(state)
+            state['transaction'] = {'from': state['current'], 'to': candidate, 'phase': 'prepared'}
             self.save(home, state, 'deployment_started')
-            phase = 'start'
+            context = {'DEPLOYCTL_APPLICATION': app, 'DEPLOYCTL_ENVIRONMENT': env,
+                       'DEPLOYCTL_VERSION': release['version'],
+                       'DEPLOYCTL_PREVIOUS_VERSION': before['current']['version'] if before['current'] else '',
+                       'DEPLOYCTL_ACTION': 'upgrade' if upgrade else 'install',
+                       'DEPLOYCTL_RELEASE_DIR': str(directory), 'DEPLOYCTL_CONFIG_DIR': str(folder)}
+            replacement_started = False
+            phase = 'prepared'
             try:
+                def step(name):
+                    state['transaction']['phase'] = name
+                    self.save(home, state, 'deployment_phase')
+                if 'pre_install' in release.get('hooks', {}):
+                    phase = 'pre_install'
+                    step(phase)
+                    self.hook_runner.run(phase, release['hooks'][phase], directory, snapshot, context)
+                verify_snapshot(snapshot)
+                phase = 'start'
+                step(phase)
+                replacement_started = True
                 self.driver.up(directory, project, environment)
                 phase = 'health-check'
+                step(phase)
                 self.driver.probe(directory, project, environment, release, binding)
+                if 'post_install' in release.get('hooks', {}):
+                    phase = 'post_install'
+                    step(phase)
+                    self.hook_runner.run(phase, release['hooks'][phase], directory, snapshot, context)
+                phase = 'final-health-check'
+                step(phase)
+                self.driver.probe(directory, project, environment, release, binding)
+                verify_snapshot(snapshot)
             except Exception as original:
                 reason = str(original)
                 try:
                     self.capture_failure(home, directory, project, environment, release, phase, reason)
-                except OSError:
-                    # Diagnostics must never prevent container recovery/cleanup.
+                except Exception:
                     reason += ' (diagnostic snapshot could not be written)'
                 try:
-                    if before['current']:
-                        old_dir, old_release = self.stored_release(home, before['current'], app)
-                        old_env = self.docker_environment(folder, before['binding'])
-                        self.driver.up(old_dir, project, old_env)
-                        self.driver.probe(old_dir, project, old_env, old_release, before['binding'])
-                    else:
-                        self.driver.down(directory, project, environment)
+                    if replacement_started:
+                        if before['current']:
+                            old_dir, old_release, _, old_env = self.reference_environment(home, folder, before['current'], app)
+                            self.driver.up(old_dir, project, old_env)
+                            self.driver.probe(old_dir, project, old_env, old_release, before['current']['binding'])
+                        else:
+                            self.driver.down(directory, project, environment)
+                    self.save(home, before, 'deployment_failed_old_restored' if before['current'] else 'install_failed_candidate_stopped')
                 except Exception as recovery:
-                    self.save(home, state, 'deployment_and_recovery_failed')
+                    # The already persisted transaction remains authoritative if writing diagnostics also fails.
+                    try:
+                        self.save(home, state, 'deployment_and_recovery_failed')
+                    except OSError:
+                        pass
                     raise RuntimeError(f'deployment failed ({phase}: {reason}); recovery failed; pending transaction retained; run rollback') from recovery
-                self.save(home, before, 'deployment_failed_old_restored' if before['current'] else 'install_failed_candidate_stopped')
-                message = 'old version restored' if before['current'] else 'candidate stopped'
+                message = ('old version and configuration restored' if before['current'] else 'candidate stopped') if replacement_started else 'existing container unchanged'
                 raise RuntimeError(f'deployment failed ({phase}: {reason}); {message}; inspect last-failure.log') from original
-            previous = before['previous'] if before['current'] == release['version'] else before['current']
-            state.update({'current': release['version'], 'previous': previous,
-                          'binding': binding, 'transaction': None})
+            unchanged = bool(before['current'] and before['current']['version'] == release['version']
+                             and old_snapshot and old_snapshot.values == snapshot.values
+                             and old_snapshot.overrides == snapshot.overrides and before['binding'] == binding)
+            state = promote_state(before, candidate, preserve_previous=unchanged)
             self.save(home, state, 'deployment_succeeded')
             return state
 
@@ -377,29 +464,26 @@ class Manager:
             self.driver.check()
             if not target:
                 if pending and not state['current']:
-                    directory, release = self.stored_release(home, pending['to'], app)
-                    binding = self.binding(release)
-                    self.driver.down(directory, project, self.docker_environment(folder, binding))
+                    directory, _, _, environment = self.reference_environment(home, folder, pending['to'], app)
+                    self.driver.down(directory, project, environment)
                     state['transaction'] = None
                     self.save(home, state, 'failed_install_cleaned')
                     return state
                 raise ValueError('no previous successful version to roll back to')
-            directory, release = self.stored_release(home, target, app)
-            self.configuration(folder, release)
-            binding = self.binding(release, state['binding'])
-            environment = self.docker_environment(folder, binding)
+            directory, release, snapshot, environment = self.reference_environment(home, folder, target, app)
             self.driver.pull(directory, project, environment)
             previous = state['current']
-            state['transaction'] = {'from': target, 'to': target}
+            state['transaction'] = {'from': target, 'to': target, 'phase': 'rollback'}
             self.save(home, state, 'rollback_started')
             try:
                 self.driver.up(directory, project, environment)
-                self.driver.probe(directory, project, environment, release, binding)
+                self.driver.probe(directory, project, environment, release, target['binding'])
+                if snapshot: verify_snapshot(snapshot)
             except Exception as exc:
                 self.save(home, state, 'rollback_failed')
                 raise RuntimeError('rollback failed; pending transaction retained') from exc
             state.update({'current': target, 'previous': previous if previous != target else state['previous'],
-                          'binding': binding, 'transaction': None})
+                          'binding': target['binding'], 'transaction': None})
             self.save(home, state, 'rollback_succeeded')
             return state
 
@@ -416,13 +500,11 @@ class Manager:
                 if action == 'logs' and (home / 'last-failure.log').exists():
                     return (home / 'last-failure.log').read_text(encoding='utf-8')
                 raise ValueError('application has no deployed version')
-            directory, release = self.stored_release(home, active, app)
-            binding = self.binding(release, state['binding'])
-            environment = self.docker_environment(folder, binding)
+            directory, release, _, environment = self.reference_environment(home, folder, active, app)
             self.driver.check()
             output = self.driver.operate(directory, project_name(app, env), environment, action, tail)
             if action == 'restart':
-                self.driver.probe(directory, project_name(app, env), environment, release, binding)
+                self.driver.probe(directory, project_name(app, env), environment, release, active['binding'])
             if action == 'status':
                 return json.dumps(state, indent=2) + '\n' + output
             return output
