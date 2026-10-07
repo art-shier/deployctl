@@ -43,6 +43,8 @@ ctl validate deploy/deployment.yaml
 
 v1.4.0新增构建参数：init继续生成基础配置，项目后续可在deployment.yaml添加build.args，并通过release.yml的build-args逐次覆盖。参数交给Dockerfile ARG和项目自己的脚本，详见 [构建参数](docs/build-args.md)。
 
+待发布的v1.6.0增加可选pre `refresh_config: true`，让钩子生成的服务器配置在启动前重新加载到新快照；普通钩子行为不变。此新字段要求ctl>=1.6.0，旧v1.5.0不支持。
+
 v1.5.0新增 `--env-var` 应用运行配置、`--set` 安装参数、`--unset-env` 删除覆盖值，以及可选宿主机pre/post hooks。应用通过 `DEPLOYCTL_ENV_FILE` 读取只读 `.env.json`；成功配置随版本提交，失败恢复旧快照。项目接入见 [运行时配置与钩子](docs/runtime-config.md)。
 
 ## 服务器部署

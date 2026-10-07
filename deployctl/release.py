@@ -10,7 +10,7 @@ import tarfile
 
 import yaml
 
-from .contract import HOOK_PATHS, load_yaml, validate_deployment, validate_release
+from .contract import HOOK_PATHS, load_yaml, minimum_hook_version, validate_deployment, validate_release
 
 FILES = {'release.yaml', 'compose.yaml', '.env.example', 'README.md'}
 MAX_PACKAGE = 10 * 1024 * 1024
@@ -73,9 +73,11 @@ def build_release(config, image, version, output, commit='', project_root=None):
         scripts[name] = raw
         hooks[phase] = {'path': name, 'sha256': hashlib.sha256(raw).hexdigest(),
                         'timeout_seconds': descriptor['timeout_seconds']}
+        if 'refresh_config' in descriptor:
+            hooks[phase]['refresh_config'] = descriptor['refresh_config']
     manifest = {'schema_version': 2 if hooks else 1, 'application': config['application'],
                                 'version': version, 'image': image, 'commit': commit,
-                'minimum_deployctl_version': '1.5.0' if hooks else '1.0.0', 'deployment': config}
+                'minimum_deployctl_version': minimum_hook_version(hooks) if hooks else '1.0.0', 'deployment': config}
     if hooks:
         manifest['hooks'] = hooks
     release = validate_release(manifest)

@@ -60,6 +60,7 @@ hooks:
 | `DEPLOYCTL_PARAMS_FILE` | 宿主机 `.install-params.json` 路径 |
 | `DEPLOYCTL_ENV_FILE` | 宿主机 `.env.json` 路径，内容与应用相同 |
 | `DEPLOYCTL_APPLICATION` / `DEPLOYCTL_ENVIRONMENT` | 应用/环境 |
+| `DEPLOYCTL_IMAGE` | 已校验的候选镜像digest（>=1.6.0） |
 | `DEPLOYCTL_VERSION` / `DEPLOYCTL_PREVIOUS_VERSION` | 候选/旧成功版本，首次安装旧版本为空 |
 | `DEPLOYCTL_ACTION` | install 或 upgrade |
 | `DEPLOYCTL_RELEASE_DIR` / `DEPLOYCTL_CONFIG_DIR` | 发布目录/服务器配置目录 |
@@ -102,3 +103,18 @@ jobs:
 ```
 
 每行一个原始KEY=value，空行忽略，值不加shell引号。Runner校验后写600 JSON，与校验过的包一并SCP；服务器std­lib helper重新校验，以argv执行ctl，值不进入SSH shell文本。带参数时要求服务器ctl>=1.5.0。未提供参数的调用保持原流程；远程Python>=3.10，无需pip。这个workflow不提供unset输入，需要删除override时用CLI。
+
+## pre-install 生成配置（>=1.6.0，待发布）
+
+默认hook顺序不变。需要pre生成配置时显式声明：
+
+```yaml
+hooks:
+  pre_install:
+    script: deploy/hooks/pre-install.sh
+    refresh_config: true
+```
+
+该字段仅允许pre且必须为布尔值，发布包最低ctl1.6.0；旧CLI会拒绝，不能用v1.5.0运行。pre前仍验证配置格式、控制字符、路径和权限，但必需值检查延迟到pre成功之后。hook写普通服务器config.env/secrets.env，不能修改任何runtime快照。
+
+pre成功后ctl重新读取服务器文件，按原有override/unset顺序合并，校验必需值与Bash控制变量，再创建新的不可变快照用于启动和post。初始快照保留不改。无变化时沿用初始快照。失败保留旧容器/成功快照；rollback不重跑hook，也不撤销hook对普通服务器文件或数据库的副作用。

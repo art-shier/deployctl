@@ -158,12 +158,16 @@ def validate_project_hooks(value):
     result = {}
     for phase, hook in value.items():
         field = f'hooks.{phase}'
-        mapping(hook, {'script', 'timeout_seconds'}, {'script'}, field)
+        mapping(hook, {'script', 'timeout_seconds', 'refresh_config'}, {'script'}, field)
         script = relative_path(hook['script'], field + '.script')
         if any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in '\u2028\u2029' for c in script):
             raise ValueError(f'{field}.script must not contain controls')
         result[phase] = {'script': script, 'timeout_seconds': integer(
             hook.get('timeout_seconds', 300), 1, 3600, field + '.timeout_seconds')}
+        if 'refresh_config' in hook:
+            if phase != 'pre_install' or type(hook['refresh_config']) is not bool:
+                raise ValueError(f'{field}.refresh_config is a boolean available only on pre_install')
+            result[phase]['refresh_config'] = hook['refresh_config']
     return result
 
 
@@ -174,14 +178,20 @@ def validate_hook_manifest(value):
     result = {}
     for phase, hook in value.items():
         field = f'release.hooks.{phase}'
-        mapping(hook, {'path', 'sha256', 'timeout_seconds'}, {'path', 'sha256', 'timeout_seconds'}, field)
+        mapping(hook, {'path', 'sha256', 'timeout_seconds', 'refresh_config'}, {'path', 'sha256', 'timeout_seconds'}, field)
         if hook['path'] != HOOK_PATHS[phase]:
             raise ValueError(f'{field}.path must be {HOOK_PATHS[phase]}')
         if not isinstance(hook['sha256'], str) or not re.fullmatch(r'[a-f0-9]{64}', hook['sha256']):
             raise ValueError(f'{field}.sha256 must be lowercase SHA256')
         result[phase] = dict(hook, timeout_seconds=integer(hook['timeout_seconds'], 1, 3600,
                                                          field + '.timeout_seconds'))
+        if 'refresh_config' in hook and (phase != 'pre_install' or type(hook['refresh_config']) is not bool):
+            raise ValueError(f'{field}.refresh_config is a boolean available only on pre_install')
     return result
+
+
+def minimum_hook_version(hooks):
+    return '1.6.0' if any('refresh_config' in hook for hook in hooks.values()) else '1.5.0'
 
 
 def validate_release(data):
@@ -194,12 +204,12 @@ def validate_release(data):
     version(data['version'])
     if not isinstance(data['image'], str) or not DIGEST_IMAGE.fullmatch(data['image']):
         raise ValueError('image must be pinned to a lowercase sha256 digest')
-    minimum = '1.0.0' if protocol == 1 else '1.5.0'
+    hooks = validate_hook_manifest(data.get('hooks')) if protocol == 2 else None
+    minimum = '1.0.0' if protocol == 1 else minimum_hook_version(hooks)
     if data['minimum_deployctl_version'] != minimum:
         raise ValueError('unsupported minimum_deployctl_version; upgrade platform together')
     if protocol == 1 and 'hooks' in data:
         raise ValueError('release schema 1 cannot declare hooks')
-    hooks = validate_hook_manifest(data.get('hooks')) if protocol == 2 else None
     config = validate_deployment(data['deployment'])
     if 'hooks' in data['deployment']:
         raise ValueError('source hooks belong in the release hook manifest, not deployment')

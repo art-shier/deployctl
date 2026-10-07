@@ -374,7 +374,9 @@ class Manager:
                 _, _, old_snapshot, _ = self.reference_environment(home, folder, state['current'], app)
             values, overrides = merge_runtime_values(config, secrets,
                 old_snapshot.overrides if old_snapshot else {}, updates, unset, release['version'])
-            self.required_configuration(values, release)
+            refresh_config = release.get('hooks', {}).get('pre_install', {}).get('refresh_config', False)
+            if not refresh_config:
+                self.required_configuration(values, release)
             if release.get('hooks'):
                 validate_hook_values(values)
                 self.hook_runner.check()
@@ -397,7 +399,8 @@ class Manager:
                        'DEPLOYCTL_VERSION': release['version'],
                        'DEPLOYCTL_PREVIOUS_VERSION': before['current']['version'] if before['current'] else '',
                        'DEPLOYCTL_ACTION': 'upgrade' if upgrade else 'install',
-                       'DEPLOYCTL_RELEASE_DIR': str(directory), 'DEPLOYCTL_CONFIG_DIR': str(folder)}
+                       'DEPLOYCTL_RELEASE_DIR': str(directory), 'DEPLOYCTL_CONFIG_DIR': str(folder),
+                       'DEPLOYCTL_IMAGE': release['image']}
             replacement_started = False
             phase = 'prepared'
             try:
@@ -408,6 +411,22 @@ class Manager:
                     phase = 'pre_install'
                     step(phase)
                     self.hook_runner.run(phase, release['hooks'][phase], directory, snapshot, context)
+                if refresh_config:
+                    phase = 'configuration'
+                    step(phase)
+                    config, secrets = self.configuration(folder)
+                    refreshed_values, refreshed_overrides = merge_runtime_values(config, secrets,
+                        old_snapshot.overrides if old_snapshot else {}, updates, unset, release['version'])
+                    self.required_configuration(refreshed_values, release)
+                    validate_hook_values(refreshed_values)
+                    if refreshed_values != snapshot.values or refreshed_overrides != snapshot.overrides:
+                        # The provisional snapshot remains immutable for diagnostics and recovery.
+                        snapshot = create_snapshot(folder, app, env, release, refreshed_values,
+                                                   refreshed_overrides, params)
+                        candidate = DeploymentRef(release['version'], snapshot.id, snapshot.sha256, binding).as_dict()
+                        environment = self.docker_environment(folder, binding, snapshot)
+                        state['transaction']['to'] = candidate
+                        self.save(home, state, 'configuration_prepared')
                 verify_snapshot(snapshot)
                 phase = 'start'
                 step(phase)

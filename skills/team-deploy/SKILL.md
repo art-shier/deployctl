@@ -5,7 +5,7 @@ description: "Use when onboarding a repository to team-deploy's GitHub Actions a
 
 # Team Deploy
 
-使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.5.0，兼容发布包协议v1/v2；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
+使用已有 Team Deploy 工具和契约完成工作。随附CLI为待发布的v1.6.0，兼容发布包协议v1/v2；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
 
 ## 选择任务
 
@@ -60,3 +60,5 @@ python "$SKILL_DIR/assets/deployctl.pyz" validate deploy/deployment.yaml
 ## 完成时报告
 
 报告修改文件、application/平台引用或目标环境、实际执行的校验及退出结果。服务器操作附实际当前版本和事务状态。区分本地配置通过、CI 构建通过和服务器就绪；没有运行的 Docker、GitHub 或 SSH 检查要明确说明。
+
+pre需要生成配置时用 `refresh_config: true`，要求新CLI>=1.6.0；先核对真实已发布版本，不将源码版本视为已发布。
