@@ -1,4 +1,4 @@
-# 项目接入与产物生成（协议 v1.0.0）
+# 项目接入与产物生成（兼容协议v1/v2）
 
 本文件中的相对资源路径以 skill 根目录为基准。工作目录应是业务项目，而不是 skill 目录。
 
@@ -49,6 +49,8 @@ required_config: []
 
 CLI/平台>=1.4.0支持可选build.args。init不要求填写参数，项目后续按需增加；需要每次发布覆盖或把参数传入现有脚本时，读取 [构建参数](build-args.md)。保持工作流引用与platform-ref为同一支持该功能的实际版本。
 
+CLI/平台>=1.5.0支持应用JSON运行配置和可选host pre/post hooks；项目后续按需添加hooks，不需要新的init参数。读取 [运行时配置与钩子](runtime-config-hooks.md)，同步构建及可选部署workflow的调用引用与platform-ref。
+
 ## GitHub 构建接入
 
 公共工作流路径：`.github/workflows/build-release.yml`。完整调用示例在 `assets/templates/release.yml`，不要猜测 inputs 或 secrets。
@@ -69,7 +71,7 @@ python "$SKILL_DIR/assets/deployctl.pyz" package \
   --version "$RELEASE_VERSION" --output dist
 ```
 
-输出 `<application>-<version>.tar.gz` 和 `.tar.gz.sha256`。四个包内文件均由工具生成，不手写 release.yaml，不添加生产 secrets 或项目安装脚本。同一版本不能覆盖，发生变更发布新版本。没有真实镜像时仅生成测试fixture并明确标识，不交付为可部署版本。
+输出 `<application>-<version>.tar.gz` 和 `.tar.gz.sha256`。基础四文件由工具生成，不手写release.yaml或添加生产secrets。有hooks时工具校验并附声明的固定脚本成员，使用协议v2；不手工塞入其他脚本。同一版本不能覆盖，发生变更发布新版本。没有真实镜像时仅生成测试fixture并明确标识，不交付为可部署版本。
 
 ## 可选自动部署
 

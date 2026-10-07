@@ -1,4 +1,12 @@
 schema_version: 1
+# Optional host hooks (CLI/platform >=1.5.0); paths relative to project root.
+# hooks:
+#   pre_install:
+#     script: deploy/hooks/pre-install.sh
+#     timeout_seconds: 300
+#   post_install:
+#     script: deploy/hooks/post-install.sh
+#     timeout_seconds: 300
 application: project-a
 
 build:

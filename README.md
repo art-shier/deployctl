@@ -12,15 +12,15 @@
 
 ```bash
 set -o pipefail
-gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.4.0' \
-  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.4.0
+gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.5.0' \
+  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.5.0
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```
 
 安装器下载 CLI、检查 SHA256 和版本，安装 `ctl` 与 `deployctl` 到 `~/.local/bin`。CLI 内置依赖，无需服务器 pip 安装。再次执行可升级本安装器管理的命令；已有其他同名工具会保留并报告冲突。
 
-安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.4.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
+安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.5.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
 
 要求 Python >=3.10；服务部署另需 Docker Engine、Docker Compose >=2.30。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
 
@@ -30,7 +30,7 @@ ctl --version
 
 ```bash
 ctl init project-a \
-  --platform-repository art-shier/deployctl --platform-ref v1.4.0 \
+  --platform-repository art-shier/deployctl --platform-ref v1.5.0 \
   --private-platform --port 8080 --health-path /health/ready
 ctl validate deploy/deployment.yaml
 ```
@@ -42,6 +42,8 @@ ctl validate deploy/deployment.yaml
 `--dry-run` 可预览生成内容；`--with-deploy-workflow` 可生成可选 SSH 部署入口。已有文件不会覆盖，详见 [init](docs/init.md) 和 [项目接入手册](docs/onboarding.md)。
 
 v1.4.0新增构建参数：init继续生成基础配置，项目后续可在deployment.yaml添加build.args，并通过release.yml的build-args逐次覆盖。参数交给Dockerfile ARG和项目自己的脚本，详见 [构建参数](docs/build-args.md)。
+
+v1.5.0新增 `--env-var` 应用运行配置、`--set` 安装参数、`--unset-env` 删除覆盖值，以及可选宿主机pre/post hooks。应用通过 `DEPLOYCTL_ENV_FILE` 读取只读 `.env.json`；成功配置随版本提交，失败恢复旧快照。项目接入见 [运行时配置与钩子](docs/runtime-config.md)。
 
 ## 服务器部署
 
@@ -77,7 +79,7 @@ ctl rollback project-a --env production
 | `examples/project-a/` | HTTP 示例项目 |
 | `skills/team-deploy/` | Agent skill，附 CLI、模板及操作指南 |
 
-平台 Release 提供自包含 `deployctl.pyz`、wheel、`install.sh`、skill ZIP 及 SHA256。业务发布包只包含 `release.yaml`、`compose.yaml`、`.env.example` 和 `README.md`；生产密钥留在服务器。
+平台 Release 提供自包含 `deployctl.pyz`、wheel、`install.sh`、skill ZIP 及 SHA256。业务发布包无hooks时包含原始四文件；声明hooks时使用协议v2并附校验过的脚本，最低ctl1.5.0。生产密钥留在服务器。
 
 需要 Agent 接入项目或操作服务时，使用 [Team Deploy skill](skills/team-deploy/SKILL.md)，安装方法见 [Agent 使用说明](docs/agent-usage.md)。
 
@@ -96,4 +98,4 @@ python scripts/docker_integration.py
 
 CI 在 Linux Python 3.10/3.12 和 Windows Python 3.12 检查 CLI；Linux 另跑真实安装和 Docker 生命周期。版本发布先验证草稿 Release 中的真实资产，再公开已验证的版本。详见 [构建与发布](docs/release-pipeline.md)、[验证记录](docs/verification.md)。
 
-`init/validate/package` 可在 Windows 执行，服务运行命令面向 Linux。固定镜像 digest；版本不覆盖；回滚不恢复环境配置或数据库。默认仅监听 `127.0.0.1`，外部访问通过服务器网关或显式配置的绑定地址。
+`init/validate/package` 可在 Windows 执行，服务运行命令面向 Linux。固定镜像 digest；包版本不覆盖；快照回滚恢复版本和配置，数据库或hook外部副作用需独立恢复。默认仅监听 `127.0.0.1`，外部访问通过服务器网关或显式配置的绑定地址。

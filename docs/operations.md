@@ -14,14 +14,16 @@
 
 /etc/deployctl/<application>/<environment>/
 ├── config.env
-└── secrets.env                 # Linux 要求权限600
+├── secrets.env                 # Linux 要求权限600
+├── runtime/<ID>/               # 五个不可修改的配置快照文件
+└── hook-logs/                  # 可选钩子日志，权限600
 ```
 
 可在各运行命令中提供 `--root`、`--config-root`，或设置 DEPLOY_ROOT、DEPLOY_CONFIG_ROOT。不同目录被视为不同安装位置，后续操作保持一致。Docker Compose project 名包含 application/environment 的哈希，避免组合命名冲突。
 
 ## 升级失败
 
-准备或拉取失败：不替换运行中的服务。启动/健康验证失败：尝试重新启动旧版本并验证就绪。即使旧版本恢复成功，本次 upgrade 返回非零，CI 显示失败。
+准备或拉取失败：不替换运行中的服务。pre失败保持原容器；启动/健康/post验证失败尝试恢复旧版本、旧配置与绑定并验证就绪。即使恢复成功，本次upgrade返回非零，CI显示失败。hook超时清理进程组，中断保留pending。
 
 ```bash
 deployctl status project-a --env production
@@ -44,11 +46,11 @@ pending rollback 恢复事务开始前的成功版本；正常 rollback 恢复 p
 
 ## 配置和数据库
 
-升级不覆盖 config.env、secrets.env。修改配置由管理员独立管理，应用版本回滚不恢复旧配置；变更必须兼容新旧应用。
+升级不覆盖 config.env、secrets.env。ctl>=1.5.0每次部署捕获最终值；应用通过DEPLOYCTL_ENV_FILE读取只读JSON。快照回滚恢复版本、配置和绑定，未捕获的旧历史引用仍使用服务器文件。运行参数、覆盖顺序、可选hook见 [运行时配置](runtime-config.md)。
 
-restart 重启现有容器，不重读修改后的 env_file。要应用新配置，发布一个新版本并 upgrade；第一版未提供独立 reconfigure 命令。
+restart重启现有容器，沿用已有快照。要应用新配置用upgrade，可使用同一不可变发布包和env-var/unset-env。同版本的配置变化也可rollback，完全相同的配置重试保留原previous。
 
-平台不自动执行数据库迁移。迁移应由独立、受控任务完成，优先增加字段/表等兼容变更。删除字段、不可逆数据改写等需要自己的恢复方案；不能依赖 Docker 回滚恢复数据。
+平台只执行项目显式声明的hook，不自动推断数据库迁移。迁移可由独立任务或受控hook完成，应幂等并兼容新旧版本；Docker回滚不会撤销数据库/文件系统副作用。post可能在容器已接收流量时执行。
 
 ## 状态/日志/停止/重启
 
@@ -67,7 +69,7 @@ Docker 详细异常输出可能含敏感信息，CLI 不直接回显失败命令
 
 发布包与外部 .sha256 必须匹配。URL模式的摘要来自同一发布来源，能检查损坏但不能独立证明发布者身份。生产推荐由审批过的构建输出传入 `--sha256`，并固定平台代码引用。
 
-归档只接受固定四个普通文件、限制大小、拒绝路径穿越、链接、重名；Compose 内容必须等于模板生成结果。平台不执行包内安装脚本、不允许任意 volumes/commands/privileged 字段。
+归档接受原始四文件和v2声明的固定hook成员，限制大小，拒绝路径穿越、链接、重名，校验脚本摘要。发布包Compose必须等于标准模板；平台生成独立运行Compose，只添加受控JSON挂载和最终raw环境，不开放任意volumes/commands/privileged字段。host hooks有ctl调用者权限，只执行可信项目脚本。
 
 保护部署和配置目录的写权限。拥有 Docker或目录写权限的人仍可控制该服务；本工具不是不可信租户的安全沙箱。
 

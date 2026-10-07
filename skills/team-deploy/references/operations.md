@@ -1,4 +1,4 @@
-# 服务器操作（CLI v1.4.0，兼容发布包协议v1）
+# 服务器操作（CLI v1.5.0，兼容发布包协议v1/v2）
 
 ## 定位并检查目标
 
@@ -37,7 +37,7 @@ deployctl upgrade "$APP" --env "$ENVIRONMENT" \
 
 没有显式SHA时，工具要求相邻同名 `.sha256` 文件/URL；不能省略校验以绕过下载失败。仅首次install支持 `--port`、`--bind`，后续升级保留绑定。多个项目需要不同宿主机端口。
 
-raw配置格式为 `KEY=value`，不加shell引号、不写export、不支持多行。secrets.env权限600；secrets.env覆盖config.env重名项。升级保留配置，restart不重新应用修改的env_file。
+raw配置格式为 `KEY=value`，不加shell引号、不写export、不支持多行。secrets.env权限600；secrets.env覆盖config.env重名项。升级保留服务器文件，restart沿用快照。`--env-var`应用值与`--set`安装参数分开，持久化/删除override和host hooks先读 [运行时配置与钩子](runtime-config-hooks.md)。
 
 私有GitHub URL使用GH_TOKEN/GITHUB_TOKEN，由工具解析API并移除跨主机重定向的Authorization。凭证不嵌入URL。远程执行使用安全的参数传递/引用，不能把未校验输入直接拼接进shell或输出秘密值。
 
@@ -56,7 +56,7 @@ deployctl rollback "$APP" --env "$ENVIRONMENT"
 deployctl status "$APP" --env "$ENVIRONMENT"
 ```
 
-回滚失败时保留pending并报告原因，不能无限重试或报告恢复完成。应用回滚不恢复数据库/配置/对象存储；发布含不可逆迁移时需先核对其恢复方案。本工具不执行迁移。
+回滚失败时保留pending并报告原因，不能无限重试或报告恢复完成。快照部署回滚恢复版本、配置和绑定；未捕获的旧历史引用仍使用服务器文件。数据库/文件系统/对象存储等hook副作用不会撤销；有迁移脚本时需核对其幂等性与独立恢复方案，恢复不重跑hook。
 
 ## 常用运维
 

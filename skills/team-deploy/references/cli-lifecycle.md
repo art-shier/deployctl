@@ -83,6 +83,8 @@ ctl self-update --version v1.3.0
 
 执行失败就是工具更新失败；根据具体错误处理网络、凭证、写权限或安装记录，不改用业务`upgrade`。下载和校验失败保留旧命令；文件写入失败恢复已替换的命令。更新后用实际入口再次检查版本，不能只凭安装器打印的信息报告成功。
 
+运行时env-var/set/unset及协议v2 hooks要求CLI>=1.5.0。现有受管理1.4.0先`ctl self-update --version v1.5.0`并检查实际版本/help；CLI升级不会更新业务仓库workflow，构建和可选deploy调用的@引用与platform-ref也要同步至同一支持版本。直接运行随附pyz只能用于本地接入，不能据此认为服务器已升级。
+
 ## 离线安装或指定版本回退
 
 把`assets/install.sh`、`assets/deployctl.pyz`和相邻`.sha256`一起放到目标Linux主机，以实际路径执行：

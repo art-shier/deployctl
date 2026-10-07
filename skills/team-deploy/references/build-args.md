@@ -25,10 +25,10 @@ build:
 ```yaml
 jobs:
   release:
-    uses: art-shier/deployctl/.github/workflows/build-release.yml@v1.4.0
+    uses: art-shier/deployctl/.github/workflows/build-release.yml@v1.5.0
     with:
       platform-repository: art-shier/deployctl
-      platform-ref: v1.4.0
+      platform-ref: v1.5.0
       version: ${{ github.ref_name }}
       build-args: |
         BUILD_PROFILE=${{ vars.BUILD_PROFILE || 'production' }}
@@ -65,4 +65,4 @@ ctl validate deploy/deployment.yaml
 
 仅配置校验通过不能报告镜像已构建；真实流水线会检查工作流覆盖值，并把合并结果编码传给Docker构建。缺少Docker或GitHub权限时报告尚未执行对应验证，不虚构构建输出。
 
-流水线只把这些参数交给构建；标准发布包不包含build.args，仍使用schema_version: 1与minimum_deployctl_version: 1.0.0，保持现有部署端兼容。工具升级不会自动修改业务项目的workflow引用，项目需合并更新。此功能没有新增ctl install/upgrade的--set运行参数。
+流水线只把这些参数交给构建；标准发布包不包含build.args，无hooks时保持schema_version: 1与minimum_deployctl_version: 1.0.0。有hooks使用协议v2。工具升级不会自动修改业务项目的workflow引用，项目需合并更新。ctl>=1.5.0的--set属于安装hook参数，和构建参数分开，见 [运行时配置与钩子](runtime-config-hooks.md)。
