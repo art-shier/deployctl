@@ -1,5 +1,37 @@
 # 验证记录
 
+## v1.5.0运行时JSON配置与安装钩子（2026-10-07）
+
+- 新增重复 `--env-var` 应用配置、独立 `--set` 本次hook参数、upgrade `--unset-env`。保留 `--env` 环境含义和构建参数接口，原始值的空格/空值/引号/美元符号/更多等号原样传递。
+- 配置以受保护快照提交，容器内只读JSON可由非root读取；状态v2同时记录版本、配置摘要及绑定。失败恢复旧版本及配置；同版本配置变化可回滚，完全相同的重试保留previous。
+- 无hooks包继续协议v1、最低CLI1.0.0和四个成员；hooks包协议v2、最低CLI1.5.0，脚本固定成员/摘要/超时。JSON Schema v1/v2合法与畸形示例、归档完整性、快照篡改拒绝均通过测试。
+- 本机Windows完整测试141项：130通过、11项受POSIX或链接权限限制跳过。[最终main CI](https://github.com/art-shier/deployctl/actions/runs/37614513799) 与 [v1.5.0发布流水线](https://github.com/art-shier/deployctl/actions/runs/37614818530) 全部成功；Linux Python3.10/3.12各141项全通过，Windows CI通过132项、跳过9项。
+- Linux真实Bash验证运行/安装JSON分离、父级GitHub凭证不继承、64 KiB日志、超时及孙进程清理、KeyboardInterrupt、SIGTERM/SIGHUP退出清理和正常完成后的后台进程清理。
+- 真实Docker验证非root UID10001读取JSON和写入拒绝，JSON/raw环境一致，pre/post顺序及参数，pre/post/超时/就绪失败恢复，同版本配置回滚、unset、相同重试、status/logs/stop/restart。还重建旧版无配置label容器，验证pre失败不伪提交快照身份、restart可用，以及post失败恢复真实旧配置而非编辑后的服务器文件。
+- 既有实际docker/build-push-action构建参数传递仍通过，覆盖默认/逐次覆盖/空值/引号/逗号/美元符号；安装器、wheel、zipapp、skill构建、actionlint与Bash语法通过。
+- 一次独立整分支审查发现三项重要问题：旧版image ENV过滤前误用业务限制、旧版pre失败提交未应用的配置身份、catchable终止信号留下分离的hook进程。三项均先复现失败再修复；[回归RED CI](https://github.com/art-shier/deployctl/actions/runs/37614291080) 实际观察到SIGTERM/SIGHUP之后心跳继续，最终Linux CI验证停止。无未解决审查项。
+- skill旧指南使用测试无法确定runtime/set/unset及配置回滚；更新后独立agent找到专用引用、CLI升级要求、两个workflow引用和正确参数/副作用边界。正式skill ZIP已同步本机14文件并保留agents/openai.yaml，禁用site-packages的6项分发CLI测试、版本/帮助/格式校验全部通过。
+- [v1.5.0 Release](https://github.com/art-shier/deployctl/releases/tag/v1.5.0) 已正式发布且latest为v1.5.0，共9资产；正式下载的4份独立SHA256与SHA256SUMS全部匹配。发布前从实际私有草稿资产验证安装器、一键Contents API入口及self-update；发布后再次验证正式下载和latest自更新。
+
+正式下载资产的SHA256：
+
+| 资产 | SHA256 |
+|---|---|
+| deployctl.pyz | 3e354d77e700ba45f0d322263a5fd037ba84e0fdc6bb943144fc1bdbd9e85c49 |
+| install.sh | 77b171c590b8a1bb7f01fcc9fb7be5b2d2943750b4a02d40f2663d1bfbe46794 |
+| team-deploy-skill-v1.5.0.zip | 0d93b2bff9f45c71d0f4df190829520ba198a185ae20bf7718b686800424521e |
+| team_deployctl-1.5.0-py3-none-any.whl | a5f4b9a3405dc942e8675f29ff21968cfcf67e7dd667ffd2954f9bb1f80e4abc |
+
+执行中的取舍和边界：
+
+- hook日志放在独立受保护hook-logs目录，保持五文件快照不可变；代价是多维护一个目录。
+- 旧v1首次安装中断且未保存绑定时，仅为status/清理在内存采用发布默认绑定；原版本未保存的自定义端口无法从pending状态重建，Compose清理仍按project定位。
+- Docker/POSIX行为由最终CI作为发布门槛，已通过；实际公有云SSH及生产流量/备份恢复仍需目标验收，本次未操作业务服务器。
+- 执行可信团队host hooks，不提供针对同身份恶意写入或主动脱离进程组脚本的沙箱隔离。
+- 数据库/文件系统等hook外部副作用不属于版本/配置事务，项目需实现幂等性及独立数据恢复。
+
+发布标签固定于功能提交803ee2e；本次验证记录不移动标签或替换正式资产。
+
 ## v1.4.0项目构建参数（2026-10-07）
 
 - 项目接入后可自行添加deployment.yaml的build.args；工作流build-args按次覆盖，Dockerfile ARG将值传给已有构建脚本。init命令保持原有入口，模板只增加注释示例。
