@@ -126,7 +126,8 @@ class DockerDriver:
     def compose(self, directory, project, environment, *arguments):
         return self._run(['docker', 'compose', '--project-name', project,
                           '--project-directory', str(directory),
-                          '--file', str(directory / 'compose.yaml'), *arguments], environment)
+                          '--file', environment.get('DEPLOYCTL_COMPOSE_FILE', str(directory / 'compose.yaml')),
+                          *arguments], environment)
 
     def pull(self, directory, project, environment):
         self.compose(directory, project, environment, 'config', '--quiet')
@@ -140,12 +141,15 @@ class DockerDriver:
         self.compose(directory, project, environment, 'down', '--remove-orphans')
 
     def inspect_container(self, directory, project, environment):
-        ids = self.compose(directory, project, environment, 'ps', '-q', 'app').splitlines()
+        ids = self.compose(directory, project, environment, 'ps', '--all', '-q', 'app').splitlines()
         if len(ids) != 1:
             return None
         template = ('{"image":{{json .Config.Image}},"labels":{{json .Config.Labels}},'
-                    '"running":{{json .State.Running}}}')
+                    '"running":{{json .State.Running}},"environment":{{json .Config.Env}}}')
         return json.loads(self._run(['docker', 'inspect', '--format', template, ids[0]]))
+
+    def inspect_image_environment(self, image):
+        return json.loads(self._run(['docker', 'image', 'inspect', '--format', '{{json .Config.Env}}', image])) or []
 
     def probe(self, directory, project, environment, release, binding):
         host = '127.0.0.1' if binding['address'] == '0.0.0.0' else binding['address']
@@ -156,10 +160,12 @@ class DockerDriver:
             if (info and info['running'] and info['image'] == release['image']
                     and info['labels'].get('io.team-deploy.version') == release['version']
                     and info['labels'].get('io.team-deploy.application') == release['application']
+                    and (not environment.get('DEPLOYCTL_CONFIGURATION') or
+                         info['labels'].get('io.team-deploy.configuration') == environment['DEPLOYCTL_CONFIGURATION'])
                     and http_ready(url)):
                 return
             if time.monotonic() >= deadline:
-                raise RuntimeError('readiness/actual image/version check timed out')
+                raise RuntimeError('readiness/actual image/version/configuration check timed out')
             time.sleep(min(1, max(0, deadline - time.monotonic())))
 
     def operate(self, directory, project, environment, action, tail=100):
@@ -227,14 +233,20 @@ class Manager:
         if missing:
             raise ValueError(f'Missing required configuration: {", ".join(missing)}; fill {folder}')
 
-    def docker_environment(self, folder, binding):
-        environment = dict(os.environ)
-        for key in ('COMPOSE_FILE', 'COMPOSE_PROJECT_NAME', 'COMPOSE_PROFILES', 'COMPOSE_ENV_FILES'):
-            environment.pop(key, None)
+    def docker_environment(self, folder, binding, snapshot=None):
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith(('COMPOSE_', 'DEPLOYCTL_'))}
         environment.update({'COMPOSE_DISABLE_ENV_FILE': '1',
                             'DEPLOY_CONFIG_FILE': str(folder / 'config.env'),
                             'DEPLOY_SECRETS_FILE': str(folder / 'secrets.env'),
                             'DEPLOY_BIND_ADDRESS': binding['address'], 'DEPLOY_PORT': str(binding['port'])})
+        if snapshot is not None:
+            from .runtime_snapshot import verify_snapshot
+            verify_snapshot(snapshot)
+            environment.update({'DEPLOYCTL_COMPOSE_FILE': str(snapshot.directory / 'compose.yaml'),
+                                'DEPLOYCTL_EFFECTIVE_ENV_FILE': str(snapshot.directory / 'effective.env'),
+                                'DEPLOYCTL_ENV_SOURCE': str(snapshot.directory / '.env.json'),
+                                'DEPLOYCTL_CONFIGURATION': snapshot.id})
         return environment
 
     def binding(self, release, old_binding=None, port=None, bind=None):
