@@ -9,6 +9,7 @@ import tempfile
 from . import __version__
 from .contract import read_yaml, validate_deployment
 from .release import build_release
+from .runtime_config import parse_assignments, validate_unset
 
 
 def parser():
@@ -53,6 +54,13 @@ def parser():
         if name in ('install', 'upgrade'):
             command.add_argument('--release', required=True, help='local archive or HTTPS URL')
             command.add_argument('--sha256', help='expected checksum; default: adjacent .sha256')
+            command.add_argument('--env-var', action='append', default=[], metavar='KEY=value',
+                                 help='runtime value persisted after success; repeat for each key')
+            command.add_argument('--set', action='append', default=[], metavar='KEY=value',
+                                 help='invocation-local installation hook parameter; repeat for each key')
+        if name == 'upgrade':
+            command.add_argument('--unset-env', action='append', default=[], metavar='KEY',
+                                 help='remove a persisted runtime override; repeat for each key')
         if name == 'install':
             command.add_argument('--port', type=int, help='override host port; preserved across upgrades')
             command.add_argument('--bind', help='override IPv4 bind address; default 127.0.0.1')
@@ -93,15 +101,22 @@ def main(argv=None):
             validate_name(args.env, 'environment', 32)
             manager = Manager(args.root, args.config_root)
             if args.command in ('install', 'upgrade'):
+                runtime_env = parse_assignments(args.env_var, 'env-var')
+                install_params = parse_assignments(args.set, 'installation parameters', reserve_platform=False)
+                unset_env = getattr(args, 'unset_env', [])
+                if validate_unset(unset_env).intersection(runtime_env):
+                    raise ValueError('a variable cannot be both env-var and unset-env')
                 with tempfile.TemporaryDirectory(prefix='deployctl-download-') as cache:
                     package = acquire_release(args.release, cache, args.sha256)
                     state = manager.deploy(args.application, args.env, package,
                                            upgrade=args.command == 'upgrade',
-                                           port=getattr(args, 'port', None), bind=getattr(args, 'bind', None))
-                print(f"OK: {args.application}/{args.env} running {state['current']}")
+                                           port=getattr(args, 'port', None), bind=getattr(args, 'bind', None),
+                                           runtime_env=runtime_env, unset_env=unset_env, install_params=install_params)
+                print(f"OK: {args.application}/{args.env} running {state['current']['version']}")
             elif args.command == 'rollback':
                 state = manager.rollback(args.application, args.env)
-                print(f"OK: recovered {args.application}/{args.env}; current={state['current']}")
+                current = state['current']['version'] if state['current'] else None
+                print(f"OK: recovered {args.application}/{args.env}; current={current}")
             else:
                 if args.command == 'logs' and not 1 <= args.tail <= 10000:
                     raise ValueError('--tail must be 1..10000')

@@ -24,6 +24,14 @@ on:
       mode:
         type: string
         default: upgrade
+      runtime-env:
+        description: Optional runtime KEY=value lines; persisted after successful deployment
+        type: string
+        default: ''
+      install-params:
+        description: Optional invocation-local hook KEY=value lines
+        type: string
+        default: ''
       ssh-port:
         type: number
         default: 22
@@ -81,26 +89,10 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PORT: ${{ inputs.ssh-port }}
           HOST_PORT: ${{ inputs.host-port }}
+          RUNTIME_ENV: ${{ inputs.runtime-env }}
+          INSTALL_PARAMS: ${{ inputs.install-params }}
         run: |
-          python - <<'PY'
-          import os, re, shutil
-          from pathlib import Path
-          from deployctl.contract import validate_name
-          from deployctl.download import acquire_release
-          validate_name(os.environ['APPLICATION'])
-          validate_name(os.environ['TARGET_ENVIRONMENT'], 'environment', 32)
-          if os.environ['MODE'] not in ('install', 'upgrade'):
-              raise SystemExit('mode must be install or upgrade')
-          if not re.fullmatch(r'[A-Za-z0-9.-]+', os.environ['SSH_HOST']):
-              raise SystemExit('SSH_HOST must be a hostname or IPv4 address')
-          if not re.fullmatch(r'[a-z_][a-z0-9_-]*', os.environ['SSH_USER']):
-              raise SystemExit('Invalid SSH_USER')
-          if not 1 <= int(os.environ['SSH_PORT']) <= 65535 or not 0 <= int(os.environ['HOST_PORT']) <= 65535:
-              raise SystemExit('Invalid port')
-          archive = acquire_release(os.environ['RELEASE_URL'], Path('download'), os.environ['RELEASE_SHA256'])
-          shutil.copyfile(archive, 'release.tar.gz')
-          Path('release.tar.gz.sha256').write_text(os.environ['RELEASE_SHA256'] + '  release.tar.gz\n')
-          PY
+          python platform/scripts/prepare_deploy.py
       - name: Deploy using server-side deployctl
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -124,7 +116,7 @@ jobs:
           REMOTE_DIR=$(ssh "${SSH_OPTIONS[@]}" -p "$SSH_PORT" "$TARGET" 'mktemp -d /tmp/deployctl.XXXXXXXXXX')
           [[ "$REMOTE_DIR" =~ ^/tmp/deployctl\.[A-Za-z0-9]+$ ]]
           trap 'ssh "${SSH_OPTIONS[@]}" -p "$SSH_PORT" "$TARGET" "rm -rf -- $REMOTE_DIR" || true; rm -rf -- "$SSH_DIR"' EXIT
-          scp "${SSH_OPTIONS[@]}" -P "$SSH_PORT" release.tar.gz release.tar.gz.sha256 "$TARGET:$REMOTE_DIR/"
+          scp "${SSH_OPTIONS[@]}" -P "$SSH_PORT" release.tar.gz release.tar.gz.sha256 parameters.json platform/scripts/deploy_remote.py "$TARGET:$REMOTE_DIR/"
           ssh "${SSH_OPTIONS[@]}" -p "$SSH_PORT" "$TARGET" \
             "bash -s -- '$APPLICATION' '$TARGET_ENVIRONMENT' '$MODE' '$REMOTE_DIR' '$HOST_PORT'" <<'REMOTE'
           set -euo pipefail
@@ -133,6 +125,6 @@ jobs:
           if [[ "$mode" == install && "$host_port" != 0 ]]; then
             args+=(--port "$host_port")
           fi
-          deployctl "${args[@]}"
+          python3 "$directory/deploy_remote.py" "$directory/parameters.json" "${args[@]}"
           deployctl status "$app" --env "$environment"
           REMOTE

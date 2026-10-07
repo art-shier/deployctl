@@ -32,6 +32,11 @@ jobs:
       release-url: ${{ inputs.release_url }}
       sha256: ${{ inputs.sha256 }}
       mode: ${{ inputs.mode }}
+      # Optional parameters: one literal KEY=value per line.
+      # runtime-env: |
+      #   LOG_LEVEL=info
+      # install-params: |
+      #   DATA_DIR=/data/project-a
     secrets:
       SSH_HOST: ${{ secrets.SSH_HOST }}
       SSH_USER: ${{ secrets.SSH_USER }}
