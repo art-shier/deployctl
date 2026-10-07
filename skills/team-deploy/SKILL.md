@@ -5,11 +5,12 @@ description: "Use when onboarding a repository to team-deploy's GitHub Actions a
 
 # Team Deploy
 
-使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.3.0，发布包协议仍为schema_version: 1；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
+使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.4.0，发布包协议仍为schema_version: 1；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
 
 ## 选择任务
 
 - 项目接入或生成发布包：读取 [项目接入](references/onboarding.md)，新接入优先使用deployctl init，已有配置按需合并。
+- 项目构建脚本需要参数、配置build.args或工作流覆盖：读取 [构建参数](references/build-args.md)。init保持基础配置，项目后续自行填写。
 - ctl/deployctl找不到、PATH问题、首次安装或工具自身升级：读取 [CLI安装与升级](references/cli-lifecycle.md)。
 - 服务器安装、升级、回滚或排障：读取 [服务器操作](references/operations.md)。
 - 其他部署体系保持其原有方式，不把 K8s、云函数或多组件系统强行改为本模板。
@@ -28,7 +29,7 @@ python "$SKILL_DIR/assets/deployctl.pyz" init --help
 python "$SKILL_DIR/assets/deployctl.pyz" validate deploy/deployment.yaml
 ```
 
-本地init/validate/package可在Windows执行；服务运行命令只能在目标Linux服务器执行。服务器已安装CLI时先检查版本和--help；版本/契约不一致时查对应说明。v1.0.0没有init，使用随附v1.3.0初始化；远程平台引用沿用用户指定的真实版本。
+本地init/validate/package可在Windows执行；服务运行命令只能在目标Linux服务器执行。服务器已安装CLI时先检查版本和--help；版本/契约不一致时查对应说明。v1.0.0没有init，使用随附v1.4.0初始化；远程平台引用沿用用户指定的真实版本。
 
 `ctl self-update` 更新部署工具本身（CLI>=1.3.0且由安装器管理），`ctl upgrade <application> --env ... --release ...` 更新业务服务。旧CLI、源码/直接运行pyz或缺少安装记录时，通过安装器准备受管理的命令，不猜测其支持self-update。
 

@@ -1,6 +1,6 @@
 # deployctl init：初始化项目接入
 
-init在业务仓库生成标准部署描述和GitHub工作流，不执行构建、推送、发布或服务器安装。当前CLI为v1.3.0。
+init在业务仓库生成标准部署描述和GitHub工作流，不执行构建、推送、发布或服务器安装。当前CLI为v1.4.0。
 
 ## 常用命令
 
@@ -9,7 +9,7 @@ init在业务仓库生成标准部署描述和GitHub工作流，不执行构建�
 ```bash
 deployctl init project-a \
   --platform-repository art-shier/deployctl \
-  --platform-ref v1.3.0 --private-platform \
+  --platform-ref v1.4.0 --private-platform \
   --port 8080 --health-path /health/ready
 ```
 
@@ -23,6 +23,8 @@ deploy/deployment.yaml
 ```
 
 镜像版本相关的release.yaml仍由构建流水线生成。
+
+init不要求填写构建参数，也不新增--build-arg选项。项目之后可自行在deployment.yaml添加build.args，或在release.yml的with添加build-args覆盖值；无需重新init，见 [构建参数](build-args.md)。该能力需要CLI及调用平台>=1.4.0。
 
 ## 预览与额外配置
 

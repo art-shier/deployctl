@@ -38,6 +38,8 @@ def render_compose(release):
 
 def build_release(config, image, version, output, commit=''):
     config = validate_deployment(config)
+    # Build inputs are consumed before packaging; keep the server's v1 contract.
+    config['build'].pop('args', None)
     release = validate_release({'schema_version': 1, 'application': config['application'],
                                 'version': version, 'image': image, 'commit': commit,
                                 'minimum_deployctl_version': '1.0.0', 'deployment': config})

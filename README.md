@@ -12,15 +12,15 @@
 
 ```bash
 set -o pipefail
-gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.3.0' \
-  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.3.0
+gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.4.0' \
+  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.4.0
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```
 
 安装器下载 CLI、检查 SHA256 和版本，安装 `ctl` 与 `deployctl` 到 `~/.local/bin`。CLI 内置依赖，无需服务器 pip 安装。再次执行可升级本安装器管理的命令；已有其他同名工具会保留并报告冲突。
 
-安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.3.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
+安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.4.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
 
 要求 Python >=3.10；服务部署另需 Docker Engine、Docker Compose >=2.30。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
 
@@ -30,7 +30,7 @@ ctl --version
 
 ```bash
 ctl init project-a \
-  --platform-repository art-shier/deployctl --platform-ref v1.3.0 \
+  --platform-repository art-shier/deployctl --platform-ref v1.4.0 \
   --private-platform --port 8080 --health-path /health/ready
 ctl validate deploy/deployment.yaml
 ```
@@ -40,6 +40,8 @@ ctl validate deploy/deployment.yaml
 提交接入文件，再推送业务项目自己的版本标签，如 `v1.0.0`，即可生成镜像 digest、`project-a-v1.0.0.tar.gz` 和相邻 `.sha256`。平台工具版本与业务版本独立。
 
 `--dry-run` 可预览生成内容；`--with-deploy-workflow` 可生成可选 SSH 部署入口。已有文件不会覆盖，详见 [init](docs/init.md) 和 [项目接入手册](docs/onboarding.md)。
+
+v1.4.0新增构建参数：init继续生成基础配置，项目后续可在deployment.yaml添加build.args，并通过release.yml的build-args逐次覆盖。参数交给Dockerfile ARG和项目自己的脚本，详见 [构建参数](docs/build-args.md)。
 
 ## 服务器部署
 

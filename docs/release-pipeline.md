@@ -9,10 +9,11 @@ ci.yml在分支推送/PR时调用verify.yml。verify.yml也被平台发布流程
 - 构建内置依赖CLI及skill资源，再验证分发CLI。
 - Linux实际安装CLI、执行ctl/deployctl、重复安装、拒绝坏校验和，并运行init/validate。
 - 独立Linux Docker集成任务验证服务安装、升级、失败恢复、回滚、日志和重启。
+- 同一Docker任务使用实际docker/build-push-action，验证项目build.args、工作流覆盖、Dockerfile默认值、空值以及逗号/引号/美元符号的原样传递。
 
 ## 发布
 
-更新deployctl/__init__.py、pyproject.toml、模板与skill版本后，推送对应v标签，例如v1.3.0。也可从Actions手动触发Release deployctl，version填写已经存在的标签。
+更新deployctl/__init__.py、pyproject.toml、模板与skill版本后，推送对应v标签，例如v1.4.0。也可从Actions手动触发Release deployctl，version填写已经存在的标签。
 
 平台发布流程先完成全部检查，再构建wheel和发布资产；标签、Python包版本、CLI版本不一致时停止。发布包包括：
 

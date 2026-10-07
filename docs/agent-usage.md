@@ -20,7 +20,7 @@ team-deploy/
     └── templates/
 ```
 
-可以从平台Release下载team-deploy-skill-v1.3.0.zip，单独分发整个team-deploy目录，不能只复制SKILL.md而遗漏资源。当前自包含CLI为v1.3.0，支持init和私有平台接入；发布包协议保持schema_version: 1。工具升级时需要同步CLI、模板和指南。
+可以从平台Release下载team-deploy-skill-v1.4.0.zip，单独分发整个team-deploy目录，不能只复制SKILL.md而遗漏资源。当前自包含CLI为v1.4.0，支持init和私有平台接入；发布包协议保持schema_version: 1。工具升级时需要同步CLI、模板和指南。
 
 按Codex当前[官方技能文档](https://learn.chatgpt.com/docs/build-skills)，仓库级技能可放在项目 `.agents/skills/team-deploy/`，用户级技能可放在 `~/.agents/skills/team-deploy/`。本地已有环境也可能配置CODEX_HOME/skills；沿用实际加载目录，避免同名skill同时安装到多个目录。
 
@@ -33,7 +33,7 @@ team-deploy/
 ```text
 使用 $team-deploy 帮当前项目接入团队标准交付。
 平台仓库：art-shier/deployctl（私有，init添加--private-platform）
-平台引用：v1.3.0或实际审核过的SHA
+平台引用：v1.4.0或实际审核过的SHA
 本次只修改并验证本地接入文件，不推送、不发布、不操作服务器。
 ```
 

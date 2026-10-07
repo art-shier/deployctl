@@ -24,8 +24,8 @@ ctl --help
 
 ```bash
 set -o pipefail
-gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.3.0' \
-  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.3.0
+gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.4.0' \
+  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.4.0
 ```
 
 版本标签、CLI内报告版本和外部SHA256必须一致。也可添加 `--sha256 <独立取得的摘要>`；摘要来自同一Release能检查损坏，不代替独立发布者认证。
@@ -39,8 +39,8 @@ set -o pipefail
 curl -fsSL --proto '=https' --tlsv1.2 \
   -H "Authorization: Bearer $GH_TOKEN" \
   -H 'Accept: application/vnd.github.raw+json' \
-  'https://api.github.com/repos/art-shier/deployctl/contents/install.sh?ref=v1.3.0' \
-  | bash -s -- --user --version v1.3.0
+  'https://api.github.com/repos/art-shier/deployctl/contents/install.sh?ref=v1.4.0' \
+  | bash -s -- --user --version v1.4.0
 ```
 
 Token仅用于GitHub API；下载资产重定向到外部存储时移除Authorization。以后若仓库可公开访问，可省略Token，但本仓库当前不能匿名下载。
@@ -52,7 +52,7 @@ Token仅用于GitHub API；下载资产重定向到外部存储时移除Authoriz
 bash install.sh ./deployctl.pyz --user
 
 # 有目录写权限时安装到指定目录；root默认/usr/local/bin
-bash install.sh --repo art-shier/deployctl --version v1.3.0 --install-dir /usr/local/bin
+bash install.sh --repo art-shier/deployctl --version v1.4.0 --install-dir /usr/local/bin
 
 # 不需要ctl短命令时
 bash install.sh ./deployctl.pyz --user --no-alias
@@ -76,7 +76,7 @@ ctl self-update
 ctl --version
 
 # 固定工具版本；显式指定旧版本也可用于工具版本回退
-ctl self-update --version v1.3.0
+ctl self-update --version v1.4.0
 ```
 
 默认同时更新受管理的deployctl和ctl，保留原目录、自定义命令名及无别名安装选择。可额外指定`--sha256 <独立获得的CLI摘要>`，不需要Docker，也不操作业务服务。`ctl upgrade <application> --env ... --release ...`才是业务服务升级。

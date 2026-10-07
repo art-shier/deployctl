@@ -47,12 +47,14 @@ required_config: []
 
 可选字段：container.host_port、container.bind_address；health.startup_timeout_seconds（1–600，默认120）；resources.memory_limit（例如512m）、resources.cpus（0.1–128）。完整格式以模板和 CLI validate 为准。默认绑定127.0.0.1；`APP_VERSION` 平台注入，不列入 required_config。构建路径必须在业务仓库内。
 
+CLI/平台>=1.4.0支持可选build.args。init不要求填写参数，项目后续按需增加；需要每次发布覆盖或把参数传入现有脚本时，读取 [构建参数](build-args.md)。保持工作流引用与platform-ref为同一支持该功能的实际版本。
+
 ## GitHub 构建接入
 
 公共工作流路径：`.github/workflows/build-release.yml`。完整调用示例在 `assets/templates/release.yml`，不要猜测 inputs 或 secrets。
 
 - 必填输入：platform-repository、platform-ref、version。
-- 可选：deployment-file（默认deploy/deployment.yaml）、registry（默认ghcr.io）、image-name（默认业务owner/repo小写）、platforms（默认linux/amd64）、test-command。
+- 可选：deployment-file（默认deploy/deployment.yaml）、registry（默认ghcr.io）、image-name（默认业务owner/repo小写）、platforms（默认linux/amd64）、test-command、build-args（>=1.4.0，KEY=value行，覆盖项目build.args）。
 - secrets：PLATFORM_READ_TOKEN（私有平台checkout）、REGISTRY_USERNAME和REGISTRY_TOKEN（非默认仓库）。避免使用 `secrets: inherit` 无差别传递生产凭证。
 - caller权限：contents: write、packages: write。为项目提供真实的 test-command；未提供时只报告平台没有执行项目测试。
 - 标签必须存在；只有获得发布授权后才推送标签。流水线输出 release_url、sha256、application、image。真实输出或现有 GitHub Release Assets 才是有效下载地址。

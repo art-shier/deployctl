@@ -52,3 +52,16 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install PyYAML==6.0.3
       - run: python scripts/docker_integration.py
+      - name: Prepare build argument fixture with the release preparation script
+        id: args
+        run: python scripts/build_args_integration.py prepare --directory "$RUNNER_TEMP/build-args"
+      - uses: docker/setup-buildx-action@v3
+      - name: Verify argument transport through the actual release build action
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ runner.temp }}/build-args
+          file: ${{ runner.temp }}/build-args/Dockerfile
+          load: true
+          tags: deployctl-build-args:test
+          build-args: ${{ steps.args.outputs.build_args }}
+      - run: python scripts/build_args_integration.py verify

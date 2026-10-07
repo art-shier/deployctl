@@ -28,6 +28,10 @@ on:
       platforms:
         type: string
         default: linux/amd64
+      build-args:
+        description: Optional KEY=value lines overriding deployment.yaml build.args; ordinary values only
+        type: string
+        default: ''
       test-command:
         description: Optional project test command, run before building
         type: string
@@ -92,31 +96,9 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
           REGISTRY: ${{ inputs.registry }}
           IMAGE_NAME: ${{ inputs.image-name }}
+          BUILD_ARGS: ${{ inputs.build-args }}
         run: |
-          python - <<'PY'
-          import json, os, re
-          from pathlib import Path
-          from deployctl.contract import read_yaml, relative_path, validate_deployment, version
-          relative_path(os.environ['DEPLOYMENT_FILE'], 'deployment-file')
-          version(os.environ['RELEASE_VERSION'])
-          config = validate_deployment(read_yaml(os.environ['DEPLOYMENT_FILE']))
-          registry = os.environ['REGISTRY'].lower()
-          image_name = (os.environ['IMAGE_NAME'] or os.environ['GITHUB_REPOSITORY']).lower()
-          if not re.fullmatch(r'[a-z0-9.-]+(?::[0-9]+)?', registry):
-              raise SystemExit('Invalid registry host')
-          if not re.fullmatch(r'[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*', image_name):
-              raise SystemExit('Invalid image repository path')
-          for key in ('dockerfile', 'context'):
-              candidate = Path(config['build'][key]).resolve()
-              if not candidate.is_relative_to(Path.cwd().resolve()) or not candidate.exists():
-                  raise SystemExit('Build paths must exist inside the project')
-          Path('normalized.json').write_text(json.dumps(config))
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              print('application=' + config['application'], file=out)
-              print('context=source/' + config['build']['context'], file=out)
-              print('dockerfile=source/' + config['build']['dockerfile'], file=out)
-              print('image_name=' + registry + '/' + image_name, file=out)
-          PY
+          python "$GITHUB_WORKSPACE/platform/scripts/prepare_build.py"
       - name: Project tests
         if: inputs.test-command != ''
         working-directory: source
@@ -137,6 +119,7 @@ jobs:
           context: ${{ steps.config.outputs.context }}
           file: ${{ steps.config.outputs.dockerfile }}
           platforms: ${{ inputs.platforms }}
+          build-args: ${{ steps.config.outputs.build_args }}
           push: true
           tags: ${{ steps.config.outputs.image_name }}:${{ inputs.version }}
           cache-from: type=gha

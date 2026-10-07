@@ -10,6 +10,7 @@ NAME = re.compile(r'[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z')
 VERSION = re.compile(r'v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?\Z')
 DIGEST_IMAGE = re.compile(r'[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}\Z')
 ENV_NAME = re.compile(r'[A-Z_][A-Z0-9_]*\Z')
+BUILD_ARG_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,127}\Z')
 
 
 class UniqueLoader(yaml.SafeLoader):
@@ -81,13 +82,33 @@ def relative_path(value, field):
     return value
 
 
+def validate_build_args(value, field='build.args'):
+    if not isinstance(value, dict) or len(value) > 128:
+        raise ValueError(f'{field} must be a mapping of at most 128 arguments')
+    for name, item in value.items():
+        if not isinstance(name, str) or not BUILD_ARG_NAME.fullmatch(name):
+            raise ValueError(f'{field}: argument names must be identifiers of at most 128 characters')
+        # Docker action uses ECMAScript trim(), which also trims edge BOMs.
+        if (not isinstance(item, str) or len(item) > 4096 or item != item.strip()
+                or item != item.strip('\ufeff')
+                or any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in '\u2028\u2029' for c in item)):
+            raise ValueError(f'{field}.{name} must be a string of at most 4096 characters without controls or surrounding whitespace')
+    return dict(value)
+
+
 def validate_deployment(data):
     mapping(data, {'schema_version', 'application', 'build', 'container', 'health',
                    'resources', 'required_config'},
             {'schema_version', 'application', 'container', 'health'}, 'deployment')
     integer(data['schema_version'], 1, 1, 'schema_version')
     app = validate_name(data['application'])
-    build = mapping(data.get('build', {}), {'dockerfile', 'context'}, set(), 'build')
+    build = mapping(data.get('build', {}), {'dockerfile', 'context', 'args'}, set(), 'build')
+    normalized_build = {
+        'dockerfile': relative_path(build.get('dockerfile', 'Dockerfile'), 'build.dockerfile'),
+        'context': relative_path(build.get('context', '.'), 'build.context'),
+    }
+    if 'args' in build:
+        normalized_build['args'] = validate_build_args(build['args'])
     container = mapping(data['container'], {'port', 'host_port', 'bind_address'}, {'port'}, 'container')
     port = integer(container['port'], 1, 65535, 'container.port')
     host_port = integer(container.get('host_port', port), 1, 65535, 'container.host_port')
@@ -118,8 +139,7 @@ def validate_deployment(data):
         raise ValueError('required_config must contain unique uppercase names; APP_VERSION is reserved')
     return {
         'schema_version': 1, 'application': app,
-        'build': {'dockerfile': relative_path(build.get('dockerfile', 'Dockerfile'), 'build.dockerfile'),
-                  'context': relative_path(build.get('context', '.'), 'build.context')},
+        'build': normalized_build,
         'container': {'port': port, 'host_port': host_port, 'bind_address': bind},
         'health': {'readiness_path': path, 'startup_timeout_seconds': timeout},
         'resources': {'memory_limit': memory, 'cpus': float(cpus)},

@@ -4,6 +4,10 @@ application: project-a
 build:
   dockerfile: Dockerfile
   context: .
+  # Optional: add ordinary build arguments after project onboarding.
+  # args:
+  #   BUILD_PROFILE: production
+  #   FEATURE_ENABLED: 'true'
 
 container:
   port: 8080
