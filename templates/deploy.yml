@@ -1,0 +1,40 @@
+name: Deploy existing project release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_url:
+        description: Published tar.gz asset URL
+        required: true
+      sha256:
+        description: Expected package SHA256
+        required: true
+      environment:
+        type: choice
+        options: [staging, production]
+        default: staging
+      mode:
+        type: choice
+        options: [install, upgrade]
+        default: upgrade
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    uses: art-shier/deployctl/.github/workflows/deploy.yml@v1.2.0
+    with:
+      platform-repository: art-shier/deployctl
+      platform-ref: v1.2.0
+      application: project-a
+      environment: ${{ inputs.environment }}
+      release-url: ${{ inputs.release_url }}
+      sha256: ${{ inputs.sha256 }}
+      mode: ${{ inputs.mode }}
+    secrets:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+      PLATFORM_READ_TOKEN: ${{ secrets.PLATFORM_READ_TOKEN }}

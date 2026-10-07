@@ -1,0 +1,14 @@
+schema_version: 1
+application: project-a
+build:
+  dockerfile: Dockerfile
+  context: .
+container:
+  port: 8080
+health:
+  readiness_path: /health/ready
+  startup_timeout_seconds: 30
+resources:
+  memory_limit: 128m
+  cpus: 0.5
+required_config: []

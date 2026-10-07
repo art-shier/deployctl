@@ -1,0 +1,22 @@
+name: Project release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    uses: art-shier/deployctl/.github/workflows/build-release.yml@v1.2.0
+    with:
+      platform-repository: art-shier/deployctl
+      platform-ref: v1.2.0
+      deployment-file: deploy/deployment.yaml
+      version: ${{ github.ref_name }}
+      # image-name defaults to this project's owner/repository.
+      # test-command: npm ci && npm test
+    secrets:
+      PLATFORM_READ_TOKEN: ${{ secrets.PLATFORM_READ_TOKEN }}

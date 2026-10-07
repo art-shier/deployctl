@@ -1,0 +1,148 @@
+"""Strict, versioned deployment contract. No arbitrary Compose extensions."""
+
+import ipaddress
+from pathlib import Path, PurePosixPath
+import re
+
+import yaml
+
+NAME = re.compile(r'[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z')
+VERSION = re.compile(r'v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?\Z')
+DIGEST_IMAGE = re.compile(r'[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}\Z')
+ENV_NAME = re.compile(r'[A-Z_][A-Z0-9_]*\Z')
+
+
+class UniqueLoader(yaml.SafeLoader):
+    pass
+
+
+def _unique_mapping(loader, node, deep=False):
+    result = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if not isinstance(key, str) or key in result:
+            raise ValueError('YAML mapping keys must be unique strings')
+        result[key] = loader.construct_object(value_node, deep=deep)
+    return result
+
+
+UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
+
+
+def load_yaml(text):
+    if len(text.encode('utf-8')) > 65536:
+        raise ValueError('YAML exceeds 64 KiB')
+    try:
+        return yaml.load(text, Loader=UniqueLoader)
+    except yaml.YAMLError as exc:
+        raise ValueError('Invalid YAML') from exc
+
+
+def read_yaml(path):
+    return load_yaml(Path(path).read_text(encoding='utf-8'))
+
+
+def mapping(value, allowed, required, field):
+    if not isinstance(value, dict):
+        raise ValueError(f'{field} must be a mapping')
+    unknown = set(value) - set(allowed)
+    missing = set(required) - set(value)
+    if unknown:
+        raise ValueError(f'{field}: unknown fields: {", ".join(sorted(unknown))}')
+    if missing:
+        raise ValueError(f'{field}: missing fields: {", ".join(sorted(missing))}')
+    return value
+
+
+def validate_name(value, field='application', maximum=48):
+    if not isinstance(value, str) or len(value) > maximum or not NAME.fullmatch(value):
+        raise ValueError(f'{field} must be a lowercase name with hyphens (max {maximum})')
+    return value
+
+
+def integer(value, minimum, maximum, field):
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ValueError(f'{field} must be an integer in {minimum}..{maximum}')
+    return value
+
+
+def version(value):
+    if not isinstance(value, str) or len(value) > 96 or not VERSION.fullmatch(value):
+        raise ValueError('version must be semantic version, e.g. v1.0.0')
+    return value
+
+
+def relative_path(value, field):
+    if not isinstance(value, str) or not value or '\\' in value or '\n' in value:
+        raise ValueError(f'{field} must be a repository-relative POSIX path')
+    path = PurePosixPath(value)
+    if path.is_absolute() or '..' in path.parts or ':' in value:
+        raise ValueError(f'{field} must stay inside the repository')
+    return value
+
+
+def validate_deployment(data):
+    mapping(data, {'schema_version', 'application', 'build', 'container', 'health',
+                   'resources', 'required_config'},
+            {'schema_version', 'application', 'container', 'health'}, 'deployment')
+    integer(data['schema_version'], 1, 1, 'schema_version')
+    app = validate_name(data['application'])
+    build = mapping(data.get('build', {}), {'dockerfile', 'context'}, set(), 'build')
+    container = mapping(data['container'], {'port', 'host_port', 'bind_address'}, {'port'}, 'container')
+    port = integer(container['port'], 1, 65535, 'container.port')
+    host_port = integer(container.get('host_port', port), 1, 65535, 'container.host_port')
+    bind = container.get('bind_address', '127.0.0.1')
+    try:
+        ipaddress.IPv4Address(bind)
+    except (ipaddress.AddressValueError, TypeError) as exc:
+        raise ValueError('container.bind_address must be an IPv4 address') from exc
+    health = mapping(data['health'], {'readiness_path', 'startup_timeout_seconds'},
+                     {'readiness_path'}, 'health')
+    path = health['readiness_path']
+    if (not isinstance(path, str) or not path.startswith('/') or path.startswith('//')
+            or any(c in path for c in ('\r', '\n', '#', '?', '\\')) or len(path) > 256):
+        raise ValueError('health.readiness_path must be an absolute HTTP path')
+    timeout = integer(health.get('startup_timeout_seconds', 120), 1, 600,
+                      'health.startup_timeout_seconds')
+    resources = mapping(data.get('resources', {}), {'memory_limit', 'cpus'}, set(), 'resources')
+    memory = resources.get('memory_limit', '512m')
+    if not isinstance(memory, str) or not re.fullmatch(r'[1-9][0-9]*[kKmMgG]', memory):
+        raise ValueError('resources.memory_limit must be e.g. 512m or 2g')
+    cpus = resources.get('cpus', 1.0)
+    if type(cpus) not in (int, float) or not 0.1 <= cpus <= 128:
+        raise ValueError('resources.cpus must be 0.1..128')
+    config = data.get('required_config', [])
+    if (not isinstance(config, list) or len(config) > 128
+            or any(not isinstance(k, str) or not ENV_NAME.fullmatch(k) for k in config)
+            or len(set(config)) != len(config) or 'APP_VERSION' in config):
+        raise ValueError('required_config must contain unique uppercase names; APP_VERSION is reserved')
+    return {
+        'schema_version': 1, 'application': app,
+        'build': {'dockerfile': relative_path(build.get('dockerfile', 'Dockerfile'), 'build.dockerfile'),
+                  'context': relative_path(build.get('context', '.'), 'build.context')},
+        'container': {'port': port, 'host_port': host_port, 'bind_address': bind},
+        'health': {'readiness_path': path, 'startup_timeout_seconds': timeout},
+        'resources': {'memory_limit': memory, 'cpus': float(cpus)},
+        'required_config': config,
+    }
+
+
+def validate_release(data):
+    mapping(data, {'schema_version', 'application', 'version', 'image', 'commit',
+                   'minimum_deployctl_version', 'deployment'},
+            {'schema_version', 'application', 'version', 'image',
+             'minimum_deployctl_version', 'deployment'}, 'release')
+    integer(data['schema_version'], 1, 1, 'release.schema_version')
+    validate_name(data['application'])
+    version(data['version'])
+    if not isinstance(data['image'], str) or not DIGEST_IMAGE.fullmatch(data['image']):
+        raise ValueError('image must be pinned to a lowercase sha256 digest')
+    if data['minimum_deployctl_version'] != '1.0.0':
+        raise ValueError('unsupported minimum_deployctl_version; upgrade platform together')
+    config = validate_deployment(data['deployment'])
+    if config['application'] != data['application']:
+        raise ValueError('release.application does not match deployment.application')
+    commit = data.get('commit', '')
+    if not isinstance(commit, str) or (commit and not re.fullmatch(r'[a-f0-9]{40,64}', commit)):
+        raise ValueError('commit must be an empty string or Git commit hash')
+    return dict(data, deployment=config, commit=commit)

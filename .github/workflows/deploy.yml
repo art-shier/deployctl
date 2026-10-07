@@ -1,0 +1,138 @@
+name: Standard SSH deployment
+
+on:
+  workflow_call:
+    inputs:
+      platform-repository:
+        type: string
+        required: true
+      platform-ref:
+        type: string
+        required: true
+      application:
+        type: string
+        required: true
+      environment:
+        type: string
+        required: true
+      release-url:
+        type: string
+        required: true
+      sha256:
+        type: string
+        required: true
+      mode:
+        type: string
+        default: upgrade
+      ssh-port:
+        type: number
+        default: 22
+      host-port:
+        description: Optional host port for first install; zero means contract default
+        type: number
+        default: 0
+      runner:
+        type: string
+        default: ubuntu-latest
+    secrets:
+      PLATFORM_READ_TOKEN:
+        required: false
+      SSH_HOST:
+        required: true
+      SSH_USER:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+      SSH_KNOWN_HOSTS:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-${{ github.repository }}-${{ inputs.application }}-${{ inputs.environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.platform-repository }}
+          ref: ${{ inputs.platform-ref }}
+          token: ${{ secrets.PLATFORM_READ_TOKEN || github.token }}
+          path: platform
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyYAML==6.0.3
+      - name: Validate inputs and download verified artifact
+        env:
+          PYTHONPATH: ${{ github.workspace }}/platform
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_URL: ${{ inputs.release-url }}
+          RELEASE_SHA256: ${{ inputs.sha256 }}
+          APPLICATION: ${{ inputs.application }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          MODE: ${{ inputs.mode }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ inputs.ssh-port }}
+          HOST_PORT: ${{ inputs.host-port }}
+        run: |
+          python - <<'PY'
+          import os, re, shutil
+          from pathlib import Path
+          from deployctl.contract import validate_name
+          from deployctl.download import acquire_release
+          validate_name(os.environ['APPLICATION'])
+          validate_name(os.environ['TARGET_ENVIRONMENT'], 'environment', 32)
+          if os.environ['MODE'] not in ('install', 'upgrade'):
+              raise SystemExit('mode must be install or upgrade')
+          if not re.fullmatch(r'[A-Za-z0-9.-]+', os.environ['SSH_HOST']):
+              raise SystemExit('SSH_HOST must be a hostname or IPv4 address')
+          if not re.fullmatch(r'[a-z_][a-z0-9_-]*', os.environ['SSH_USER']):
+              raise SystemExit('Invalid SSH_USER')
+          if not 1 <= int(os.environ['SSH_PORT']) <= 65535 or not 0 <= int(os.environ['HOST_PORT']) <= 65535:
+              raise SystemExit('Invalid port')
+          archive = acquire_release(os.environ['RELEASE_URL'], Path('download'), os.environ['RELEASE_SHA256'])
+          shutil.copyfile(archive, 'release.tar.gz')
+          Path('release.tar.gz.sha256').write_text(os.environ['RELEASE_SHA256'] + '  release.tar.gz\n')
+          PY
+      - name: Deploy using server-side deployctl
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ inputs.ssh-port }}
+          APPLICATION: ${{ inputs.application }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          MODE: ${{ inputs.mode }}
+          HOST_PORT: ${{ inputs.host-port }}
+        run: |
+          set -euo pipefail
+          SSH_DIR=$(mktemp -d)
+          trap 'rm -rf -- "$SSH_DIR"' EXIT
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$SSH_DIR/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$SSH_DIR/known_hosts"
+          chmod 600 "$SSH_DIR/key" "$SSH_DIR/known_hosts"
+          SSH_OPTIONS=(-i "$SSH_DIR/key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_DIR/known_hosts")
+          TARGET="$SSH_USER@$SSH_HOST"
+          REMOTE_DIR=$(ssh "${SSH_OPTIONS[@]}" -p "$SSH_PORT" "$TARGET" 'mktemp -d /tmp/deployctl.XXXXXXXXXX')
+          [[ "$REMOTE_DIR" =~ ^/tmp/deployctl\.[A-Za-z0-9]+$ ]]
+          trap 'ssh "${SSH_OPTIONS[@]}" -p "$SSH_PORT" "$TARGET" "rm -rf -- $REMOTE_DIR" || true; rm -rf -- "$SSH_DIR"' EXIT
+          scp "${SSH_OPTIONS[@]}" -P "$SSH_PORT" release.tar.gz release.tar.gz.sha256 "$TARGET:$REMOTE_DIR/"
+          ssh "${SSH_OPTIONS[@]}" -p "$SSH_PORT" "$TARGET" \
+            "bash -s -- '$APPLICATION' '$TARGET_ENVIRONMENT' '$MODE' '$REMOTE_DIR' '$HOST_PORT'" <<'REMOTE'
+          set -euo pipefail
+          app=$1; environment=$2; mode=$3; directory=$4; host_port=$5
+          args=("$mode" "$app" --env "$environment" --release "$directory/release.tar.gz")
+          if [[ "$mode" == install && "$host_port" != 0 ]]; then
+            args+=(--port "$host_port")
+          fi
+          deployctl "${args[@]}"
+          deployctl status "$app" --env "$environment"
+          REMOTE

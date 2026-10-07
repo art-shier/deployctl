@@ -1,0 +1,169 @@
+name: Standard build and release
+
+on:
+  workflow_call:
+    inputs:
+      platform-repository:
+        description: Repository containing this toolkit, e.g. art-shier/deployctl
+        type: string
+        required: true
+      platform-ref:
+        description: Same immutable commit or tag as the called workflow
+        type: string
+        required: true
+      deployment-file:
+        type: string
+        default: deploy/deployment.yaml
+      version:
+        description: Existing project Git tag, e.g. v1.0.0
+        type: string
+        required: true
+      registry:
+        type: string
+        default: ghcr.io
+      image-name:
+        description: Registry repository path; defaults to caller owner/repo in lowercase
+        type: string
+        default: ''
+      platforms:
+        type: string
+        default: linux/amd64
+      test-command:
+        description: Optional project test command, run before building
+        type: string
+        default: ''
+    secrets:
+      PLATFORM_READ_TOKEN:
+        description: Read token needed only if the platform repository is private
+        required: false
+      REGISTRY_USERNAME:
+        required: false
+      REGISTRY_TOKEN:
+        required: false
+    outputs:
+      release_url:
+        value: ${{ jobs.release.outputs.release_url }}
+      sha256:
+        value: ${{ jobs.release.outputs.sha256 }}
+      application:
+        value: ${{ jobs.release.outputs.application }}
+      image:
+        value: ${{ jobs.release.outputs.image }}
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-${{ github.repository }}-${{ inputs.version }}
+      cancel-in-progress: false
+    outputs:
+      release_url: ${{ steps.publish.outputs.release_url }}
+      sha256: ${{ steps.publish.outputs.sha256 }}
+      application: ${{ steps.config.outputs.application }}
+      image: ${{ steps.package.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version }}
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.platform-repository }}
+          ref: ${{ inputs.platform-ref }}
+          token: ${{ secrets.PLATFORM_READ_TOKEN || github.token }}
+          path: platform
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install contract parser
+        run: python -m pip install PyYAML==6.0.3
+      - name: Validate project contract
+        id: config
+        working-directory: source
+        env:
+          PYTHONPATH: ${{ github.workspace }}/platform
+          DEPLOYMENT_FILE: ${{ inputs.deployment-file }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          REGISTRY: ${{ inputs.registry }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+        run: |
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          from deployctl.contract import read_yaml, relative_path, validate_deployment, version
+          relative_path(os.environ['DEPLOYMENT_FILE'], 'deployment-file')
+          version(os.environ['RELEASE_VERSION'])
+          config = validate_deployment(read_yaml(os.environ['DEPLOYMENT_FILE']))
+          registry = os.environ['REGISTRY'].lower()
+          image_name = (os.environ['IMAGE_NAME'] or os.environ['GITHUB_REPOSITORY']).lower()
+          if not re.fullmatch(r'[a-z0-9.-]+(?::[0-9]+)?', registry):
+              raise SystemExit('Invalid registry host')
+          if not re.fullmatch(r'[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*', image_name):
+              raise SystemExit('Invalid image repository path')
+          for key in ('dockerfile', 'context'):
+              candidate = Path(config['build'][key]).resolve()
+              if not candidate.is_relative_to(Path.cwd().resolve()) or not candidate.exists():
+                  raise SystemExit('Build paths must exist inside the project')
+          Path('normalized.json').write_text(json.dumps(config))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              print('application=' + config['application'], file=out)
+              print('context=source/' + config['build']['context'], file=out)
+              print('dockerfile=source/' + config['build']['dockerfile'], file=out)
+              print('image_name=' + registry + '/' + image_name, file=out)
+          PY
+      - name: Project tests
+        if: inputs.test-command != ''
+        working-directory: source
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: bash -e -o pipefail -c "$TEST_COMMAND"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.REGISTRY_TOKEN || github.token }}
+      - name: Build immutable image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.config.outputs.context }}
+          file: ${{ steps.config.outputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ steps.config.outputs.image_name }}:${{ inputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Generate standard package
+        id: package
+        working-directory: source
+        env:
+          PYTHONPATH: ${{ github.workspace }}/platform
+          DEPLOYMENT_FILE: ${{ inputs.deployment-file }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          IMAGE: ${{ steps.config.outputs.image_name }}@${{ steps.image.outputs.digest }}
+        run: |
+          python -m deployctl package --config "$DEPLOYMENT_FILE" \
+            --image "$IMAGE" --version "$RELEASE_VERSION" \
+            --commit "$(git rev-parse HEAD)" --output dist
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+      - name: Publish GitHub Release
+        id: publish
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          APPLICATION: ${{ steps.config.outputs.application }}
+        run: |
+          PACKAGE="${APPLICATION}-${RELEASE_VERSION}.tar.gz"
+          gh release create "$RELEASE_VERSION" "dist/$PACKAGE" "dist/$PACKAGE.sha256" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "$RELEASE_VERSION" --generate-notes
+          echo "release_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_VERSION}/${PACKAGE}" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cut -d ' ' -f 1 "dist/$PACKAGE.sha256")" >> "$GITHUB_OUTPUT"

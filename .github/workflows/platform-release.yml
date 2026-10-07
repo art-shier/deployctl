@@ -1,0 +1,102 @@
+name: Release deployctl
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing version tag, e.g. v1.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    uses: ./.github/workflows/verify.yml
+    with:
+      ref: ${{ inputs.version || github.ref_name }}
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version || github.ref_name }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyYAML==6.0.3 build
+      - name: Verify tag and package version
+        env:
+          TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          from deployctl import __version__
+          metadata = tomllib.loads(Path('pyproject.toml').read_text())
+          if os.environ['TAG'] != 'v' + __version__ or metadata['project']['version'] != __version__:
+              raise SystemExit('Tag, deployctl version and pyproject version must match')
+          PY
+      - name: Build wheel and release assets
+        run: |
+          python -m build --wheel
+          python scripts/build_release_assets.py
+          python -I -S dist/deployctl.pyz --version
+          bash scripts/installer_smoke.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deployctl-${{ inputs.version || github.ref_name }}
+          path: dist/
+          retention-days: 14
+      - name: Stage draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/deployctl.pyz dist/deployctl.pyz.sha256 \
+            dist/install.sh dist/install.sh.sha256 dist/SHA256SUMS \
+            dist/team-deploy-skill-*.zip dist/team-deploy-skill-*.zip.sha256 \
+            dist/*.whl dist/*.whl.sha256 \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --generate-notes --draft
+          gh api "repos/$GITHUB_REPOSITORY/releases" > "$RUNNER_TEMP/releases.json"
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json, os
+          from pathlib import Path
+          releases = json.loads((Path(os.environ['RUNNER_TEMP']) / 'releases.json').read_text())
+          matches = [item for item in releases if item['tag_name'] == os.environ['TAG'] and item['draft']]
+          if len(matches) != 1:
+              raise SystemExit('Expected exactly one staged draft Release')
+          print('RELEASE_ID=' + str(matches[0]['id']))
+          PY
+      - name: Verify actual private draft installation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          bash dist/install.sh --repo "$GITHUB_REPOSITORY" --version "$TAG" --release-id "$RELEASE_ID" --install-dir "$RUNNER_TEMP/installed"
+          test "$("$RUNNER_TEMP/installed/ctl" --version)" = "${TAG#v}"
+          test "$("$RUNNER_TEMP/installed/deployctl" --version)" = "${TAG#v}"
+          gh api "repos/$GITHUB_REPOSITORY/contents/install.sh?ref=$TAG" \
+            -H 'Accept: application/vnd.github.raw+json' \
+            | bash -s -- --repo "$GITHUB_REPOSITORY" --version "$TAG" --release-id "$RELEASE_ID" --install-dir "$RUNNER_TEMP/one-click"
+          test "$("$RUNNER_TEMP/one-click/ctl" --version)" = "${TAG#v}"
+      - name: Publish verified Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          bash dist/install.sh --repo "$GITHUB_REPOSITORY" --version "$TAG" --install-dir "$RUNNER_TEMP/published"
+          test "$("$RUNNER_TEMP/published/ctl" --version)" = "${TAG#v}"
+          echo "Published $TAG after real GitHub asset download and installer verification" >> "$GITHUB_STEP_SUMMARY"

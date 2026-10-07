@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://team-deploy.example/schemas/deployment-v1.json",
+  "title": "Team deployment contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "application", "container", "health"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "application": {"type": "string", "maxLength": 48, "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"},
+    "build": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "dockerfile": {"type": "string", "minLength": 1},
+        "context": {"type": "string", "minLength": 1}
+      }
+    },
+    "container": {
+      "type": "object", "additionalProperties": false, "required": ["port"],
+      "properties": {
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "host_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "bind_address": {"type": "string", "format": "ipv4"}
+      }
+    },
+    "health": {
+      "type": "object", "additionalProperties": false, "required": ["readiness_path"],
+      "properties": {
+        "readiness_path": {"type": "string", "maxLength": 256, "pattern": "^/(?!/)[^?#\\\\\\r\\n]*$"},
+        "startup_timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}
+      }
+    },
+    "resources": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "memory_limit": {"type": "string", "pattern": "^[1-9][0-9]*[kKmMgG]$"},
+        "cpus": {"type": "number", "minimum": 0.1, "maximum": 128}
+      }
+    },
+    "required_config": {
+      "type": "array", "maxItems": 128, "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$", "not": {"const": "APP_VERSION"}}
+    }
+  }
+}

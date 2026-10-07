@@ -1,0 +1,54 @@
+name: Shared verification
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact caller commit or requested release tag to verify
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  unit:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: '3.10'
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: windows-latest
+            python: '3.12'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install PyYAML==6.0.3
+      - run: python scripts/build_install_script.py --check
+      - run: python scripts/build_release_assets.py
+      - run: python -m unittest discover -s tests -v
+      - run: python -I -S dist/deployctl.pyz validate templates/deployment.yaml
+      - run: bash -n install.sh
+      - name: Real local installation
+        if: runner.os == 'Linux'
+        run: bash scripts/installer_smoke.sh
+  docker:
+    name: Real Docker integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyYAML==6.0.3
+      - run: python scripts/docker_integration.py

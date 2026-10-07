@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "team-deployctl"
+version = "1.2.0"
+description = "Standard GitHub release delivery and Docker Compose deployment"
+requires-python = ">=3.10"
+dependencies = ["PyYAML==6.0.3"]
+
+[project.scripts]
+deployctl = "deployctl.cli:main"
+ctl = "deployctl.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["deployctl*"]

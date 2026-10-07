@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Team release manifest v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "application", "version", "image", "minimum_deployctl_version", "deployment"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "application": {"type": "string", "maxLength": 48, "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"},
+    "version": {"type": "string", "maxLength": 96, "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$"},
+    "image": {"type": "string", "pattern": "^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$"},
+    "commit": {"type": "string", "pattern": "^([a-f0-9]{40,64})?$"},
+    "minimum_deployctl_version": {"const": "1.0.0"},
+    "deployment": {"$ref": "deployment.schema.json"}
+  }
+}

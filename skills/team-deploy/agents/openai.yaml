@@ -1,0 +1,4 @@
+interface:
+  display_name: "Team Deploy 标准部署"
+  short_description: "为项目接入统一的 GitHub 流水线，并使用 deployctl 部署和恢复服务"
+  default_prompt: "使用 $team-deploy 帮当前项目接入团队标准交付，并验证配置与发布工作流。"

@@ -1,0 +1,23 @@
+schema_version: 1
+application: project-a
+
+build:
+  dockerfile: Dockerfile
+  context: .
+
+container:
+  port: 8080
+  host_port: 8080
+  bind_address: 127.0.0.1
+
+health:
+  readiness_path: /health/ready
+  startup_timeout_seconds: 120
+
+resources:
+  memory_limit: 512m
+  cpus: 1.0
+
+required_config:
+  - DATABASE_URL
+  - APP_SECRET
