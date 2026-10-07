@@ -179,7 +179,8 @@ def install(artifact=None, install_dir=None, repository=DEFAULT_REPOSITORY, vers
     files = dict(previous_files) if previous.get('repository') == repository else {}
     files.update({name: installed_digest for name in names})
     state = {'schema_version': 1, 'repository': repository, 'version': tag,
-             'sha256': actual, 'files': files, 'directory': str(folder)}
+             'sha256': actual, 'files': files, 'directory': str(folder),
+             'primary_name': primary_name, 'commands': names}
     changed = []
     try:
         for name in names:

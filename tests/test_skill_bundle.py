@@ -23,6 +23,12 @@ class SkillBundleTests(unittest.TestCase):
         digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
         self.assertEqual(artifact.with_name(artifact.name + '.sha256').read_text().split()[0], digest)
 
+    def test_skill_cli_self_update_help_runs_without_external_dependencies(self):
+        result = subprocess.run([sys.executable, '-I', '-S', str(SKILL / 'assets/deployctl.pyz'),
+                                 'self-update', '--help'], cwd=SKILL, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--version', result.stdout)
+
     def test_skill_cli_keeps_failures_nonzero(self):
         result = subprocess.run([sys.executable, '-I', '-S', str(SKILL / 'assets/deployctl.pyz'),
                                  'validate', str(SKILL / 'nonexistent.yaml')],

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Existing version tag, e.g. v1.2.0
+        description: Existing version tag, e.g. v1.3.0
         required: true
         type: string
 
@@ -91,6 +91,9 @@ jobs:
             -H 'Accept: application/vnd.github.raw+json' \
             | bash -s -- --repo "$GITHUB_REPOSITORY" --version "$TAG" --release-id "$RELEASE_ID" --install-dir "$RUNNER_TEMP/one-click"
           test "$("$RUNNER_TEMP/one-click/ctl" --version)" = "${TAG#v}"
+          "$RUNNER_TEMP/one-click/ctl" self-update --version "$TAG" --release-id "$RELEASE_ID"
+          test "$("$RUNNER_TEMP/one-click/ctl" --version)" = "${TAG#v}"
+          test "$("$RUNNER_TEMP/one-click/deployctl" --version)" = "${TAG#v}"
       - name: Publish verified Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -99,4 +102,7 @@ jobs:
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
           bash dist/install.sh --repo "$GITHUB_REPOSITORY" --version "$TAG" --install-dir "$RUNNER_TEMP/published"
           test "$("$RUNNER_TEMP/published/ctl" --version)" = "${TAG#v}"
+          PATH="$RUNNER_TEMP/published:$PATH" ctl self-update
+          test "$("$RUNNER_TEMP/published/ctl" --version)" = "${TAG#v}"
+          test "$("$RUNNER_TEMP/published/deployctl" --version)" = "${TAG#v}"
           echo "Published $TAG after real GitHub asset download and installer verification" >> "$GITHUB_STEP_SUMMARY"

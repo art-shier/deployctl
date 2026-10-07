@@ -20,7 +20,7 @@ team-deploy/
     └── templates/
 ```
 
-可以从平台Release下载team-deploy-skill-v1.2.0.zip，单独分发整个team-deploy目录，不能只复制SKILL.md而遗漏资源。当前自包含CLI为v1.2.0，支持init和私有平台接入；发布包协议保持schema_version: 1。工具升级时需要同步CLI、模板和指南。
+可以从平台Release下载team-deploy-skill-v1.3.0.zip，单独分发整个team-deploy目录，不能只复制SKILL.md而遗漏资源。当前自包含CLI为v1.3.0，支持init和私有平台接入；发布包协议保持schema_version: 1。工具升级时需要同步CLI、模板和指南。
 
 按Codex当前[官方技能文档](https://learn.chatgpt.com/docs/build-skills)，仓库级技能可放在项目 `.agents/skills/team-deploy/`，用户级技能可放在 `~/.agents/skills/team-deploy/`。本地已有环境也可能配置CODEX_HOME/skills；沿用实际加载目录，避免同名skill同时安装到多个目录。
 
@@ -33,13 +33,15 @@ team-deploy/
 ```text
 使用 $team-deploy 帮当前项目接入团队标准交付。
 平台仓库：art-shier/deployctl（私有，init添加--private-platform）
-平台引用：v1.2.0或实际审核过的SHA
+平台引用：v1.3.0或实际审核过的SHA
 本次只修改并验证本地接入文件，不推送、不发布、不操作服务器。
 ```
 
 agent会读取项目代码，复用Dockerfile，填写deployment.yaml，添加或合并公共构建工作流，并使用随附CLI做真实配置校验。未提供平台仓库/引用时，它应列出信息缺口并继续可完成的本地准备。
 
 新接入优先通过init预览并生成文件。已有文件不覆盖，按需合并或选择其他工作流文件名。平台引用沿用用户给定的实际值，不自动改成CLI版本号。
+
+技能也覆盖ctl/deployctl命令缺失和工具自身更新：先检查PATH与版本，需要时在线或离线安装；CLI>=1.3.0的受管理命令使用self-update，旧版通过重新执行安装器更新。细节见 [CLI安装与升级](../skills/team-deploy/references/cli-lifecycle.md)，工具更新与业务upgrade分开处理。
 
 ## 服务操作示例
 

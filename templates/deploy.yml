@@ -23,10 +23,10 @@ permissions:
 
 jobs:
   deploy:
-    uses: art-shier/deployctl/.github/workflows/deploy.yml@v1.2.0
+    uses: art-shier/deployctl/.github/workflows/deploy.yml@v1.3.0
     with:
       platform-repository: art-shier/deployctl
-      platform-ref: v1.2.0
+      platform-ref: v1.3.0
       application: project-a
       environment: ${{ inputs.environment }}
       release-url: ${{ inputs.release_url }}

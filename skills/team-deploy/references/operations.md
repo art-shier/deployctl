@@ -1,4 +1,4 @@
-# 服务器操作（CLI v1.2.0，兼容发布包协议v1）
+# 服务器操作（CLI v1.3.0，兼容发布包协议v1）
 
 ## 定位并检查目标
 
@@ -10,7 +10,7 @@ docker compose version
 deployctl status "$APP" --env "$ENVIRONMENT"
 ```
 
-要求Python>=3.10、Docker Engine、Compose>=2.30。没有CLI时，若已授权服务器初始化，上传 `assets/deployctl.pyz` 和 `.sha256`，通过 `bash assets/install.sh assets/deployctl.pyz` 安装；需要写/usr/local/bin的权限。随附安装器不安装Docker或Python，也不配置云账号。
+服务运行要求Python>=3.10、Docker Engine、Compose>=2.30。CLI找不到、版本不兼容或需要更新工具时，先读取 [CLI安装与升级](cli-lifecycle.md)，处理PATH、在线/离线安装、旧版更新或self-update。安装器不安装Docker或Python，也不配置云账号。
 
 默认状态位置 `/opt/deployments/<application>/<environment>/state.json`；配置位置 `/etc/deployctl/<application>/<environment>/{config.env,secrets.env}`。state.json为依据，status还显示实际Compose状态。
 

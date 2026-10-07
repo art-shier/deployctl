@@ -20,8 +20,8 @@ class BootstrapTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def installer(self):
-        from scripts import install_deployctl
-        return install_deployctl
+        from deployctl import bootstrap
+        return bootstrap
 
     def test_local_install_creates_both_commands_and_records_ownership(self):
         installer = self.installer()

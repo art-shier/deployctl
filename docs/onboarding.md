@@ -6,7 +6,7 @@
 
 平台仓库需在 Actions 设置中允许目标业务仓库访问 reusable workflows，并给业务仓库配置能读取平台代码的 `PLATFORM_READ_TOKEN`。业务仓库自己的 `GITHUB_TOKEN` 通常不能 checkout 另一个私有仓库。
 
-当前平台使用v1.2.0；升级时同步CLI、pyproject版本、模板引用和skill资源，再通过 [平台发布流水线](release-pipeline.md) 发布新标签。发布包仍使用schema_version: 1和minimum_deployctl_version=1.0.0，业务项目版本与平台版本独立。
+当前平台使用v1.3.0；升级时同步CLI、pyproject版本、模板引用和skill资源，再通过 [平台发布流水线](release-pipeline.md) 发布新标签。发布包仍使用schema_version: 1和minimum_deployctl_version=1.0.0，业务项目版本与平台版本独立。
 
 ## 2. 初始化服务器（每台做一次）
 
@@ -17,8 +17,8 @@
 ```bash
 gh auth login --hostname github.com
 set -o pipefail
-gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.2.0' \
-  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.2.0
+gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.3.0' \
+  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.3.0
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```
@@ -46,7 +46,7 @@ docker login ghcr.io --username <有读取权限的用户名>
 
 ```bash
 ctl init project-a --platform-repository art-shier/deployctl \
-  --platform-ref v1.2.0 --private-platform --port 8080 --health-path /health/ready
+  --platform-ref v1.3.0 --private-platform --port 8080 --health-path /health/ready
 ```
 
 引用填写平台实际可用版本。加--dry-run预览；已有文件会保留并报告冲突。详见 [init说明](init.md)。
@@ -65,10 +65,10 @@ templates/release.yml → project-a/.github/workflows/release.yml
 ```yaml
 jobs:
   release:
-    uses: art-shier/deployctl/.github/workflows/build-release.yml@v1.2.0
+    uses: art-shier/deployctl/.github/workflows/build-release.yml@v1.3.0
     with:
       platform-repository: art-shier/deployctl
-      platform-ref: v1.2.0
+      platform-ref: v1.3.0
       deployment-file: deploy/deployment.yaml
       version: ${{ github.ref_name }}
     secrets:

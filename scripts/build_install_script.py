@@ -22,7 +22,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
-    content = HEADER + (ROOT / 'scripts/install_deployctl.py').read_text(encoding='utf-8').rstrip() + '\nDEPLOYCTL_INSTALL_PY\n'
+    content = HEADER + (ROOT / 'deployctl/bootstrap.py').read_text(encoding='utf-8').rstrip() + '\nDEPLOYCTL_INSTALL_PY\n'
     target = ROOT / 'install.sh'
     if args.check:
         if not target.exists() or target.read_text(encoding='utf-8') != content:

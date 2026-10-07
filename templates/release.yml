@@ -10,10 +10,10 @@ permissions:
 
 jobs:
   release:
-    uses: art-shier/deployctl/.github/workflows/build-release.yml@v1.2.0
+    uses: art-shier/deployctl/.github/workflows/build-release.yml@v1.3.0
     with:
       platform-repository: art-shier/deployctl
-      platform-ref: v1.2.0
+      platform-ref: v1.3.0
       deployment-file: deploy/deployment.yaml
       version: ${{ github.ref_name }}
       # image-name defaults to this project's owner/repository.

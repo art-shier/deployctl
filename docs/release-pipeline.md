@@ -12,7 +12,7 @@ ci.yml在分支推送/PR时调用verify.yml。verify.yml也被平台发布流程
 
 ## 发布
 
-更新deployctl/__init__.py、pyproject.toml、模板与skill版本后，推送对应v标签，例如v1.2.0。也可从Actions手动触发Release deployctl，version填写已经存在的标签。
+更新deployctl/__init__.py、pyproject.toml、模板与skill版本后，推送对应v标签，例如v1.3.0。也可从Actions手动触发Release deployctl，version填写已经存在的标签。
 
 平台发布流程先完成全部检查，再构建wheel和发布资产；标签、Python包版本、CLI版本不一致时停止。发布包包括：
 
@@ -25,6 +25,8 @@ SHA256SUMS
 ```
 
 构建产物同时作为Actions artifact保留14天。先创建草稿Release，在Linux Runner通过草稿ID读取真实私有资产，验证两个命令的版本，并测试GitHub API获取的一键安装脚本入口。全部通过后才发布正式Release，再检查正式标签下载路径。失败的草稿保留用于诊断，不会成为最新版。Release不覆盖已有版本；失败后排查草稿或发布新版本，不移动已有标签。
+
+CLI>=1.3.0的发布流程同时验证草稿中的self-update，以及正式发布后按PATH调用`ctl self-update`解析latest、更新原目录并核对两个入口版本。安装器和self-update共用deployctl/bootstrap.py；生成install.sh时嵌入同一标准库实现，不依赖服务器pip。
 
 ## 私有平台接入
 

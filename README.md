@@ -12,13 +12,15 @@
 
 ```bash
 set -o pipefail
-gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.2.0' \
-  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.2.0
+gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.3.0' \
+  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.3.0
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```
 
 安装器下载 CLI、检查 SHA256 和版本，安装 `ctl` 与 `deployctl` 到 `~/.local/bin`。CLI 内置依赖，无需服务器 pip 安装。再次执行可升级本安装器管理的命令；已有其他同名工具会保留并报告冲突。
+
+安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.3.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
 
 要求 Python >=3.10；服务部署另需 Docker Engine、Docker Compose >=2.30。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
 
@@ -28,7 +30,7 @@ ctl --version
 
 ```bash
 ctl init project-a \
-  --platform-repository art-shier/deployctl --platform-ref v1.2.0 \
+  --platform-repository art-shier/deployctl --platform-ref v1.3.0 \
   --private-platform --port 8080 --health-path /health/ready
 ctl validate deploy/deployment.yaml
 ```
@@ -57,6 +59,7 @@ ctl rollback project-a --env production
 | 命令 | 用途 |
 |---|---|
 | `init` | 生成项目接入 YAML |
+| `self-update` | 更新当前安装的部署工具自身（CLI>=1.3.0） |
 | `validate` / `package` | 校验部署描述 / 生成标准发布包 |
 | `install` / `upgrade` / `rollback` | 首次部署 / 更新 / 回滚 |
 | `status` / `logs` | 查看状态 / 日志 |
@@ -64,7 +67,7 @@ ctl rollback project-a --env production
 
 | 文件/目录 | 用途 |
 |---|---|
-| `install.sh` | 自包含安装入口，源码在 `scripts/install_deployctl.py` |
+| `install.sh` | 自包含安装入口，和self-update共用 `deployctl/bootstrap.py` |
 | `.github/workflows/build-release.yml` | 业务项目复用的构建交付流水线 |
 | `.github/workflows/deploy.yml` | 可选 SSH 部署流水线 |
 | `.github/workflows/platform-release.yml` | CLI 检查、构建、草稿验证及正式发布 |

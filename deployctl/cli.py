@@ -15,6 +15,10 @@ def parser():
     result = argparse.ArgumentParser(prog='deployctl')
     result.add_argument('--version', action='version', version=__version__)
     sub = result.add_subparsers(dest='command', required=True)
+    self_update = sub.add_parser('self-update', help='update the installed CLI itself; leaves deployed services unchanged')
+    self_update.add_argument('--version', default='latest', help='tool Release tag; default: latest published version')
+    self_update.add_argument('--sha256', help='optional independently obtained CLI artifact checksum')
+    self_update.add_argument('--release-id', help=argparse.SUPPRESS)
     init = sub.add_parser('init', help='initialize project deployment YAML and GitHub workflow')
     init.add_argument('application')
     init.add_argument('--directory', default='.', help='existing business project directory')
@@ -60,7 +64,12 @@ def parser():
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
-        if args.command == 'init':
+        if args.command == 'self-update':
+            from .self_update import update_tool
+            state = update_tool(version=args.version, expected_sha256=args.sha256, release_id=args.release_id)
+            print(f'Updated tool to {state["version"]} in {state["directory"]}')
+            print('Commands: ' + ', '.join(state['commands']))
+        elif args.command == 'init':
             from .initialize import initialize_project
             inputs = vars(args).copy()
             inputs.pop('command')
