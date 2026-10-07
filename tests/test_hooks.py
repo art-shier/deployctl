@@ -5,6 +5,9 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+import signal
+import subprocess
+import sys
 from unittest.mock import patch
 
 from deployctl.contract import validate_deployment
@@ -118,6 +121,45 @@ PY
         self.assertEqual(error.exception.exit_code, 7)
         self.assertNotIn('super-secret', str(error.exception))
         self.assertIn('super-secret', error.exception.log_path.read_text())
+
+    def test_termination_signals_clean_detached_hook_group(self):
+        path = self.release_dir / 'hooks/pre-install.sh'
+        pid_file = self.base / 'hookpid'
+        heartbeat = self.base / 'heartbeat'
+        path.write_text(f'echo $$ > "{pid_file}"\n' + self.heartbeat(), encoding='utf-8')
+        descriptor = {'path': 'hooks/pre-install.sh', 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                      'timeout_seconds': 30}
+        payload = self.base / 'runner.json'
+        payload.write_text(json.dumps({'descriptor': descriptor, 'id': self.snapshot.id,
+            'directory': str(self.snapshot.directory), 'values': self.snapshot.values,
+            'overrides': {}, 'install_params': self.snapshot.install_params, 'sha256': self.snapshot.sha256}))
+        code = '''import json,sys
+from pathlib import Path
+from deployctl.hooks import HookRunner
+from deployctl.runtime_snapshot import ConfigurationSnapshot
+d=json.loads(Path(sys.argv[1]).read_text()); descriptor=d.pop('descriptor');d['directory']=Path(d['directory'])
+HookRunner().run('pre_install',descriptor,Path(sys.argv[2]),ConfigurationSnapshot(**d),{})
+'''
+        for signum in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=signum):
+                heartbeat.unlink(missing_ok=True);pid_file.unlink(missing_ok=True)
+                outer = subprocess.Popen([sys.executable, '-c', code, str(payload), str(self.release_dir)],
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    deadline = time.monotonic() + 5
+                    while not heartbeat.exists() and time.monotonic() < deadline: time.sleep(.02)
+                    self.assertTrue(heartbeat.exists(), 'hook did not start')
+                    outer.send_signal(signum)
+                    outer.communicate(timeout=8)
+                    self.assertNotEqual(outer.returncode, 0)
+                    self.assert_heartbeat_stopped()
+                finally:
+                    # The RED reproduction must not leave a live hook on the CI runner.
+                    if pid_file.exists():
+                        try: os.killpg(int(pid_file.read_text()), signal.SIGKILL)
+                        except ProcessLookupError: pass
+                    if outer.poll() is None: outer.kill()
+                    outer.communicate(timeout=5)
 
 
 if __name__ == '__main__': unittest.main()

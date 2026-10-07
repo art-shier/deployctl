@@ -33,5 +33,12 @@ class StateTests(unittest.TestCase):
                                        ['PATH=/bin', 'B=image'], {'A', 'B'}, 'v1.0.0')
         self.assertEqual(result, {'A': 'actual', 'B': 'image', 'C': 'extra', 'APP_VERSION': 'v1.0.0'})
 
+    def test_image_defaults_are_filtered_before_business_configuration_validation(self):
+        from deployctl.deployment_state import collect_legacy_values
+        inherited = ['http_proxy=http://proxy', 'IMAGE_DEFAULT=' + 'a' * 5000,
+                     *[f'IMAGE_{n}=default' for n in range(150)]]
+        result = collect_legacy_values([*inherited, 'DATABASE_URL=actual'], inherited, {'DATABASE_URL'}, 'v1.0.0')
+        self.assertEqual(result, {'DATABASE_URL': 'actual', 'APP_VERSION': 'v1.0.0'})
+
 
 if __name__ == '__main__': unittest.main()

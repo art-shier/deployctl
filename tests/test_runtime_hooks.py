@@ -162,6 +162,19 @@ class TransactionHooksTests(unittest.TestCase):
         self.assertEqual(self.driver.values['TEXT'], 'actual old')
         self.assertFalse(self.state()['current']['legacy'])
 
+    def test_legacy_pre_failure_preserves_reference_of_unchanged_container(self):
+        self.legacy()
+        self.driver.configuration = None
+        self.driver.calls.clear()
+        self.hooks.fail = 'pre_install'
+        with self.assertRaises(RuntimeError): self.upgrade(self.package('v1.1.0', True))
+        self.assertFalse(any(call[0] == 'up' for call in self.driver.calls))
+        current = self.state()['current']
+        self.assertTrue(current['legacy'])
+        self.assertIsNone(current['configuration'])
+        self.assertIsNone(self.state()['transaction'])
+        self.manager.operate('project-a', 'production', 'restart')
+
     def test_legacy_missing_or_mismatched_container_refuses_upgrade(self):
         for info in (None, {'image': IMAGE, 'labels': {}, 'environment': []}):
             with self.subTest(info=info is None):
