@@ -6,6 +6,7 @@ from pathlib import Path
 import selectors
 import signal
 import subprocess
+import threading
 import time
 
 from .contract import HOOK_PATHS, validate_hook_manifest
@@ -102,6 +103,8 @@ class HookRunner:
     def check(self):
         if os.name == 'nt' or not Path('/bin/bash').is_file():
             raise RuntimeError('installation hooks require Linux /bin/bash')
+        if threading.current_thread() is not threading.main_thread():
+            raise RuntimeError('installation hooks require the main thread for signal cleanup')
 
     def run(self, phase, descriptor, release_dir, snapshot, context):
         self.check()
@@ -118,17 +121,38 @@ class HookRunner:
         # Independent executions (e.g. retries) never overwrite earlier hook diagnostics.
         import uuid
         log_path = logs / f'{snapshot.id}-{phase}-{uuid.uuid4().hex}.log'
-        process = subprocess.Popen(['/bin/bash', '--noprofile', '--norc',
-                                    str(Path(release_dir).absolute() / HOOK_PATHS[phase])],
-                                   cwd=release_dir, env=environment, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+        process, terminating, cleaning = None, False, False
+        def interrupt(signum, frame):
+            nonlocal terminating
+            terminating = True
+            # Defer unwinding until Popen assigns the child, so termination during
+            # spawn cannot strand a new session. Further signals cannot abort cleanup.
+            if process is not None and not cleaning:
+                raise KeyboardInterrupt()
+        signals = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+        previous_handlers = {signum: signal.getsignal(signum) for signum in signals}
         try:
+            for signum in signals:
+                signal.signal(signum, interrupt)
+            process = subprocess.Popen(['/bin/bash', '--noprofile', '--norc',
+                                        str(Path(release_dir).absolute() / HOOK_PATHS[phase])],
+                                       cwd=release_dir, env=environment, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+            if terminating:
+                raise KeyboardInterrupt()
             tail, timed_out = drain_process(process, descriptor['timeout_seconds'])
         finally:
+            cleaning = True
             try:
-                cleanup_group(process)
+                if process is not None:
+                    cleanup_group(process)
             finally:
-                process.stdout.close()
+                if process is not None:
+                    process.stdout.close()
+                for signum, handler in previous_handlers.items():
+                    signal.signal(signum, handler)
+        if terminating:
+            raise KeyboardInterrupt()
         verify_snapshot(snapshot)
         if hashlib.sha256(read_hook_script(release_dir, descriptor['path'])).hexdigest() != descriptor['sha256']:
             raise ValueError('hook script changed during execution')

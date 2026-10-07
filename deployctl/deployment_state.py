@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 import ipaddress
 
 from .contract import integer, version
-from .runtime_config import parse_assignments, validate_values
+from .runtime_config import validate_values
 from .runtime_snapshot import DIGEST, validate_id
 
 PHASES = {'prepared', 'pre_install', 'start', 'health-check', 'post_install', 'final-health-check', 'rollback'}
@@ -106,8 +106,14 @@ def promote_state(state, candidate, preserve_previous=False):
 
 
 def collect_legacy_values(container_env, image_env, configured_names, release_version):
-    actual = parse_assignments(container_env, 'actual container environment', False)
-    defaults = parse_assignments(image_env, 'image environment', False)
+    def docker_values(records):
+        if not isinstance(records, list) or any(not isinstance(item, str) or '=' not in item for item in records):
+            raise ValueError('invalid Docker environment inspection data')
+        # Image metadata is not business input: it may contain lowercase keys,
+        # multiline defaults or more entries than our managed configuration.
+        return dict(item.split('=', 1) for item in records)
+    actual = docker_values(container_env)
+    defaults = docker_values(image_env)
     values = {key: value for key, value in actual.items()
               if key != 'APP_VERSION' and not key.startswith('DEPLOYCTL_')
               and (key in configured_names or defaults.get(key) != value)}

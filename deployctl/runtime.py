@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import copy
 import hashlib
 import ipaddress
 import json
@@ -380,6 +381,7 @@ class Manager:
             binding = self.binding(release, state['binding'], port, bind)
             project = project_name(app, env)
             self.driver.check()
+            unchanged_before = copy.deepcopy(state)
             if state['current'] and state['current']['legacy']:
                 state['current'] = self.capture_legacy(home, folder, state['current'], app, project,
                                                       set(config) | set(secrets))
@@ -388,7 +390,6 @@ class Manager:
             candidate = DeploymentRef(release['version'], snapshot.id, snapshot.sha256, binding).as_dict()
             environment = self.docker_environment(folder, binding, snapshot)
             self.driver.pull(directory, project, environment)
-            import copy
             before = copy.deepcopy(state)
             state['transaction'] = {'from': state['current'], 'to': candidate, 'phase': 'prepared'}
             self.save(home, state, 'deployment_started')
@@ -437,7 +438,8 @@ class Manager:
                             self.driver.probe(old_dir, project, old_env, old_release, before['current']['binding'])
                         else:
                             self.driver.down(directory, project, environment)
-                    self.save(home, before, 'deployment_failed_old_restored' if before['current'] else 'install_failed_candidate_stopped')
+                    restored = before if replacement_started else unchanged_before
+                    self.save(home, restored, 'deployment_failed_old_restored' if before['current'] else 'install_failed_candidate_stopped')
                 except Exception as recovery:
                     # The already persisted transaction remains authoritative if writing diagnostics also fails.
                     try:

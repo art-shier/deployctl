@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from deployctl.contract import read_yaml
 from deployctl.release import build_release
-from deployctl.runtime import project_name
+from deployctl.runtime import DockerDriver, Manager, atomic_json, project_name
 
 
 def run(*args, input=None, check=True):
@@ -53,6 +53,9 @@ def main():
             except OSError:
                 time.sleep(1)
         run('docker', 'build', '-t', image, ROOT / 'examples/project-a')
+        # A normal lowercase image ENV is inherited by both old and new services.
+        run('docker', 'build', '-t', image, '-f', '-', ROOT / 'examples/project-a',
+            input=f'FROM {image}\nENV http_proxy=http://proxy.invalid:8080\n')
         run('docker', 'push', image)
         good_digest = run('docker', 'image', 'inspect', image, '--format', '{{index .RepoDigests 0}}').stdout.strip()
         run('docker', 'build', '-t', bad_image, '-f', '-', ROOT / 'examples/project-a',
@@ -182,6 +185,28 @@ PY
             cli('stop')
             cli('restart')
             assert actual_version() == 'v1.1.0'
+            # Recreate the v1 server layout/container, including no configuration
+            # label, then prove a failed pre does not falsely promote its baseline.
+            home = base / 'apps' / app / 'test'
+            old_dir = home / 'releases/v1.1.0'
+            old_release = read_yaml(old_dir / 'release.yaml')
+            binding = {'address': '127.0.0.1', 'port': app_port}
+            legacy_env = Manager(base / 'apps', base / 'config').docker_environment(config_dir, binding)
+            (config_dir / 'config.env').write_text('RAW_VALUE=legacy actual\n')
+            driver = DockerDriver()
+            driver.up(old_dir, project, legacy_env)
+            driver.probe(old_dir, project, legacy_env, old_release, binding)
+            atomic_json(home / 'state.json', {'schema_version': 1, 'application': app, 'environment': 'test',
+                        'current': 'v1.1.0', 'previous': None, 'transaction': None, 'binding': binding})
+            (config_dir / 'config.env').write_text('RAW_VALUE=edited server\n')
+            failure = cli('upgrade', '--release', hooks_archive, *params, '--set', 'FAIL=pre', check=False)
+            assert failure.returncode != 0 and state()['current']['legacy']
+            assert 'io.team-deploy.configuration' not in driver.inspect_container(old_dir, project, legacy_env)['labels']
+            cli('restart')
+            failure = cli('upgrade', '--release', hooks_archive, *params, '--set', 'FAIL=post', check=False)
+            assert failure.returncode != 0 and not state()['current']['legacy']
+            assert container_config()['RAW_VALUE'] == 'legacy actual'
+            cli('restart')
         print('PASS: real install/upgrade, JSON/raw env and nonroot read-only mount, pre/post/timeout failures, configuration recovery/unset/same-version rollback, status/logs and restart')
     finally:
         containers = run('docker', 'ps', '-aq', '--filter', f'label=com.docker.compose.project={project}', check=False).stdout.split()
