@@ -11,6 +11,7 @@ VERSION = re.compile(r'v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?\Z
 DIGEST_IMAGE = re.compile(r'[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}\Z')
 ENV_NAME = re.compile(r'[A-Z_][A-Z0-9_]*\Z')
 BUILD_ARG_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,127}\Z')
+HOOK_PATHS = {'pre_install': 'hooks/pre-install.sh', 'post_install': 'hooks/post-install.sh'}
 
 
 class UniqueLoader(yaml.SafeLoader):
@@ -98,7 +99,7 @@ def validate_build_args(value, field='build.args'):
 
 def validate_deployment(data):
     mapping(data, {'schema_version', 'application', 'build', 'container', 'health',
-                   'resources', 'required_config'},
+                   'resources', 'required_config', 'hooks'},
             {'schema_version', 'application', 'container', 'health'}, 'deployment')
     integer(data['schema_version'], 1, 1, 'schema_version')
     app = validate_name(data['application'])
@@ -137,7 +138,7 @@ def validate_deployment(data):
             or any(not isinstance(k, str) or not ENV_NAME.fullmatch(k) for k in config)
             or len(set(config)) != len(config) or 'APP_VERSION' in config):
         raise ValueError('required_config must contain unique uppercase names; APP_VERSION is reserved')
-    return {
+    normalized = {
         'schema_version': 1, 'application': app,
         'build': normalized_build,
         'container': {'port': port, 'host_port': host_port, 'bind_address': bind},
@@ -145,24 +146,69 @@ def validate_deployment(data):
         'resources': {'memory_limit': memory, 'cpus': float(cpus)},
         'required_config': config,
     }
+    if 'hooks' in data:
+        hooks = validate_project_hooks(data['hooks'])
+        if hooks:
+            normalized['hooks'] = hooks
+    return normalized
+
+
+def validate_project_hooks(value):
+    mapping(value, HOOK_PATHS, set(), 'hooks')
+    result = {}
+    for phase, hook in value.items():
+        field = f'hooks.{phase}'
+        mapping(hook, {'script', 'timeout_seconds'}, {'script'}, field)
+        script = relative_path(hook['script'], field + '.script')
+        if any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in '\u2028\u2029' for c in script):
+            raise ValueError(f'{field}.script must not contain controls')
+        result[phase] = {'script': script, 'timeout_seconds': integer(
+            hook.get('timeout_seconds', 300), 1, 3600, field + '.timeout_seconds')}
+    return result
+
+
+def validate_hook_manifest(value):
+    mapping(value, HOOK_PATHS, set(), 'release.hooks')
+    if not value:
+        raise ValueError('release schema 2 requires at least one hook')
+    result = {}
+    for phase, hook in value.items():
+        field = f'release.hooks.{phase}'
+        mapping(hook, {'path', 'sha256', 'timeout_seconds'}, {'path', 'sha256', 'timeout_seconds'}, field)
+        if hook['path'] != HOOK_PATHS[phase]:
+            raise ValueError(f'{field}.path must be {HOOK_PATHS[phase]}')
+        if not isinstance(hook['sha256'], str) or not re.fullmatch(r'[a-f0-9]{64}', hook['sha256']):
+            raise ValueError(f'{field}.sha256 must be lowercase SHA256')
+        result[phase] = dict(hook, timeout_seconds=integer(hook['timeout_seconds'], 1, 3600,
+                                                         field + '.timeout_seconds'))
+    return result
 
 
 def validate_release(data):
     mapping(data, {'schema_version', 'application', 'version', 'image', 'commit',
-                   'minimum_deployctl_version', 'deployment'},
+                   'minimum_deployctl_version', 'deployment', 'hooks'},
             {'schema_version', 'application', 'version', 'image',
              'minimum_deployctl_version', 'deployment'}, 'release')
-    integer(data['schema_version'], 1, 1, 'release.schema_version')
+    protocol = integer(data['schema_version'], 1, 2, 'release.schema_version')
     validate_name(data['application'])
     version(data['version'])
     if not isinstance(data['image'], str) or not DIGEST_IMAGE.fullmatch(data['image']):
         raise ValueError('image must be pinned to a lowercase sha256 digest')
-    if data['minimum_deployctl_version'] != '1.0.0':
+    minimum = '1.0.0' if protocol == 1 else '1.5.0'
+    if data['minimum_deployctl_version'] != minimum:
         raise ValueError('unsupported minimum_deployctl_version; upgrade platform together')
+    if protocol == 1 and 'hooks' in data:
+        raise ValueError('release schema 1 cannot declare hooks')
+    hooks = validate_hook_manifest(data.get('hooks')) if protocol == 2 else None
     config = validate_deployment(data['deployment'])
+    if 'hooks' in data['deployment']:
+        raise ValueError('source hooks belong in the release hook manifest, not deployment')
     if config['application'] != data['application']:
         raise ValueError('release.application does not match deployment.application')
     commit = data.get('commit', '')
     if not isinstance(commit, str) or (commit and not re.fullmatch(r'[a-f0-9]{40,64}', commit)):
         raise ValueError('commit must be an empty string or Git commit hash')
-    return dict(data, deployment=config, commit=commit)
+    result = dict(data, deployment=config, commit=commit)
+    if hooks is not None:
+        result['hooks'] = hooks
+    return result

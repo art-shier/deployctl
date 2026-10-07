@@ -3,17 +3,43 @@
 import hashlib
 import gzip
 import io
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
+import stat
 import tarfile
 
 import yaml
 
-from .contract import load_yaml, validate_deployment, validate_release
+from .contract import HOOK_PATHS, load_yaml, validate_deployment, validate_release
 
 FILES = {'release.yaml', 'compose.yaml', '.env.example', 'README.md'}
 MAX_PACKAGE = 10 * 1024 * 1024
 MAX_MEMBER = 1024 * 1024
 MAX_EXPANDED = 5 * 1024 * 1024
+MAX_SCRIPT = 256 * 1024
+
+
+def read_hook_script(root, name):
+    root = Path(root).resolve()
+    source = root
+    for part in PurePosixPath(name).parts:
+        source = source / part
+        if source.is_symlink() or getattr(source, 'is_junction', lambda: False)():
+            raise ValueError('hook script and its parent directories must not be links')
+    if not source.resolve().is_relative_to(root) or not source.is_file():
+        raise ValueError('hook script must be a normal file inside the project')
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NONBLOCK', 0)
+    try:
+        with os.fdopen(os.open(source, flags), 'rb') as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SCRIPT:
+                raise ValueError('hook script must be a normal file of at most 256 KiB')
+            raw = handle.read(MAX_SCRIPT + 1)
+    except OSError as exc:
+        raise ValueError('cannot read hook script') from exc
+    if len(raw) > MAX_SCRIPT:
+        raise ValueError('hook script exceeds 256 KiB')
+    return raw
 
 
 def render_compose(release):
@@ -36,13 +62,23 @@ def render_compose(release):
     }}}
 
 
-def build_release(config, image, version, output, commit=''):
+def build_release(config, image, version, output, commit='', project_root=None):
     config = validate_deployment(config)
     # Build inputs are consumed before packaging; keep the server's v1 contract.
     config['build'].pop('args', None)
-    release = validate_release({'schema_version': 1, 'application': config['application'],
+    scripts, hooks = {}, {}
+    for phase, descriptor in config.pop('hooks', {}).items():
+        raw = read_hook_script(project_root or Path.cwd(), descriptor['script'])
+        name = HOOK_PATHS[phase]
+        scripts[name] = raw
+        hooks[phase] = {'path': name, 'sha256': hashlib.sha256(raw).hexdigest(),
+                        'timeout_seconds': descriptor['timeout_seconds']}
+    manifest = {'schema_version': 2 if hooks else 1, 'application': config['application'],
                                 'version': version, 'image': image, 'commit': commit,
-                                'minimum_deployctl_version': '1.0.0', 'deployment': config})
+                'minimum_deployctl_version': '1.5.0' if hooks else '1.0.0', 'deployment': config}
+    if hooks:
+        manifest['hooks'] = hooks
+    release = validate_release(manifest)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     package = output / f"{release['application']}-{release['version']}.tar.gz"
@@ -57,9 +93,10 @@ def build_release(config, image, version, output, commit=''):
                      'Install using deployctl and the external SHA256 checksum.\n'
                      'Keep production config outside this archive. No database migration is performed.\n',
     }
+    content = {name: text.encode('utf-8') for name, text in content.items()}
+    content.update(scripts)
     with tarfile.open(package, 'w:gz') as archive:
-        for name, text in content.items():
-            raw = text.encode('utf-8')
+        for name, raw in content.items():
             item = tarfile.TarInfo(name)
             item.size = len(raw)
             item.mode = 0o644
@@ -84,19 +121,27 @@ def unpack_release(path, destination):
             raise ValueError('expanded release archive exceeds size limit')
         with tarfile.open(fileobj=io.BytesIO(expanded), mode='r:') as archive:
             for item in archive:
-                if (item.name not in FILES or item.name in content or not item.isfile()
+                if (item.name not in FILES | set(HOOK_PATHS.values()) or item.name in content or not item.isfile()
                         or not 0 <= item.size <= MAX_MEMBER):
                     raise ValueError('unsafe, duplicate or oversized release archive entry')
                 content[item.name] = archive.extractfile(item).read(MAX_MEMBER + 1)
     except (tarfile.TarError, EOFError, OSError) as exc:
         raise ValueError('invalid release archive') from exc
-    if set(content) != FILES:
-        raise ValueError('release archive must contain exactly the four standard files')
+    if not FILES.issubset(content):
+        raise ValueError('release archive must contain the four standard files')
     release = validate_release(load_yaml(content['release.yaml'].decode('utf-8')))
+    expected = FILES | {hook['path'] for hook in release.get('hooks', {}).values()}
+    if set(content) != expected:
+        raise ValueError('release archive must contain exactly the declared standard files and hooks')
+    for hook in release.get('hooks', {}).values():
+        raw = content[hook['path']]
+        if len(raw) > MAX_SCRIPT or hashlib.sha256(raw).hexdigest() != hook['sha256']:
+            raise ValueError('hook script size or SHA256 does not match its manifest')
     compose = load_yaml(content['compose.yaml'].decode('utf-8'))
     if compose != render_compose(release):
         raise ValueError('compose.yaml does not match the standard release template')
     destination.mkdir(parents=True, exist_ok=False)
     for name, raw in content.items():
+        (destination / name).parent.mkdir(parents=True, exist_ok=True)
         (destination / name).write_bytes(raw)
     return release
