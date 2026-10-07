@@ -21,4 +21,3 @@ class DistributionTests(unittest.TestCase):
             good = subprocess.run([sys.executable, '-I', '-S', str(artifact), '--version'],
                                   cwd=tmp, capture_output=True, text=True)
             self.assertEqual(good.returncode, 0, good.stderr)
-

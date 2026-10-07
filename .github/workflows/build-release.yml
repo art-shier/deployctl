@@ -56,7 +56,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     concurrency:
       group: release-${{ github.repository }}-${{ inputs.version }}
       cancel-in-progress: false
@@ -66,19 +66,19 @@ jobs:
       application: ${{ steps.config.outputs.application }}
       image: ${{ steps.package.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.version }}
           path: source
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           repository: ${{ inputs.platform-repository }}
           ref: ${{ inputs.platform-ref }}
           token: ${{ secrets.PLATFORM_READ_TOKEN || github.token }}
           path: platform
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
       - name: Install contract parser

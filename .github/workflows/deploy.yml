@@ -33,7 +33,7 @@ on:
         default: 0
       runner:
         type: string
-        default: ubuntu-latest
+        default: ubuntu-24.04
     secrets:
       PLATFORM_READ_TOKEN:
         required: false
@@ -57,14 +57,14 @@ jobs:
       group: deploy-${{ github.repository }}-${{ inputs.application }}-${{ inputs.environment }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           repository: ${{ inputs.platform-repository }}
           ref: ${{ inputs.platform-ref }}
           token: ${{ secrets.PLATFORM_READ_TOKEN || github.token }}
           path: platform
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
       - run: python -m pip install PyYAML==6.0.3

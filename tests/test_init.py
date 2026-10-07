@@ -125,4 +125,3 @@ class InitTests(unittest.TestCase):
             result = self.init()
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse((Path(outside) / 'deployment.yaml').exists())
-

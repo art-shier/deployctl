@@ -165,4 +165,3 @@ class BootstrapTests(unittest.TestCase):
         result = subprocess.run([str(self.root / 'bin/ctl'), '--version'], env={'PATH': '/nonexistent'}, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), '1.2.0')
-

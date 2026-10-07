@@ -1,5 +1,17 @@
 # 验证记录（2026-10-04）
 
+## 平台接入验证（CLI v1.2.0，2026-10-07）
+
+- 平台代码已推送到私有仓库art-shier/deployctl，首轮 [真实GitHub CI](https://github.com/art-shier/deployctl/actions/runs/37589523486) 全部通过。
+- Linux Python3.10/3.12完整运行55项测试，包括目录符号链接与带空格的自定义Python解释器安装；Windows Python3.12完成适用测试，Linux专用启动和目录链接权限相关项按环境跳过。
+- Linux实际执行安装器：两个命令、重复安装、坏校验拒绝、init和validate通过。
+- 真实Docker集成通过：容器安装、升级、坏版本恢复、人工回滚、raw环境变量、状态/日志、停止和重启。
+- 本地wheel、自包含CLI、生成安装脚本一致性、actionlint及Bash语法通过。
+- 安装器固定github.com凭证查询，下载资产跨域重定向移除认证，检查CLI版本与SHA256；Release流程先验证草稿真实资产再发布。
+- Actions升级为已核实存在的checkout v7.0.1、setup-python v7.0.0、upload-artifact v7.0.1；Linux Runner固定Ubuntu24.04。版本标签的发布流程将再次验证所发布代码及真实GitHub下载入口。
+
+以下为早期本地开发记录，当时尚未执行的GitHub和Docker验证现已由上面的CI补齐。SSH云服务器和生产环境验收仍需要实际目标，当前没有操作生产服务器。
+
 ## 已执行
 
 | 检查 | 结果 |
@@ -18,7 +30,7 @@
 
 Docker边界使用测试替身；网络资产下载使用受控响应，未访问真实私有项目。测试结果证明本地逻辑，不能代替生产集成验证。
 
-## 尚未执行
+## 早期尚未执行（截至2026-10-04）
 
 - 真实Docker安装、容器镜像拉取和Compose生命周期：当前Windows主机没有Docker。
 - 真实GitHub Actions构建并上传Release：尚未提供或连接实际平台/业务仓库。
