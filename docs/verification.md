@@ -1,5 +1,27 @@
 # 验证记录
 
+## v1.4.0项目构建参数（2026-10-07）
+
+- 项目接入后可自行添加deployment.yaml的build.args；工作流build-args按次覆盖，Dockerfile ARG将值传给已有构建脚本。init命令保持原有入口，模板只增加注释示例。
+- 全仓本地测试78项：76通过，2项因Windows环境跳过。新增覆盖配置约束、合并优先级、重复键拒绝、空值、特殊字符编码、输出文件和发布包兼容；边界U+FEFF的复核问题已修复并加入回归测试。
+- [main CI](https://github.com/art-shier/deployctl/actions/runs/37606560562) 与 [v1.4.0发布流水线](https://github.com/art-shier/deployctl/actions/runs/37606732784) 全部通过，覆盖Linux Python3.10/3.12、Windows Python3.12、真实Docker服务生命周期及安装检查。
+- 使用实际docker/build-push-action构建并运行测试镜像，验证项目默认值、工作流覆盖、Dockerfile默认值、显式空值，以及包含逗号、双引号、美元符号和命令替换文本的字面量；构建参数不会经过shell求值。
+- actionlint、生成安装脚本一致性、wheel/zipapp/skill资产构建及JSON Schema检查通过；独立Agent仅凭skill与构建参数引用即可找到配置位置、覆盖方式、版本升级和验证流程。
+- 标准发布包剔除build.args，保持schema_version: 1及minimum_deployctl_version: 1.0.0；使用正式v1.3.0 CLI实际读取含新构建参数配置生成的发布包，兼容检查通过。
+- [v1.4.0 Release](https://github.com/art-shier/deployctl/releases/tag/v1.4.0) 已正式发布，latest解析为v1.4.0，共9个资产。重新下载后4个独立SHA256文件及SHA256SUMS全部匹配。
+- 本地已安装skill从正式v1.4.0 ZIP同步13个文件，保留原agents/openai.yaml；内置CLI校验和与正式CLI一致，格式校验、隔离Python环境下版本检查及build.args配置验证均通过。
+
+正式下载资产的SHA256：
+
+| 资产 | SHA256 |
+|---|---|
+| deployctl.pyz | e1974391e226500c6d3e291538a8d7e2cbf83c2b976cbc2871d897dd26ddb1c8 |
+| install.sh | 77b171c590b8a1bb7f01fcc9fb7be5b2d2943750b4a02d40f2663d1bfbe46794 |
+| team-deploy-skill-v1.4.0.zip | 3d366385f61d893f39982889c216bc085f9e76734ae9fb0813d3a2b1411c1013 |
+| team_deployctl-1.4.0-py3-none-any.whl | 29570e2204c6627e72e899cfff1e2e1e06e3832c7519f74ea3c36e27d40a1040 |
+
+本次没有操作生产业务服务。发布标签指向功能提交032b97c，后续验证记录不改变该标签或Release资产。
+
 ## v1.3.0工具自更新与skill补充（2026-10-07）
 
 - 新增self-update，复用标准库安装器，沿用安装目录、平台仓库、自定义命令名和别名选择；旧版安装记录兼容。工具更新不调用服务运行管理器。
