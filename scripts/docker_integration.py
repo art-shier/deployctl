@@ -1,6 +1,7 @@
 """Real Docker + registry + HTTP integration test. Run on a disposable Linux runner."""
 
 import json
+import copy
 import os
 from pathlib import Path
 import socket
@@ -76,11 +77,13 @@ def main():
             def actual_version():
                 with urlopen(f'http://127.0.0.1:{app_port}/version', timeout=3) as response:
                     return json.load(response)['version']
-            cli('install', '--release', releases[0], '--port', app_port)
+            literal = ' a,b "quoted" $literal #tag = '
+            cli('install', '--release', releases[0], '--port', app_port,
+                '--env-var', 'RAW_VALUE=' + literal, '--env-var', 'EMPTY=')
             assert actual_version() == 'v1.0.0'
             cli('upgrade', '--release', releases[1])
             assert actual_version() == 'v1.1.0'
-            failure = cli('upgrade', '--release', releases[2], check=False)
+            failure = cli('upgrade', '--release', releases[2], '--env-var', 'RAW_VALUE=bad candidate', check=False)
             assert failure.returncode != 0 and 'restored' in failure.stderr
             assert actual_version() == 'v1.1.0'
             cli('rollback')
@@ -88,12 +91,98 @@ def main():
             assert 'v1.0.0' in cli('status').stdout
             assert 'started' in cli('logs').stdout
             container = run('docker', 'ps', '-q', '--filter', f'label=com.docker.compose.project={project}').stdout.strip()
-            values = json.loads(run('docker', 'inspect', '--format', '{{json .Config.Env}}', container).stdout)
-            assert 'RAW_VALUE=literal$secret#value' in values
+            def state():
+                return json.loads((base / 'apps' / app / 'test/state.json').read_text())
+
+            def container_config():
+                identifier = run('docker', 'ps', '-q', '--filter', f'label=com.docker.compose.project={project}').stdout.strip()
+                result = run('docker', 'exec', identifier, 'python', '-c',
+                    'import json,os; d=json.load(open(os.environ["DEPLOYCTL_ENV_FILE"])); '
+                    'assert all(os.environ[k]==v for k,v in d.items()); '
+                    'assert not any(k.startswith("DEPLOYCTL_PARAM_") for k in os.environ); '
+                    'assert os.getuid()==10001; print(json.dumps(d))')
+                return json.loads(result.stdout)
+
+            assert container_config()['RAW_VALUE'] == literal
+            assert container_config()['EMPTY'] == ''
+            write = run('docker', 'exec', container, 'python', '-c',
+                        'import os; open(os.environ["DEPLOYCTL_ENV_FILE"],"w").write("changed")', check=False)
+            assert write.returncode != 0
+            old_ref = state()['current']
+            cli('upgrade', '--release', releases[0], '--env-var', 'RAW_VALUE=changed same version')
+            assert state()['previous'] == old_ref
+            assert container_config()['RAW_VALUE'] == 'changed same version'
+            cli('rollback')
+            assert state()['current'] == old_ref and container_config()['RAW_VALUE'] == literal
+            cli('upgrade', '--release', releases[1])
+            previous = state()['previous']
+            cli('upgrade', '--release', releases[1])
+            assert state()['previous'] == previous
+            cli('upgrade', '--release', releases[1], '--unset-env', 'RAW_VALUE')
+            assert container_config()['RAW_VALUE'] == 'literal$secret#value'
+            cli('rollback')
+            assert container_config()['RAW_VALUE'] == literal
+
+            # Actual host scripts read both JSON maps, verify ordering against HTTP,
+            # and control failures without exposing fixture values in logs.
+            source = base / 'hook-source'
+            source.mkdir()
+            script = '''#!/usr/bin/env bash
+set -euo pipefail
+python3 - <<'PY'
+import json,os,time
+from pathlib import Path
+from urllib.request import urlopen
+runtime=json.load(open(os.environ['DEPLOYCTL_ENV_FILE']))
+params=json.load(open(os.environ['DEPLOYCTL_PARAMS_FILE']))
+assert runtime['RAW_VALUE']==os.environ['RAW_VALUE']
+assert params['TEXT']==os.environ['DEPLOYCTL_PARAM_TEXT']==' a,b "quoted" $literal #tag = '
+assert 'DEPLOYCTL_PARAM_TEXT' not in runtime
+assert 'GH_TOKEN' not in os.environ and 'GITHUB_TOKEN' not in os.environ
+phase=PHASE
+with urlopen('http://127.0.0.1:'+params['PORT']+'/version') as response:
+ actual=json.load(response)['version']
+expected=os.environ['DEPLOYCTL_PREVIOUS_VERSION'] if phase=='pre' else os.environ['DEPLOYCTL_VERSION']
+assert actual==expected
+with open(params['MARKER'],'a') as marker: marker.write(phase+'\\n')
+if params.get('FAIL')==phase: raise SystemExit(7)
+if params.get('FAIL')=='timeout' and phase=='pre': time.sleep(30)
+PY
+'''
+            for phase in ('pre', 'post'):
+                (source / f'{phase}.sh').write_text(script.replace('PHASE', repr(phase)), newline='\n')
+            hooked = copy.deepcopy(config)
+            hooked['hooks'] = {phase + '_install': {'script': phase + '.sh', 'timeout_seconds': 15}
+                               for phase in ('pre', 'post')}
+            hooks_archive = build_release(hooked, good_digest, 'v1.3.0', base / 'packages', project_root=source)
+            timeout_config = copy.deepcopy(hooked)
+            timeout_config['hooks']['pre_install']['timeout_seconds'] = 1
+            timeout_archive = build_release(timeout_config, good_digest, 'v1.4.0', base / 'packages', project_root=source)
+            marker = base / 'order.txt'
+            params = ['--set', f'PORT={app_port}', '--set', f'MARKER={marker}', '--set', 'TEXT=' + literal]
+            cli('upgrade', '--release', hooks_archive, '--env-var', 'RAW_VALUE=hook success', *params)
+            assert marker.read_text().splitlines() == ['pre', 'post']
+            assert container_config()['RAW_VALUE'] == 'hook success'
+            for phase, archive in (('pre', hooks_archive), ('post', hooks_archive), ('timeout', timeout_archive)):
+                before = state()['current']
+                previous = state()['previous']
+                failure = cli('upgrade', '--release', archive, '--env-var', 'RAW_VALUE=failed hook',
+                              *params, '--set', 'FAIL=' + phase, check=False)
+                assert failure.returncode != 0
+                assert state()['current'] == before and state()['previous'] == previous
+                assert state()['transaction'] is None
+                assert actual_version() == 'v1.3.0'
+                assert container_config()['RAW_VALUE'] == 'hook success'
+            assert all(p.stat().st_size <= 65536 and p.stat().st_mode & 0o777 == 0o600
+                       for p in (config_dir / 'hook-logs').iterdir())
+            order_before = marker.read_text()
+            cli('rollback')
+            assert marker.read_text() == order_before
+            assert actual_version() == 'v1.1.0' and container_config()['RAW_VALUE'] == literal
             cli('stop')
             cli('restart')
-            assert actual_version() == 'v1.0.0'
-        print('PASS: real install, upgrade, failed-upgrade recovery, rollback, raw env, status/logs and restart')
+            assert actual_version() == 'v1.1.0'
+        print('PASS: real install/upgrade, JSON/raw env and nonroot read-only mount, pre/post/timeout failures, configuration recovery/unset/same-version rollback, status/logs and restart')
     finally:
         containers = run('docker', 'ps', '-aq', '--filter', f'label=com.docker.compose.project={project}', check=False).stdout.split()
         if containers:

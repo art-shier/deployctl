@@ -30,7 +30,7 @@ jobs:
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install PyYAML==6.0.3
+      - run: python -m pip install PyYAML==6.0.3 jsonschema==4.26.0
       - run: python scripts/build_install_script.py --check
       - run: python scripts/build_release_assets.py
       - run: python -m unittest discover -s tests -v
