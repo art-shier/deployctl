@@ -11,7 +11,9 @@ ctl upgrade <项目> --env <环境> --version <已发布版本> --port <主机�
 ctl rollback <项目> --env <环境>
 ```
 
-交互或私有`--token-file`读取凭据；不要把Token传到命令行、URL、应用容器或hooks。默认`/etc/deployctl/client.json`（目录700、文件600、当前身份所有）；可用`--client-config`指定私有文件。sudo登录和部署使用同一身份。生产主机使用project/env限定的deployer；CI用project限定的publisher。owner仅用于管理。
+交互或私有`--token-file`读取凭据；不要把Token传到命令行、URL、应用容器或hooks。默认`/etc/deployctl/client.json`（目录700、文件600、当前身份所有）；可用`--client-config`指定私有文件。sudo登录和部署使用同一身份。生产主机使用限定项目/项目组与环境的deployer；CI用限定项目/项目组的publisher。owner仅用于管理。
+
+服务端v1.8.0支持项目组，旧项目自动归入`default`，旧Token仍只授权原项目。一个Token可覆盖多个项目或项目组，一次login即可部署授权范围内的项目；组授权随当前成员变化，显式项目授权不随移组变化。CLI>=1.8.0提供`ctl whoami`与`ctl projects`查看身份及可访问项目，不显示Token。旧CLI1.7仍可使用共享凭据执行安装。
 
 未指定环境时managed install/upgrade取项目默认。`--prod`是`--env prod`，不能与其他环境冲突。版本默认取环境目标，不等于latest。status/rollback等本地操作省略环境，仅在主机唯一已安装环境时允许。
 

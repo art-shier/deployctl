@@ -2,16 +2,16 @@
 
 当前平台仓库 `art-shier/deployctl` 为公开仓库，安装器和已发布资产支持匿名下载。CLI是内置依赖的Python zipapp，安装要求Linux/Bash、Python>=3.10，不需要服务器pip安装。安装CLI不会安装Docker、修改防火墙或启动业务服务。
 
-## 公开仓库：安装CLI1.7.0
+## 公开仓库：安装CLI1.8.0
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.7.0/install.sh \
-  | sudo bash -s -- --version v1.7.0
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.8.0/install.sh \
+  | sudo bash -s -- --version v1.8.0
 ctl --version
 ```
 
-系统安装到/usr/local/bin；已有安装器管理的命令使用sudo ctl self-update --version v1.7.0。用户安装沿用原目录和身份。安装后可执行ctl server install --release <服务端包URL>；这与ctl login --server <管理API地址>的Token登录分开。
+系统安装到/usr/local/bin；已有安装器管理的命令使用sudo ctl self-update --version v1.8.0。用户安装沿用原目录和身份。安装后可执行ctl server install --release <服务端包URL>；这与ctl login --server <管理API地址>的Token登录分开。
 
 ## 已登录GitHub CLI：一键安装最新版
 

@@ -1,6 +1,6 @@
 # ctl 管理服务与平台模式
 
-本版本包含 CLI **1.7.0**、管理服务 **0.1.0**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
+本版本包含 CLI **1.8.0**、管理服务 **0.2.0**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
 
 平台包含 Go API / React 管理台、Distribution Registry、标准发布包目录和 PostgreSQL。单组织自托管；网页管理配置与版本，部署由目标服务器上的 ctl 执行。安装记录是客户端上报的历史结果。
 
@@ -10,14 +10,14 @@
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.7.0/install.sh \
-  | sudo bash -s -- --version v1.7.0
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.8.0/install.sh \
+  | sudo bash -s -- --version v1.8.0
 
-RELEASE_URL='https://github.com/art-shier/deployctl/releases/download/v1.7.0/ctl-platform-v1.7.0.tar.gz'
+RELEASE_URL='https://github.com/art-shier/deployctl/releases/download/v1.8.0/ctl-platform-v1.8.0.tar.gz'
 sudo ctl server install --release "$RELEASE_URL"
 ```
 
-已由安装器管理的CLI可以用 `sudo ctl self-update --version v1.7.0` 更新原目录；用户目录安装时用原用户和原命令路径。`server install`与普通业务 `install` 独立，管理API、Registry和可选PostgreSQL由固定Compose启动。
+已由安装器管理的CLI可以用 `sudo ctl self-update --version v1.8.0` 更新原目录；用户目录安装时用原用户和原命令路径。`server install`与普通业务 `install` 独立，管理API、Registry和可选PostgreSQL由固定Compose启动。
 
 工具自动下载相邻 `.sha256` 并校验，可用 `--sha256 <独立取得的摘要>` 显式指定。包只含引导脚本、配置生成器、Compose及清单，清单固定真实镜像digest和成员SHA256；不含密码。CLI限定成员/大小、不直接tar解压、使用私有目录、检查父目录可信权限，拒绝路径链接和被修改的缓存。操作获取主机级及实例级锁；超时/中断先停止引导进程组再释放锁。固定Compose项目ctl-platform每个Docker主机只支持一个实例，--home用于指定其存储位置，发现其他home的已有实例时拒绝替换。
 
@@ -30,6 +30,18 @@ sudo ctl server upgrade --release "$NEW_VERIFIED_RELEASE_URL"
 ```
 
 同版本同包可重复upgrade；install拒绝已有实例，源码引导过的实例使用upgrade接入。退出失败时保留 `server-state.json` 的pending记录，修复原因后用原命令/原发布包重试，不能换包绕过pending。引导保留密钥和数据，不提供数据库/平台镜像的自动事务回滚；失败不能报告为已升级成功。
+
+### 从v1.7升级到v1.8
+
+先完成下文的数据库、制品与密钥备份，再升级已有实例：
+
+```bash
+sudo ctl self-update --version v1.8.0
+sudo ctl --version
+sudo ctl server upgrade --release https://github.com/art-shier/deployctl/releases/download/v1.8.0/ctl-platform-v1.8.0.tar.gz
+```
+
+CLI沿用原安装目录；server upgrade沿用原实例的域名、端口和数据目录（例如已有8084端口），无需重新传入端口。新服务端启动时自动把旧项目归入default，保留现有配置、发布版本和Token。刷新管理台即可看到项目组；需要一次登录部署多个项目时，由超级管理员创建多项目或项目组deployer凭据后，在目标主机执行ctl login替换现有登录。旧凭据不会自动扩大权限。
 
 仍支持从经过审核的源码构建（另需Git），在仓库根目录运行：
 
@@ -68,7 +80,7 @@ sudo bash control-deploy/bootstrap.sh --database-url-file /root/ctl-database.url
 
 项目默认环境自动创建空修订1并指向 `stable`。环境名称与版本独立；发布完整版本并显式设置 stable 后才可安装。可以将环境固定到某个可安装版本。停用版本禁止新安装，保留回滚所需制品。首版不自动清理 Registry / 发布包。
 
-## 项目组和共享部署凭据（下一版本）
+## 项目组和共享部署凭据（v1.8.0）
 
 项目组扩展需要升级服务端。首次启动自动创建 `default`，将已有项目归入该组；迁移保留环境修订、秘密配置、发布版本、stable 指针和现有 Token。未指定组的新项目也属于 `default`。组标识创建后不可改，支持修改显示名称和说明；本次不提供组删除。
 
@@ -78,7 +90,7 @@ sudo bash control-deploy/bootstrap.sh --database-url-file /root/ctl-database.url
 
 项目组凭据覆盖组内现在和以后加入的项目。项目移组后，后续 API 请求和 Registry token 申请按当前归属重新授权；已经签发的 Registry bearer 仍按现有最长5分钟到期。具体项目授权不随移组变化。普通项目说明编辑不会提交未改动的组字段，避免旧标签页撤销另一管理员的移组操作。
 
-新 CLI 的 `whoami` 显示身份及组/项目/环境范围，`projects` 列出当前可访问项目；不显示 Token。凭据文件仍只保存服务器地址和一个 Token。旧 ctl1.7 可直接使用新共享凭据进行安装，新发现命令随 CLI 后续版本发行：
+CLI1.8 的 `whoami` 显示身份及组/项目/环境范围，`projects` 列出当前可访问项目；不显示 Token。凭据文件仍只保存服务器地址和一个 Token。旧 ctl1.7 可直接使用新共享凭据进行安装，发现命令需要CLI>=1.8：
 
 ```bash
 sudo ctl login --server https://ctl.shier.art
