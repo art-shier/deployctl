@@ -273,6 +273,12 @@ func (s *Store) GetReleaseByVersion(ctx context.Context, project, version string
 	return scanRelease(s.pool.QueryRow(ctx, "SELECT data,status FROM ctl_releases WHERE project=$1 AND version=$2", project, version))
 }
 func (s *Store) PublishRelease(ctx context.Context, r domain.Release, stable bool, actor string) (domain.Release, error) {
+	return s.PublishReleaseChecked(ctx, r, stable, actor, nil)
+}
+
+// Verification is performed while holding the same repository lock used by
+// image removal. Another project sharing the repository cannot delete in between.
+func (s *Store) PublishReleaseChecked(ctx context.Context, r domain.Release, stable bool, actor string, check func(domain.Project) error) (domain.Release, error) {
 	checksum := regexp.MustCompile(`^[a-f0-9]{64}$`)
 	if domain.ValidateName(r.Project, 48) != nil || domain.ValidateVersion(r.Version) != nil || domain.ValidateImage(r.Image) != nil || !checksum.MatchString(r.SHA256) || r.Size <= 0 || r.Size > 10*1024*1024 {
 		return r, domain.ErrInvalid
@@ -282,12 +288,20 @@ func (s *Store) PublishRelease(ctx context.Context, r domain.Release, stable boo
 		return r, err
 	}
 	defer tx.Rollback(ctx)
-	p, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 FOR UPDATE", r.Project))
+	p, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 FOR NO KEY UPDATE", r.Project))
 	if err != nil {
 		return r, err
 	}
 	if strings.Split(r.Image, "@")[0] != p.ImageRepository {
 		return r, domain.ErrInvalid
+	}
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", "ctl-images:"+p.ImageRepository); err != nil {
+		return r, err
+	}
+	if check != nil {
+		if err = check(p); err != nil {
+			return r, err
+		}
 	}
 	old, err := scanRelease(tx.QueryRow(ctx, "SELECT data,status FROM ctl_releases WHERE project=$1 AND version=$2", r.Project, r.Version))
 	if err == nil {

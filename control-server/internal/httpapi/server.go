@@ -16,6 +16,7 @@ import (
 
 	"github.com/art-shier/deployctl/control-server/internal/auth"
 	"github.com/art-shier/deployctl/control-server/internal/domain"
+	"github.com/art-shier/deployctl/control-server/internal/registry"
 	"github.com/art-shier/deployctl/control-server/internal/store"
 )
 
@@ -33,14 +34,15 @@ type Options struct {
 	Signer             *auth.RegistrySigner
 }
 type Server struct {
-	store   *store.Store
-	options Options
-	mux     *http.ServeMux
+	store       *store.Store
+	options     Options
+	mux         *http.ServeMux
+	imageUpload chan struct{}
 }
 type handler func(http.ResponseWriter, *http.Request, auth.Principal) error
 
 func New(s *store.Store, o Options) *Server {
-	server := &Server{store: s, options: o, mux: http.NewServeMux()}
+	server := &Server{store: s, options: o, mux: http.NewServeMux(), imageUpload: make(chan struct{}, 1)}
 	m := server.mux
 	m.HandleFunc("GET /api/v1/health/ready", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.Ping(r.Context()); err != nil {
@@ -66,6 +68,10 @@ func New(s *store.Store, o Options) *Server {
 	m.HandleFunc("GET /api/v1/projects/{slug}/releases", server.wrap(server.releases))
 	m.HandleFunc("GET /api/v1/projects/{slug}/releases/{version}", server.wrap(server.getRelease))
 	m.HandleFunc("GET /api/v1/projects/{slug}/images", server.wrap(server.images))
+	m.HandleFunc("GET /api/v1/projects/{slug}/images/capabilities", server.wrap(server.imageCapabilities))
+	m.HandleFunc("GET /api/v1/projects/{slug}/images/{digest}", server.wrap(server.imageDetails))
+	m.HandleFunc("DELETE /api/v1/projects/{slug}/images/{digest}", server.wrap(server.deleteImage))
+	m.HandleFunc("POST /api/v1/projects/{slug}/images/upload", server.wrap(server.uploadImage))
 	m.HandleFunc("POST /api/v1/projects/{slug}/releases", server.wrap(server.publish))
 	m.HandleFunc("POST /api/v1/projects/{slug}/releases/{version}/retire", server.wrap(server.retire))
 	m.HandleFunc("POST /api/v1/projects/{slug}/resolve", server.wrap(server.resolve))
@@ -86,7 +92,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/registry/token" {
 		w.Header().Set("Cache-Control", "no-store")
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	timeout := 60 * time.Second
+	if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/images/upload") {
+		timeout = 15 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	s.mux.ServeHTTP(w, r.WithContext(ctx))
 }
@@ -172,6 +182,18 @@ func reply(w http.ResponseWriter, status int, value any) {
 func failure(w http.ResponseWriter, err error) {
 	status, code, message := 500, "internal_error", "服务暂时不可用"
 	switch {
+	case errors.Is(err, registry.ErrReferenced):
+		status, code, message = 409, "image_referenced", "该镜像被发布版本、回滚版本或多架构镜像引用，不能删除"
+	case errors.Is(err, registry.ErrExternal):
+		status, code, message = 400, "external_registry", "上传和删除仅支持托管镜像仓库；外部仓库请在其管理端操作"
+	case errors.Is(err, registry.ErrTagExists):
+		status, code, message = 409, "tag_exists", "该标签已有不同镜像，请使用新标签"
+	case errors.Is(err, registry.ErrArchive):
+		status, code, message = 400, "invalid_image_archive", "镜像文件无效；请上传 docker save 导出的单镜像 tar 文件"
+	case errors.Is(err, errImageTooLarge):
+		status, code, message = 413, "image_too_large", "镜像文件不能超过 2 GiB"
+	case errors.Is(err, errImageBusy):
+		status, code, message = 409, "image_upload_busy", "服务端已有镜像正在上传，请稍后重试"
 	case errors.Is(err, domain.ErrInvalid):
 		status, code, message = 400, "invalid_input", "参数或制品校验失败"
 	case errors.Is(err, domain.ErrConflict):

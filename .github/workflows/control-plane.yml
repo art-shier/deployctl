@@ -57,17 +57,34 @@ jobs:
           CTL_WEB_DIR: ${{ github.workspace }}/control-web/dist
           CTL_KEYS_DIR: ${{ runner.temp }}/ctl-browser-keys
           CTL_ARTIFACTS_DIR: ${{ runner.temp }}/ctl-browser-artifacts
+          CTL_REGISTRY_HOST: 127.0.0.1:5000
+          CTL_REGISTRY_INTERNAL_URL: http://127.0.0.1:5000
         run: |
           cd control-server
           go build -o "$RUNNER_TEMP/ctl-server" ./cmd/ctl-server
           "$RUNNER_TEMP/ctl-server" init --keys-dir "$CTL_KEYS_DIR"
           "$RUNNER_TEMP/ctl-server" > "$RUNNER_TEMP/ctl-server.log" 2>&1 &
           API_PID=$!
-          trap 'kill "$API_PID" || true' EXIT
+          trap 'kill "$API_PID" || true; docker rm -f -v ctl-browser-registry >/dev/null 2>&1 || true; docker image rm -f ctl-browser-manual >/dev/null 2>&1 || true' EXIT
+          docker run -d --name ctl-browser-registry -p 127.0.0.1:5000:5000 \
+            -v "$CTL_KEYS_DIR/signing.crt:/cert.pem:ro" \
+            -e REGISTRY_AUTH=token -e REGISTRY_AUTH_TOKEN_REALM=http://127.0.0.1:8080/registry/token \
+            -e REGISTRY_AUTH_TOKEN_SERVICE=ctl-registry -e REGISTRY_AUTH_TOKEN_ISSUER=ctl \
+            -e REGISTRY_AUTH_TOKEN_ROOTCERTBUNDLE=/cert.pem -e REGISTRY_STORAGE_DELETE_ENABLED=true registry:2.8.3
           for i in $(seq 1 50); do
             if curl --fail --silent http://127.0.0.1:8080/api/v1/health/ready >/dev/null; then break; fi
             sleep .2
           done
+          for i in $(seq 1 50); do
+            if [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:5000/v2/)" == 401 ]]; then break; fi
+            sleep .2
+          done
+          mkdir -p "$RUNNER_TEMP/ctl-browser-image"
+          printf 'FROM scratch\nCOPY fixture /fixture\n' > "$RUNNER_TEMP/ctl-browser-image/Dockerfile"
+          printf 'browser-image-fixture\n' > "$RUNNER_TEMP/ctl-browser-image/fixture"
+          docker build -t ctl-browser-manual "$RUNNER_TEMP/ctl-browser-image"
+          docker save --output "$RUNNER_TEMP/browser-image.tar" ctl-browser-manual
+          export CTL_BROWSER_IMAGE_ARCHIVE="$RUNNER_TEMP/browser-image.tar"
           export CTL_OWNER_TOKEN="$(cat "$CTL_KEYS_DIR/owner.token")"
           cd ../control-web
           npm run test:browser

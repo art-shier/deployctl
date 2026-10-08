@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -34,37 +35,58 @@ func (v Verifier) ListImagesWithToken(ctx context.Context, allowed, proof string
 	request := func(method, path string) (*http.Response, error) {
 		return s.request(ctx, method, path)
 	}
-	res, err := request("GET", "/v2/"+repository+"/tags/list?n=100")
-	if err != nil {
-		return nil, domain.ErrInvalid
-	}
-	raw, err := io.ReadAll(io.LimitReader(res.Body, 1024*1024+1))
-	res.Body.Close()
-	if res.StatusCode == 404 {
-		return []Image{}, nil
-	}
-	if err != nil || len(raw) > 1024*1024 || res.StatusCode != 200 {
-		return nil, domain.ErrInvalid
-	}
-	var body struct {
-		Name string   `json:"name"`
-		Tags []string `json:"tags"`
-	}
-	if json.Unmarshal(raw, &body) != nil || body.Name != repository || len(body.Tags) > 100 {
-		return nil, domain.ErrInvalid
-	}
-	result := make([]Image, len(body.Tags))
+	tags := []string{}
+	seen := map[string]bool{}
 	tagPattern := regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
-	for _, tag := range body.Tags {
-		if !tagPattern.MatchString(tag) {
+	last := ""
+	for page := 0; ; page++ {
+		if page > 100 {
 			return nil, domain.ErrInvalid
 		}
+		path := "/v2/" + repository + "/tags/list?n=100"
+		if last != "" {
+			path += "&last=" + url.QueryEscape(last)
+		}
+		res, err := request("GET", path)
+		if err != nil {
+			return nil, domain.ErrInvalid
+		}
+		raw, err := io.ReadAll(io.LimitReader(res.Body, 1024*1024+1))
+		res.Body.Close()
+		if res.StatusCode == 404 {
+			return []Image{}, nil
+		}
+		if err != nil || len(raw) > 1024*1024 || res.StatusCode != 200 {
+			return nil, domain.ErrInvalid
+		}
+		var body struct {
+			Name string   `json:"name"`
+			Tags []string `json:"tags"`
+		}
+		if json.Unmarshal(raw, &body) != nil || body.Name != repository || len(body.Tags) > 100 {
+			return nil, domain.ErrInvalid
+		}
+		if len(tags)+len(body.Tags) > 10000 {
+			return nil, domain.ErrInvalid
+		}
+		for _, tag := range body.Tags {
+			if !tagPattern.MatchString(tag) || seen[tag] {
+				return nil, domain.ErrInvalid
+			}
+			seen[tag] = true
+			tags = append(tags, tag)
+		}
+		if len(body.Tags) == 0 || (len(body.Tags) < 100 && res.Header.Get("Link") == "") {
+			break
+		}
+		last = body.Tags[len(body.Tags)-1]
 	}
+	result := make([]Image, len(tags))
 	var group sync.WaitGroup
 	var mu sync.Mutex
 	failed := false
 	slots := make(chan struct{}, 5)
-	for i, tag := range body.Tags {
+	for i, tag := range tags {
 		group.Add(1)
 		go func(i int, tag string) {
 			defer group.Done()

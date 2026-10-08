@@ -52,7 +52,7 @@ func main() {
 		log.Fatal("database migration failed")
 	}
 	done()
-	server := &http.Server{Addr: c.Listen, Handler: httpapi.New(db, c.API), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	server := &http.Server{Addr: c.Listen, Handler: httpapi.New(db, c.API), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Minute, WriteTimeout: 16 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Print("HTTP server failed")

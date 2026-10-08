@@ -37,6 +37,7 @@ import {
   toggleRemoval,
   type DraftRow,
 } from "./environmentForm";
+import { ImagesView } from "./ImagesView";
 import "./styles.css";
 
 const date = (value: string) =>
@@ -495,6 +496,7 @@ function Projects({ navigate }: { navigate: (page: string) => void }) {
 }
 const tabs = [
   ["releases", "版本"],
+  ["images", "镜像管理"],
   ["environments", "环境配置"],
   ["receipts", "安装记录"],
   ["tokens", "访问凭据"],
@@ -566,6 +568,8 @@ function ProjectView({
       <div key={slug + tab} role="tabpanel">
         {tab === "releases" ? (
           <ReleasesView project={project} />
+        ) : tab === "images" ? (
+          <ImagesView project={project} Dialog={Modal} />
         ) : tab === "environments" ? (
           <EnvironmentsView project={project} />
         ) : tab === "receipts" ? (
@@ -684,7 +688,6 @@ function ReleasesView({ project }: { project: Project }) {
           detail="让项目流水线推送镜像并执行 ctl publish，或在此登记标准发布包。"
         />
       )}
-      <ImagesView key={data.map((r) => r.id).join(",")} slug={project.slug} />
       {selected && (
         <Modal title={selected.version} close={() => setSelected(null)}>
           <div className="detail-stack">
@@ -728,119 +731,6 @@ function ReleasesView({ project }: { project: Project }) {
         </Modal>
       )}
     </>
-  );
-}
-function ImagesView({ slug }: { slug: string }) {
-  const {
-    data: publicImages,
-    loading: publicLoading,
-    error: publicError,
-    reload,
-  } = useData<
-    { tag: string; digest: string; media_type: string; versions: string[] }[]
-  >(`/projects/${slug}/images`, []);
-  const [proof, setProof] = useState(""),
-    [verified, setVerified] = useState<typeof publicImages | null>(null),
-    [proofError, setProofError] = useState(""),
-    [checking, setChecking] = useState(false);
-  const refresh = async () => {
-    if (!proof) {
-      setVerified(null);
-      setProofError("");
-      reload();
-      return;
-    }
-    setChecking(true);
-    setProofError("");
-    try {
-      setVerified(
-        await api<typeof publicImages>(`/projects/${slug}/images`, {
-          headers: { "X-Registry-Verification-Token": proof },
-        }),
-      );
-    } catch (e) {
-      setProofError(message(e));
-    } finally {
-      setChecking(false);
-      setProof("");
-    }
-  };
-  const data = verified ?? publicImages,
-    loading = checking || (publicLoading && !verified),
-    error = proofError || (!verified ? publicError : "");
-  return (
-    <section className="image-inventory">
-      <div className="section-heading">
-        <div>
-          <h2>仓库镜像</h2>
-          <p className="muted small">
-            显示最多 100 个标签；镜像推送后仍需登记发布包，才能安装。
-          </p>
-        </div>
-        <button onClick={refresh} disabled={checking}>
-          <RefreshCw size={16} />
-          刷新镜像
-        </button>
-      </div>
-      <details className="registry-proof">
-        <summary>外部私有仓库验证</summary>
-        <label>
-          短期 pull Token
-          <input
-            type="password"
-            autoComplete="off"
-            maxLength={12288}
-            value={proof}
-            onChange={(e) => setProof(e.target.value)}
-          />
-        </label>
-        <p className="muted small">
-          只用于本次刷新，不保存。目标服务器使用其已有 Docker 凭据。
-        </p>
-      </details>
-      {loading ? (
-        <Loading />
-      ) : error ? (
-        <p className="muted small">
-          镜像列表暂不可用，请检查 Registry 权限或连接；已登记版本仍可查询。
-        </p>
-      ) : data.length ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>标签</th>
-                <th>Digest</th>
-                <th>关联版本</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((image) => (
-                <tr key={image.tag}>
-                  <td>
-                    <code>{image.tag}</code>
-                  </td>
-                  <td>
-                    <code className="truncate" title={image.digest}>
-                      {image.digest}
-                    </code>
-                  </td>
-                  <td>
-                    {image.versions.length ? (
-                      image.versions.join(", ")
-                    ) : (
-                      <span className="badge">未登记发布包</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="muted small">仓库还没有镜像标签。</p>
-      )}
-    </section>
   );
 }
 function UploadRelease({ slug, done }: { slug: string; done: () => void }) {

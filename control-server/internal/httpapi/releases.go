@@ -49,8 +49,7 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, p auth.Principa
 	if err := permitted(p, "release.publish", slug, ""); err != nil {
 		return err
 	}
-	project, err := s.store.GetProject(r.Context(), slug)
-	if err != nil {
+	if _, err := s.store.GetProject(r.Context(), slug); err != nil {
 		return err
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, artifacts.MaxPackage+65536)
@@ -106,22 +105,21 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, p auth.Principa
 	if registry.ValidateVerificationToken(proof) != nil {
 		return domain.ErrInvalid
 	}
-	if proof != "" {
-		verifier, ok := s.options.Verifier.(ProofManifestVerifier)
-		if !ok {
-			return domain.ErrInvalid
+	check := func(project domain.Project) error {
+		if proof != "" {
+			verifier, ok := s.options.Verifier.(ProofManifestVerifier)
+			if !ok {
+				return domain.ErrInvalid
+			}
+			return verifier.CheckManifestWithToken(r.Context(), pack.Release.Image, project.ImageRepository, proof)
+		} else {
+			return s.options.Verifier.CheckManifest(r.Context(), pack.Release.Image, project.ImageRepository)
 		}
-		err = verifier.CheckManifestWithToken(r.Context(), pack.Release.Image, project.ImageRepository, proof)
-	} else {
-		err = s.options.Verifier.CheckManifest(r.Context(), pack.Release.Image, project.ImageRepository)
-	}
-	if err != nil {
-		return err
 	}
 	if err = artifacts.PublishFile(s.options.ArtifactsDir, *pack); err != nil {
 		return err
 	}
-	release, err := s.store.PublishRelease(r.Context(), pack.Release, fields["channel"] == "stable", p.ID)
+	release, err := s.store.PublishReleaseChecked(r.Context(), pack.Release, fields["channel"] == "stable", p.ID, check)
 	if err != nil {
 		return err
 	}

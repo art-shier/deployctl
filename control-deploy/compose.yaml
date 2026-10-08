@@ -31,7 +31,7 @@ services:
       REGISTRY_AUTH_TOKEN_ISSUER: ctl
       REGISTRY_AUTH_TOKEN_ROOTCERTBUNDLE: /cert/signing.crt
       REGISTRY_HTTP_SECRET: ${CTL_REGISTRY_HTTP_SECRET}
-      REGISTRY_STORAGE_DELETE_ENABLED: 'false'
+      REGISTRY_STORAGE_DELETE_ENABLED: 'true'
     ports: ['127.0.0.1:${CTL_REGISTRY_PORT:-5000}:5000']
     volumes:
       - ${CTL_HOME}/registry:/var/lib/registry

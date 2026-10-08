@@ -17,6 +17,59 @@ test("actual API project, secret, conflict, credential and logout", async ({
     .getByRole("button", { name: "注册项目" })
     .click();
   await page.getByRole("button", { name: /Notes 浏览器验收/ }).click();
+  const imageArchive = process.env.CTL_BROWSER_IMAGE_ARCHIVE;
+  if (!imageArchive) throw new Error("real Docker archive fixture required");
+  await page.getByRole("tab", { name: "镜像管理" }).click();
+  await expect(page.getByTestId("image-count")).toHaveText("0");
+  for (const tag of ["manual", "manual-alias"]) {
+    await page.getByRole("button", { name: "上传镜像", exact: true }).click();
+    await page.getByLabel("目标标签").fill(tag);
+    await page.getByLabel("镜像 tar 文件").setInputFiles(imageArchive);
+    await page.getByRole("button", { name: "上传并入库" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByTestId("image-count")).toHaveText("1");
+  }
+  await expect(page.getByTestId("image-tag-count")).toHaveText("2");
+  await page.getByRole("button", { name: "详情", exact: true }).click();
+  await expect(page.getByRole("dialog").getByText("linux/amd64")).toBeVisible();
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await page.screenshot({
+    path: "test-results/images-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: "test-results/images-mobile.png",
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(390);
+  await page.getByLabel("搜索镜像").fill("no-such-image");
+  await expect(page.getByText("没有匹配的镜像")).toBeVisible();
+  await page.getByLabel("搜索镜像").fill("manual");
+  await page.getByRole("button", { name: /删除镜像 manual/ }).click();
+  await expect(
+    page.getByRole("dialog").getByText("manual-alias", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "确认删除镜像" }).click();
+  await expect(page.getByTestId("image-count")).toHaveText("0");
+  await expect(page.getByTestId("image-tag-count")).toHaveText("0");
+  await page.getByRole("button", { name: "上传镜像", exact: true }).click();
+  await page.getByLabel("目标标签").fill("bad-archive");
+  await page
+    .getByLabel("镜像 tar 文件")
+    .setInputFiles({
+      name: "invalid.tar",
+      mimeType: "application/x-tar",
+      buffer: Buffer.from("invalid archive"),
+    });
+  await page.getByRole("button", { name: "上传并入库" }).click();
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
+    "镜像文件无效",
+  );
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("tab", { name: "环境配置" }).click();
   await page.getByRole("button", { name: "添加变量" }).first().click();
   await page.getByLabel("业务变量变量名 1").fill("DATABASE_URL");
