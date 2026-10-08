@@ -1,6 +1,6 @@
 # ctl 管理服务与平台模式
 
-本版本包含 CLI **1.8.3**、管理服务 **0.2.1**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
+本版本包含 CLI **1.8.4**、管理服务 **0.2.1**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
 
 平台包含 Go API / React 管理台、Distribution Registry、标准发布包目录和 PostgreSQL。单组织自托管；网页管理配置与版本，部署由目标服务器上的 ctl 执行。安装记录是客户端上报的历史结果。
 
@@ -142,6 +142,19 @@ sudo ctl config set server ctl.shier.art
 修改到不同地址会清除旧Token并提示重新登录；设置相同地址保留登录。后续 `whoami`、`projects`、`publish`、平台模式的 `install/upgrade` 共用该地址和登录。无登录时提示执行 `ctl login`。配置损坏或权限不正确会报错，不自动回退到默认服务。
 
 CI可先执行 `ctl config set server "$CTL_SERVER_URL" --client-config "$CLIENT_FILE"` 再登录；默认服务无需这一步。所有配置/登录/部署命令使用相同身份与 `--client-config`。旧 `login --server <地址>` 仍兼容，成功登录后保存该地址；验证失败保留原配置及凭据。
+
+## 安装进度（CLI>=1.8.4）
+
+`ctl install/upgrade` 默认将进度显示到stderr，stdout仍只输出原最终结果。阶段包括获取版本和配置、下载校验发布包、准备Registry认证、验证配置、检查Docker、拉取镜像、pre/post hook、启动容器、健康检查、保存部署状态与提交回执。长操作每5秒显示阶段、已耗时及仍在运行/等待；这表示命令尚未结束，不代表网络持续传输。下载使用实际已读取字节数，有Content-Length时显示百分比和TTY进度条，没有时只显示字节数。不存在估算的整体安装百分比，镜像层下载百分比暂不展示。
+
+```bash
+ctl install notes --prod
+ctl upgrade notes --prod
+# 脚本只需最终结果时：
+ctl install notes --prod --quiet
+```
+
+阶段成功、失败、中断分别显示done/failed/interrupted；checksum或健康检查失败不会显示安装成功。自动恢复显示独立阶段，退出码仍非零。Docker拉取命令超时600秒，hooks沿用发布包声明的超时；进度不改变现有超时、部署锁、状态提交或恢复规则。不会实时输出Docker/hook原始日志、Token或环境配置值；诊断仍使用已有受保护日志。CLI升级不改变正在运行的旧安装进程，避免同时重复执行install；另一个终端可用 `docker ps -a` 查看是否已创建容器，容器未创建也可能仍处于下载或拉取阶段。
 
 ## 用户配置目录（CLI>=1.8.3）
 

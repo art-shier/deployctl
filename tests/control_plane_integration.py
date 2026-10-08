@@ -142,7 +142,13 @@ set -Eeuo pipefail
             worker=threading.Thread(target=modify_mid_install,daemon=True);worker.start()
             root=base/'apps';config_root=base/'config'
             flags=['--root',root,'--config-root',config_root,'--client-config',deployer_config]
-            cli('install',app,'--prod','--env-var','TEXT=cli-local','--set','ADMIN=cli-admin',*flags)
+            installation = cli('install',app,'--prod','--env-var','TEXT=cli-local','--set','ADMIN=cli-admin',*flags)
+            assert '[working] Downloading and verifying release package' in installation.stderr
+            assert '[done] Pulling image' in installation.stderr
+            assert '[done] Final readiness check' in installation.stderr
+            assert '[done] Saving deployment state' in installation.stderr
+            assert publisher not in installation.stderr and deployer not in installation.stderr
+            assert 'cli-local' not in installation.stderr and 'cli-admin' not in installation.stderr
             worker.join();assert not errors
             state_path=root/app/'prod/state.json'
             first=json.loads(state_path.read_text());current=first['current']

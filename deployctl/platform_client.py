@@ -91,7 +91,7 @@ class PlatformClient:
         self.server = validate_origin(credentials.server)
         self.token = validate_token(credentials.token)
 
-    def request(self, method, path, value=None, raw=None, content_type=None, limit=512*1024, basic=False, verification_token=None):
+    def request(self, method, path, value=None, raw=None, content_type=None, limit=512*1024, basic=False, verification_token=None, download_progress=None):
         if not isinstance(path,str) or not path.startswith('/') or path.startswith('//') or '\\' in path or any(ord(c)<=32 for c in path):
             raise ValueError('invalid platform API path')
         headers = {'Accept':'application/json','User-Agent':f'deployctl/{__version__}'}
@@ -101,6 +101,9 @@ class PlatformClient:
         if content_type: headers['Content-Type']=content_type
         try:
             with build_opener(NoRedirect()).open(Request(self.server+path,data=raw,headers=headers,method=method),timeout=60) as response:
+                if download_progress is not None:
+                    from .download import read_response
+                    return read_response(response, limit, download_progress)
                 data=response.read(limit+1)
                 if len(data)>limit: raise ValueError('platform response exceeds limit')
                 return data
@@ -118,8 +121,9 @@ class PlatformClient:
         if version: globals()['version'](version); body['version']=version
         return validate_resolution(self.json('POST',f'/api/v1/projects/{project}/resolve',body),project,environment,version)
 
-    def download_release(self, resolution, cache):
-        raw=self.request('GET',resolution['release']['package_path'],limit=MAX_PACKAGE)
+    def download_release(self, resolution, cache, progress=None):
+        options = {'download_progress': progress} if progress is not None else {}
+        raw=self.request('GET',resolution['release']['package_path'],limit=MAX_PACKAGE,**options)
         if hashlib.sha256(raw).hexdigest()!=resolution['release']['sha256']: raise ValueError('platform package checksum mismatch')
         path=Path(cache)/'release.tar.gz';path.write_bytes(raw)
         from .release import unpack_release
