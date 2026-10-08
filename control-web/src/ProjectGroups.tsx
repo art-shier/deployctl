@@ -22,6 +22,7 @@ type Props = {
   Dialog: ComponentType<DialogProps>;
   renderProjects: (group: Group, changed: () => void) => ReactNode;
   renderTokens: (group: Group) => ReactNode;
+  renderEnvironments: (group: Group) => ReactNode;
 };
 
 export function GroupsView({
@@ -31,6 +32,7 @@ export function GroupsView({
   Dialog,
   renderProjects,
   renderTokens,
+  renderEnvironments,
 }: Props) {
   const [groups, setGroups] = useState<Group[]>([]),
     [projects, setProjects] = useState<Project[]>([]);
@@ -67,6 +69,7 @@ export function GroupsView({
   const tabs = [
     ["projects", `组内项目${selected ? ` (${count(selected)})` : ""}`],
     ["access", "组授权"],
+    ["environments", "环境配置"],
     ["settings", "组设置"],
   ];
   return (
@@ -122,6 +125,8 @@ export function GroupsView({
             <div role="tabpanel">
               {tab === "access" ? (
                 renderTokens(selected)
+              ) : tab === "environments" ? (
+                renderEnvironments(selected)
               ) : tab === "settings" ? (
                 <section className="panel group-settings">
                   <h2>项目组设置</h2>

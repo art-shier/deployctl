@@ -161,11 +161,8 @@ test("group-first navigation, membership and in-context group authorization", as
     .getByRole("button", { name: "撤销", exact: true })
     .click();
   await expect(
-    page
-      .getByRole("row")
-      .filter({ hasText: `group-host-${suffix}` })
-      .getByText("已撤销", { exact: true }),
-  ).toBeVisible();
+    page.getByRole("row").filter({ hasText: `group-host-${suffix}` }),
+  ).toHaveCount(0);
   expect(
     (
       await page.request.get(`/api/v1/projects/${project}`, { headers })

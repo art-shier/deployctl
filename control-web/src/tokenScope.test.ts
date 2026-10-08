@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { tokenCoversProject } from "./tokenScope";
 describe("credential visibility", () => {
+  it("denies excluded projects even with explicit or group grants", () => {
+    const token = {
+      groups: ["apps"],
+      projects: ["notes"],
+      excluded_projects: ["notes"],
+    };
+    expect(tokenCoversProject(token, { slug: "notes", group: "apps" })).toBe(
+      false,
+    );
+    expect(tokenCoversProject(token, { slug: "future", group: "apps" })).toBe(
+      true,
+    );
+  });
   it("keeps legacy credentials confined after default grouping", () => {
     expect(
       tokenCoversProject(

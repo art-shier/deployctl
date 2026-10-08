@@ -665,6 +665,59 @@ td {
 .credential-table {
   background: #fff;
 }
+.inherited-variable {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) minmax(100px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.inherited-variable > * {
+  min-width: 0;
+}
+.credential-project-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.credential-actions .text-button {
+  margin-right: 10px;
+  white-space: nowrap;
+}
+.token-details {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 8px 12px;
+}
+.token-details dt {
+  color: var(--muted);
+}
+.token-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .inherited-variable {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .inherited-variable > span {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .inherited-variable > button {
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+  .credential-project-option {
+    flex-wrap: wrap;
+  }
+  .credential-actions {
+    grid-column: 1 / -1;
+  }
+}
 .credential-table td[data-label="授权范围"] {
   overflow-wrap: anywhere;
 }

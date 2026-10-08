@@ -60,14 +60,29 @@ type Group struct {
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 }
-type Revision struct {
+type GroupRevision struct {
 	ID            string        `json:"id"`
-	Project       string        `json:"project"`
+	Group         string        `json:"group"`
 	Environment   string        `json:"environment"`
 	Revision      int64         `json:"revision"`
-	TargetVersion string        `json:"target_version"`
-	Configuration Configuration `json:"configuration"`
+	Configuration Configuration `json:"-"`
 	CreatedAt     time.Time     `json:"created_at"`
+}
+type GroupSource struct {
+	Slug     string `json:"slug"`
+	ID       string `json:"id"`
+	Revision int64  `json:"revision"`
+}
+type Revision struct {
+	ID                     string        `json:"id"`
+	Project                string        `json:"project"`
+	Environment            string        `json:"environment"`
+	Revision               int64         `json:"revision"`
+	TargetVersion          string        `json:"target_version"`
+	Configuration          Configuration `json:"configuration"`
+	CreatedAt              time.Time     `json:"created_at"`
+	InheritedConfiguration Configuration `json:"-"`
+	GroupSource            *GroupSource  `json:"-"`
 }
 type Release struct {
 	ID        string    `json:"id"`
@@ -101,16 +116,18 @@ type AuditEvent struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 type Token struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Role         string    `json:"role"`
-	Project      string    `json:"project"`
-	Environments []string  `json:"environments"`
-	Projects     []string  `json:"projects,omitempty"`
-	Groups       []string  `json:"groups,omitempty"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	Revoked      bool      `json:"revoked"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	Role             string    `json:"role"`
+	Project          string    `json:"project"`
+	Environments     []string  `json:"environments"`
+	Projects         []string  `json:"projects,omitempty"`
+	Groups           []string  `json:"groups,omitempty"`
+	ExcludedProjects []string  `json:"excluded_projects,omitempty"`
+	TokenReadable    bool      `json:"token_readable"`
+	ExpiresAt        time.Time `json:"expires_at"`
+	Revoked          bool      `json:"revoked"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 func NewID() string {

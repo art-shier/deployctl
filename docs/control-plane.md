@@ -1,6 +1,6 @@
 # ctl 管理服务与平台模式
 
-本版本包含 CLI **1.8.4**、管理服务 **0.2.1**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
+本版本包含 CLI **1.9.0**、管理服务 **0.3.0**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
 
 平台包含 Go API / React 管理台、Distribution Registry、标准发布包目录和 PostgreSQL。单组织自托管；网页管理配置与版本，部署由目标服务器上的 ctl 执行。安装记录是客户端上报的历史结果。
 
@@ -10,14 +10,14 @@
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.8.1/install.sh \
-  | sudo bash -s -- --version v1.8.1
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.9.0/install.sh \
+  | sudo bash -s -- --version v1.9.0
 
-RELEASE_URL='https://github.com/art-shier/deployctl/releases/download/v1.8.1/ctl-platform-v1.8.1.tar.gz'
+RELEASE_URL='https://github.com/art-shier/deployctl/releases/download/v1.9.0/ctl-platform-v1.9.0.tar.gz'
 sudo ctl server install --release "$RELEASE_URL"
 ```
 
-已由安装器管理的CLI可以用 `sudo ctl self-update --version v1.8.1` 更新原目录；用户目录安装时用原用户和原命令路径。`server install`与普通业务 `install` 独立，管理API、Registry和可选PostgreSQL由固定Compose启动。
+已由安装器管理的CLI可以用 `sudo ctl self-update --version v1.9.0` 更新原目录；用户目录安装时用原用户和原命令路径。`server install`与普通业务 `install` 独立，管理API、Registry和可选PostgreSQL由固定Compose启动。
 
 工具自动下载相邻 `.sha256` 并校验，可用 `--sha256 <独立取得的摘要>` 显式指定。包只含引导脚本、配置生成器、Compose及清单，清单固定真实镜像digest和成员SHA256；不含密码。CLI限定成员/大小、不直接tar解压、使用私有目录、检查父目录可信权限，拒绝路径链接和被修改的缓存。操作获取主机级及实例级锁；超时/中断先停止引导进程组再释放锁。固定Compose项目ctl-platform每个Docker主机只支持一个实例，--home用于指定其存储位置，发现其他home的已有实例时拒绝替换。
 
@@ -31,14 +31,14 @@ sudo ctl server upgrade --release "$NEW_VERIFIED_RELEASE_URL"
 
 同版本同包可重复upgrade；install拒绝已有实例，源码引导过的实例使用upgrade接入。退出失败时保留 `server-state.json` 的pending记录，修复原因后用原命令/原发布包重试，不能换包绕过pending。引导保留密钥和数据，不提供数据库/平台镜像的自动事务回滚；失败不能报告为已升级成功。
 
-### 从v1.7/v1.8升级到v1.8.1
+### 从v1.7/v1.8升级到v1.9.0
 
 先完成下文的数据库、制品与密钥备份，再升级已有实例：
 
 ```bash
-sudo ctl self-update --version v1.8.1
+sudo ctl self-update --version v1.9.0
 sudo ctl --version
-sudo ctl server upgrade --release https://github.com/art-shier/deployctl/releases/download/v1.8.1/ctl-platform-v1.8.1.tar.gz
+sudo ctl server upgrade --release https://github.com/art-shier/deployctl/releases/download/v1.9.0/ctl-platform-v1.9.0.tar.gz
 ```
 
 CLI沿用原安装目录；server upgrade沿用原实例的域名、端口和数据目录（例如已有8084端口），无需重新传入端口。新服务端启动时自动把旧项目归入default，保留现有配置、发布版本和Token。刷新管理台即可看到项目组；需要一次登录部署多个项目时，由超级管理员创建项目组deployer凭据后，在目标主机执行ctl login替换现有登录。旧凭据不会自动扩大权限。
@@ -80,15 +80,27 @@ sudo bash control-deploy/bootstrap.sh --database-url-file /root/ctl-database.url
 
 项目默认环境自动创建空修订1并指向 `stable`。环境名称与版本独立；发布完整版本并显式设置 stable 后才可安装。可以将环境固定到某个可安装版本。停用版本禁止新安装，保留回滚所需制品。首版不自动清理 Registry / 发布包。
 
-## 项目组和共享部署凭据（v1.8.1）
+## 项目组和共享部署凭据（v1.9.0）
 
 项目组扩展需要升级服务端。首次启动自动创建 `default`，将已有项目归入该组；迁移保留环境修订、秘密配置、发布版本、stable 指针和现有 Token。未指定组的新项目也属于 `default`。组标识创建后不可改，支持修改显示名称和说明；本次不提供组删除。
 
 登录管理台后默认进入「项目组」。点击项目组进入详情，默认显示「组内项目」列表；可在组内注册新项目、加入已有项目，或将成员移出到 default。每个项目只属于一个组；移组操作会改变组凭据的访问范围，提交前需确认。项目名称进入项目详情，返回按钮回到所属组。
 
-组详情的「组授权」页集中查看、创建和撤销当前组凭据。创建时固定当前组，展示当前覆盖的项目、角色和允许环境；以后加入的项目自动获得授权。侧栏「组凭据」汇总各组凭据，并支持一次授权多个组。项目详情不提供凭据页签，不再创建项目级凭据。
+组详情的「组授权」页集中查看、创建、编辑和撤销凭据。可授权多个项目组、额外项目以及排除指定项目；以后加入授权组的项目自动获得授权，排除项始终优先。侧栏「组凭据」汇总当前未撤销的凭据。项目详情不提供凭据页签，统一在此管理授权。
 
-`owner` 是全局超级管理员。`publisher` 保持发布/镜像推送权限，不能读取环境配置；`deployer` 保持部署与镜像拉取权限，不能推送或管理项目。`POST /api/v1/tokens` 必须提供非空 `groups`，拒绝 `project` / 非空 `projects`；重复或不存在的组也会被拒绝。旧项目级凭据保留原权限用于兼容已有流水线，仅在全局凭据列表显示为旧版凭据并允许撤销，不会因为归入 `default` 自动扩大权限。
+`owner` 是全局超级管理员。`publisher` 保持发布/镜像推送权限，不能读取环境配置；`deployer` 保持部署与镜像拉取权限，不能推送或管理项目。新凭据至少授权一个组或项目；使用 `groups` / `projects` 数组和可选 `excluded_projects` 排除项。重复或不存在的范围会被拒绝。旧项目级凭据保留原权限，编辑后可转换为当前授权方式，不因归入 `default` 自动扩大权限。
+
+凭据可修改名称、角色、授权范围、部署环境及到期时间，Token保持不变；保存后后续API请求立即使用新权限。点击「查看Token」可再次查看完整内容；新Token使用平台配置加密密钥加密保存，仅owner可读取，响应不缓存，查看操作记入审计，列表不会包含明文。旧凭据仅有哈希，无法恢复原文，可确认「重新生成Token」保留授权范围和凭据ID；需要更新使用方的登录或流水线凭据。撤销后凭据从列表移除且不能编辑、查看或恢复，审计历史保留。
+
+### 项目组环境配置
+
+组详情的「环境配置」中为prod、stage等环境分别设置启动变量和安装参数。项目部署同名环境时自动继承；项目同名变量覆盖组变量，删除项目覆盖值后恢复继承。移组后下次部署使用新组的同名环境配置。组中尚未配置的环境不会影响项目自身配置；组配置的环境也可直接用于没有本地环境修订的项目。
+
+启动变量与安装参数分别合并，不跨类别互相覆盖。最终优先级从低到高为：服务器config.env/secrets.env、本地保存的覆盖、本次命令参数、项目组同环境配置、项目同环境配置。组配置不继承部署端口、资源限制或目标版本，避免组内服务端口冲突。秘密值加密保存，管理台继承列表仅展示变量名、来源和秘密标记。
+
+安装开始时以同一数据库快照读取成员归属、组修订和项目修订，生成固定的有效配置ID并由ctl保存运行快照；中途修改配置不会改变进行中的安装。已有服务、restart及rollback使用各自保存的快照；下一次install/upgrade才获取新配置。保存使用expected_revision检测并发编辑，409时保留未保存内容。
+
+Notes的新部署不再依赖ConfigHub。可在管理台项目或项目组prod的启动变量中设置秘密DATABASE_URL，也可在组中设置公共DB_HOST、DB_PORT、DB_SSLMODE，在Notes项目中设置DB_USER、秘密DB_PASSWORD及DB_NAME。Notes优先使用DATABASE_URL，未设置时从DB_*字段组装连接；默认端口5432、库名notes、TLS模式require。
 
 项目组凭据覆盖组内现在和以后加入的项目。项目移组后，后续 API 请求和 Registry token 申请按当前归属重新授权；已经签发的 Registry bearer 仍按现有最长5分钟到期。具体项目授权不随移组变化。普通项目说明编辑不会提交未改动的组字段，避免旧标签页撤销另一管理员的移组操作。
 
@@ -143,9 +155,11 @@ sudo ctl config set server ctl.shier.art
 
 CI可先执行 `ctl config set server "$CTL_SERVER_URL" --client-config "$CLIENT_FILE"` 再登录；默认服务无需这一步。所有配置/登录/部署命令使用相同身份与 `--client-config`。旧 `login --server <地址>` 仍兼容，成功登录后保存该地址；验证失败保留原配置及凭据。
 
-## 安装进度（CLI>=1.8.4）
+## 安装进度（CLI>=1.9.0）
 
-`ctl install/upgrade` 默认将进度显示到stderr，stdout仍只输出原最终结果。阶段包括获取版本和配置、下载校验发布包、准备Registry认证、验证配置、检查Docker、拉取镜像、pre/post hook、启动容器、健康检查、保存部署状态与提交回执。长操作每5秒显示阶段、已耗时及仍在运行/等待；这表示命令尚未结束，不代表网络持续传输。下载使用实际已读取字节数，有Content-Length时显示百分比和TTY进度条，没有时只显示字节数。不存在估算的整体安装百分比，镜像层下载百分比暂不展示。
+`ctl install/upgrade` 默认将进度显示到stderr，stdout仍只输出原最终结果。阶段包括获取版本和配置、下载校验发布包、准备Registry认证、验证配置、检查Docker、拉取镜像、pre/post hook、启动容器、健康检查、保存部署状态与提交回执。发布包下载使用实际读取字节数，有Content-Length时显示百分比和TTY进度条，否则只显示字节数。
+
+镜像拉取实时读取Compose的JSON事件，每层分别显示Downloading/Extracting的实际当前大小、总大小与百分比，以及Waiting、Download complete、Already exists、Pull complete等状态。解压计数与下载计数分别展示，不累加成虚假的整体百分比；Docker未返回总大小时明确显示unknown，不推算百分比；快速完成或缓存层按Docker返回的完成状态展示。TTY更新当前进度行，日志按层限频输出，状态变化立即显示。没有新进度时每5秒提示已等待多久，这与实际传输进度明确分开。
 
 ```bash
 ctl install notes --prod

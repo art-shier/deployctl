@@ -9,17 +9,22 @@ import (
 )
 
 type Principal struct {
-	ID           string
-	Role         string
-	Project      string
-	Environments []string
-	Projects     []string
-	Groups       []string
+	ID               string
+	Role             string
+	Project          string
+	Environments     []string
+	Projects         []string
+	Groups           []string
+	ExcludedProjects []string
+	ExplicitProjects []string
 }
 
 func (p Principal) Can(action, project, environment string) bool {
 	if p.Role == "owner" {
 		return true
+	}
+	if slices.Contains(p.ExcludedProjects, project) {
+		return false
 	}
 	if project == "" || (p.Project != project && !slices.Contains(p.Projects, project)) {
 		return false
@@ -37,6 +42,20 @@ func (p Principal) Can(action, project, environment string) bool {
 		return slices.Contains([]string{"project.read", "release.read", "artifact.read", "registry.pull"}, action)
 	}
 	return false
+}
+
+// CanInGroup authorizes the membership read by the resolution transaction,
+// rather than projects expanded earlier during token authentication.
+func (p Principal) CanInGroup(action, project, group, environment string) bool {
+	resolved := p
+	resolved.Projects = append([]string{}, p.ExplicitProjects...)
+	if len(p.Groups) == 0 && p.ExplicitProjects == nil {
+		resolved.Projects = append([]string{}, p.Projects...)
+	}
+	if slices.Contains(p.Groups, group) {
+		resolved.Projects = append(resolved.Projects, project)
+	}
+	return resolved.Can(action, project, environment)
 }
 func NewToken() (string, error) {
 	b := make([]byte, 32)

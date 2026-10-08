@@ -109,7 +109,7 @@ func masked(vars map[string]domain.Variable) []maskedVariable {
 	return out
 }
 func environmentReply(w http.ResponseWriter, rev domain.Revision) {
-	reply(w, 200, map[string]any{"id": rev.ID, "environment": rev.Environment, "revision": rev.Revision, "target_version": rev.TargetVersion, "runtime_env": masked(rev.Configuration.RuntimeEnv), "install_params": masked(rev.Configuration.InstallParams), "deployment_defaults": rev.Configuration.DeploymentDefaults, "created_at": rev.CreatedAt})
+	reply(w, 200, map[string]any{"id": rev.ID, "environment": rev.Environment, "revision": rev.Revision, "target_version": rev.TargetVersion, "runtime_env": masked(rev.Configuration.RuntimeEnv), "install_params": masked(rev.Configuration.InstallParams), "deployment_defaults": rev.Configuration.DeploymentDefaults, "created_at": rev.CreatedAt, "inherited_runtime_env": masked(rev.InheritedConfiguration.RuntimeEnv), "inherited_install_params": masked(rev.InheritedConfiguration.InstallParams), "group_source": rev.GroupSource})
 }
 func (s *Server) environment(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	if err := owner(p); err != nil {
@@ -166,7 +166,11 @@ func (s *Server) saveEnvironment(w http.ResponseWriter, r *http.Request, p auth.
 	if body.TargetVersion != nil {
 		target = *body.TargetVersion
 	}
-	next, err := s.store.SaveRevision(r.Context(), slug, env, body.ExpectedRevision, cfg, target, p.ID)
+	_, err = s.store.SaveRevision(r.Context(), slug, env, body.ExpectedRevision, cfg, target, p.ID)
+	if err != nil {
+		return err
+	}
+	next, err := s.store.GetRevision(r.Context(), slug, env)
 	if err != nil {
 		return err
 	}

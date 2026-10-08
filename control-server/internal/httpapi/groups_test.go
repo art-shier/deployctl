@@ -82,7 +82,7 @@ func TestGroupAPIAndSharedDeploymentCredential(t *testing.T) {
 	if w = call("POST", "/api/v1/groups", map[string]any{"slug": "escape", "name": "Escape"}, minted.Token); w.Code != 403 {
 		t.Fatal("group mutation allowed", w.Code)
 	}
-	for _, scope := range []map[string]any{{"project": "notes"}, {"projects": []string{"notes"}}, {"groups": []string{"apps"}, "project": "notes"}} {
+	for _, scope := range []map[string]any{{"project": "notes"}, {"groups": []string{"apps"}, "project": "notes"}} {
 		scope["name"], scope["role"] = "removed-project-scope", "publisher"
 		if w = call("POST", "/api/v1/tokens", scope, ownerToken); w.Code != 400 {
 			t.Fatal("project credential creation accepted", w.Code)

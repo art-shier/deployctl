@@ -18,6 +18,16 @@ CREATE TABLE IF NOT EXISTS ctl_revisions (
  revision bigint NOT NULL, target_version text NOT NULL, ciphertext bytea NOT NULL, created_at timestamptz NOT NULL,
  UNIQUE(project,environment,revision)
 );
+CREATE TABLE IF NOT EXISTS ctl_group_environments (
+ group_slug text NOT NULL REFERENCES ctl_groups(slug), name text NOT NULL,
+ current_id text NOT NULL DEFAULT '', revision bigint NOT NULL DEFAULT 0,
+ PRIMARY KEY(group_slug,name)
+);
+CREATE TABLE IF NOT EXISTS ctl_group_revisions (
+ id text PRIMARY KEY, group_slug text NOT NULL REFERENCES ctl_groups(slug), environment text NOT NULL,
+ revision bigint NOT NULL, ciphertext bytea NOT NULL, created_at timestamptz NOT NULL,
+ UNIQUE(group_slug,environment,revision)
+);
 CREATE TABLE IF NOT EXISTS ctl_releases (
  id text PRIMARY KEY, project text NOT NULL REFERENCES ctl_projects(slug), version text NOT NULL,
  status text NOT NULL, data jsonb NOT NULL, UNIQUE(project,version)
@@ -27,6 +37,7 @@ CREATE TABLE IF NOT EXISTS ctl_tokens (
  revoked boolean NOT NULL DEFAULT false, expires_at timestamptz NOT NULL, data jsonb NOT NULL
 );
 ALTER TABLE ctl_tokens ALTER COLUMN project DROP NOT NULL;
+ALTER TABLE ctl_tokens ADD COLUMN IF NOT EXISTS ciphertext bytea;
 CREATE TABLE IF NOT EXISTS ctl_sessions (hash text PRIMARY KEY, expires_at timestamptz NOT NULL);
 CREATE TABLE IF NOT EXISTS ctl_receipts (id text PRIMARY KEY, project text NOT NULL REFERENCES ctl_projects(slug), data jsonb NOT NULL, created_at timestamptz NOT NULL);
 CREATE TABLE IF NOT EXISTS ctl_audit (id text PRIMARY KEY, project text NOT NULL, data jsonb NOT NULL, created_at timestamptz NOT NULL);

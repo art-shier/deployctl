@@ -192,10 +192,23 @@ func (s *Store) readRevision(row scanner) (domain.Revision, error) {
 const revisionSelect = `SELECT r.id,r.project,r.environment,r.revision,r.target_version,r.ciphertext,r.created_at FROM ctl_environments e JOIN ctl_revisions r ON r.id=e.current_id WHERE e.project=$1 AND e.name=$2`
 
 func (s *Store) GetRevision(ctx context.Context, project, env string) (domain.Revision, error) {
-	return s.readRevision(s.pool.QueryRow(ctx, revisionSelect, project, env))
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return domain.Revision{}, err
+	}
+	defer tx.Rollback(ctx)
+	p, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1", project))
+	if err != nil {
+		return domain.Revision{}, err
+	}
+	r, err := s.projectRevision(ctx, tx, p, env)
+	if err != nil {
+		return r, err
+	}
+	return r, tx.Commit(ctx)
 }
 func (s *Store) ListEnvironments(ctx context.Context, project string) ([]string, error) {
-	rows, err := s.pool.Query(ctx, "SELECT name FROM ctl_environments WHERE project=$1 ORDER BY name", project)
+	rows, err := s.pool.Query(ctx, `SELECT name FROM ctl_environments WHERE project=$1 UNION SELECT e.name FROM ctl_group_environments e JOIN ctl_projects p ON p.group_slug=e.group_slug WHERE p.slug=$1 ORDER BY name`, project)
 	if err != nil {
 		return nil, err
 	}
@@ -406,8 +419,12 @@ func (s *Store) Resolve(ctx context.Context, project, env, version string) (Reso
 	if env == "" {
 		env = out.Project.DefaultEnvironment
 	}
-	out.Revision, err = s.readRevision(tx.QueryRow(ctx, revisionSelect, project, env))
+	out.Revision, err = s.projectRevision(ctx, tx, out.Project, env)
 	if err != nil {
+		return out, err
+	}
+	out.Revision = effectiveRevision(out.Project, out.Revision)
+	if err = domain.ValidateConfiguration(out.Revision.Configuration); err != nil {
 		return out, err
 	}
 	if version == "" {

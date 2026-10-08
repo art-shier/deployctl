@@ -54,3 +54,14 @@ func TestMultipleProjectScopeKeepsRoleAndEnvironmentLimits(t *testing.T) {
 		t.Fatal("publisher role escaped")
 	}
 }
+
+func TestExcludedProjectDeniesLegacyAndExplicitDuplicateGrants(t *testing.T) {
+	p := Principal{Role: "deployer", Project: "notes", Projects: []string{"notes"}, ExcludedProjects: []string{"notes"}, Environments: []string{"prod"}}
+	if p.Can("resolve", "notes", "prod") || p.Can("registry.pull", "notes", "") {
+		t.Fatal("excluded project bypassed denial")
+	}
+	p.Role = "publisher"
+	if p.Can("release.publish", "notes", "") || p.Can("registry.push", "notes", "") {
+		t.Fatal("publisher bypassed denial")
+	}
+}

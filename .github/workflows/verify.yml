@@ -52,6 +52,8 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install PyYAML==6.0.3
       - run: python scripts/docker_integration.py
+      - name: Actual cold and cached image pull progress
+        run: python scripts/docker_progress_smoke.py
       - name: Prepare build argument fixture with the release preparation script
         id: args
         run: python scripts/build_args_integration.py prepare --directory "$RUNNER_TEMP/build-args"

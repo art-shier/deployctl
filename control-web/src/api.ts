@@ -81,11 +81,14 @@ export interface Environment {
   id: string;
   environment: string;
   revision: number;
-  target_version: string;
+  target_version?: string;
   runtime_env: MaskedVariable[];
   install_params: MaskedVariable[];
-  deployment_defaults: Defaults;
+  deployment_defaults?: Defaults;
   created_at: string;
+  inherited_runtime_env?: MaskedVariable[];
+  inherited_install_params?: MaskedVariable[];
+  group_source?: { slug: string; id: string; revision: number } | null;
 }
 export interface Token {
   id: string;
@@ -95,6 +98,8 @@ export interface Token {
   environments: string[];
   projects?: string[];
   groups?: string[];
+  excluded_projects?: string[];
+  token_readable?: boolean;
   expires_at: string;
   revoked: boolean;
   created_at: string;

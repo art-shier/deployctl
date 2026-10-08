@@ -1,6 +1,28 @@
 import { describe, it, expect } from "vitest";
-import { draftRows, changes, editRow, toggleRemoval } from "./environmentForm";
+import {
+  draftRows,
+  changes,
+  editRow,
+  toggleRemoval,
+  inheritedRows,
+  overrideVariable,
+} from "./environmentForm";
 describe("secret draft protocol", () => {
+  it("removing an override restores the inherited value without sending it", () => {
+    const inherited = [
+      { key: "TEXT", secret: false, configured: true, value: "group" },
+    ];
+    const own = draftRows([{ ...inherited[0], value: "project" }]);
+    expect(inheritedRows(own, inherited)).toEqual([]);
+    const removed = toggleRemoval(own, 0);
+    expect(inheritedRows(removed, inherited)).toEqual(inherited);
+    expect(changes(removed)).toEqual([{ key: "TEXT", operation: "remove" }]);
+  });
+  it("requires entering an inherited secret override instead of using a mask", () => {
+    expect(
+      overrideVariable([], { key: "PASSWORD", secret: true, configured: true }),
+    ).toEqual([{ key: "PASSWORD", value: "", secret: true, operation: "set" }]);
+  });
   it("restores the edited operation after undoing deletion", () => {
     let rows = draftRows([
       { key: "TEXT", secret: false, configured: true, value: "old" },

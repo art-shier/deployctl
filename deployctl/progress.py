@@ -1,5 +1,7 @@
 """Safe stderr feedback for synchronous deployment work; never prints raw logs."""
 from contextlib import contextmanager
+import json
+import re
 import sys
 import threading
 import time
@@ -15,6 +17,8 @@ class Progress:
         self._inline = False
         self._width = 0
         self._last_download = None
+        self._image_layers = {}
+        self._last_image_at = None
 
     def _emit(self, text, inline=False):
         if not self.enabled:
@@ -38,11 +42,18 @@ class Progress:
             yield
             return
         started = self.clock()
+        self._image_layers = {}
+        self._last_image_at = None
         stopped = threading.Event()
         self._emit(f'[working] {label}')
         def heartbeat():
             while not stopped.wait(self.interval):
-                self._emit(f'[waiting] {label} ({max(0, self.clock() - started):.0f}s elapsed; still running)')
+                now = self.clock()
+                last = self._last_image_at
+                if last is not None and now - last < self.interval:
+                    continue
+                detail = 'still running' if last is None else f'no new image progress for {max(0, now - last):.0f}s'
+                self._emit(f'[waiting] {label} ({max(0, now - started):.0f}s elapsed; {detail})')
         worker = threading.Thread(target=heartbeat, daemon=True)
         worker.start()
         status = 'done'
@@ -78,3 +89,64 @@ class Progress:
             else:
                 text = f'Release download: {current} bytes (total size unknown)'
             self._emit(text, inline=tty)
+
+    def image_event(self, raw):
+        """Render only known Compose pull states and numeric counters, never raw logs."""
+        if not self.enabled or len(raw) > 16384:
+            return
+        try:
+            event = json.loads(raw)
+        except (ValueError, UnicodeError):
+            return
+        if not isinstance(event, dict) or event.get('tail') or event.get('dry-run'):
+            return
+        identifier, state = event.get('id'), event.get('text')
+        if not isinstance(identifier, str) or not isinstance(state, str):
+            return
+        if identifier == 'app':
+            if state not in ('Pulling', 'Pulled'):
+                return
+            text = f'Image: {state}'
+        else:
+            if not re.fullmatch(r'[a-f0-9]{12,64}', identifier):
+                return
+            if state not in ('Preparing', 'Waiting', 'Pulling fs layer', 'Downloading',
+                             'Download complete', 'Extracting', 'Verifying Checksum',
+                             'Already exists', 'Pull complete'):
+                return
+            text = f'Image layer {identifier[:12]}: {state}'
+        current, total = event.get('current', 0), event.get('total', 0)
+        if any(type(value) is not int or not 0 <= value <= 2**63-1 for value in (current, total)):
+            return
+        numeric = state in ('Downloading', 'Extracting')
+        if numeric:
+            if total:
+                percent = min(100, current * 100 // total)
+                text += f' {self._size(current)} / {self._size(total)} ({percent}%)'
+            else:
+                text += f' {self._size(current)} (total size unknown)'
+        now = self.clock()
+        with self._lock:
+            previous = self._image_layers.get(identifier)
+            if previous and previous[0] == state:
+                if previous[2:] == (current, total):
+                    return
+                self._last_image_at = now
+                if now - previous[1] < min(1, self.interval) and not (total and current >= total):
+                    return
+            self._last_image_at = now
+            self._image_layers[identifier] = (state, now, current, total)
+            try:
+                tty = self.stream.isatty()
+            except (OSError, ValueError, AttributeError):
+                tty = False
+            self._emit(text, inline=tty and numeric)
+
+    @staticmethod
+    def _size(value):
+        if value < 1024:
+            return f'{value} bytes'
+        for unit in ('KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB'):
+            value /= 1024
+            if value < 1024:
+                return f'{value:.1f} {unit}'

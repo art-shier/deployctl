@@ -36,7 +36,7 @@ func TestDefaultGroupMigrationPreservesLegacyIdentity(t *testing.T) {
 	if _, err = s.pool.Exec(ctx, "UPDATE ctl_projects SET stable_version=$2 WHERE slug=$1", p.Slug, release.Version); err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.pool.Exec(ctx, `ALTER TABLE ctl_projects DROP COLUMN group_slug; DROP TABLE ctl_groups; UPDATE ctl_projects SET data=data-'group'; ALTER TABLE ctl_tokens ALTER COLUMN project SET NOT NULL`)
+	_, err = s.pool.Exec(ctx, `DROP TABLE ctl_group_environments; DROP TABLE ctl_group_revisions; ALTER TABLE ctl_projects DROP COLUMN group_slug; DROP TABLE ctl_groups; UPDATE ctl_projects SET data=data-'group'; ALTER TABLE ctl_tokens ALTER COLUMN project SET NOT NULL`)
 	if err != nil {
 		t.Fatal(err)
 	}
