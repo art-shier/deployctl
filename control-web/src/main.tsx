@@ -30,14 +30,18 @@ import {
   type Audit,
   type Defaults,
   type Group,
+  type MaskedVariable,
 } from "./api";
 import {
   draftRows,
   changes,
   editRow,
   toggleRemoval,
+  inheritedRows,
+  overrideVariable,
   type DraftRow,
 } from "./environmentForm";
+import { CredentialForm } from "./CredentialForm";
 import { ImagesView } from "./ImagesView";
 import { GroupsView } from "./ProjectGroups";
 import { tokenScopeLabel } from "./tokenScope";
@@ -71,12 +75,16 @@ function Empty({ title, detail }: { title: string; detail: string }) {
     </div>
   );
 }
-function useData<T>(path: string, initial: T) {
+function useData<T>(path: string, initial: T, enabled = true) {
   const [data, setData] = useState<T>(initial),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [count, reload] = useState(0);
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setLoading(true);
     setError("");
@@ -89,7 +97,7 @@ function useData<T>(path: string, initial: T) {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [path, count]);
+  }, [path, count, enabled]);
   return { data, loading, error, reload: () => reload((v) => v + 1) };
 }
 function Loading() {
@@ -98,6 +106,44 @@ function Loading() {
       正在加载…
     </p>
   );
+}
+function canLeavePage() {
+  return window.dispatchEvent(
+    new Event("ctl-before-navigate", { cancelable: true }),
+  );
+}
+function useDirtyGuard(dirty: boolean) {
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  useEffect(() => {
+    const beforeNavigate = (event: Event) => {
+      if (dirtyRef.current && !confirm("离开将丢弃未保存的修改，继续？"))
+        event.preventDefault();
+    };
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (dirtyRef.current) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    const click = (event: MouseEvent) => {
+      const link = (event.target as Element).closest<HTMLAnchorElement>(
+        'a[href^="#"]',
+      );
+      if (link && link.hash !== location.hash && !canLeavePage()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    window.addEventListener("ctl-before-navigate", beforeNavigate);
+    window.addEventListener("beforeunload", beforeUnload);
+    document.addEventListener("click", click, true);
+    return () => {
+      window.removeEventListener("ctl-before-navigate", beforeNavigate);
+      window.removeEventListener("beforeunload", beforeUnload);
+      document.removeEventListener("click", click, true);
+    };
+  }, []);
 }
 function Modal({
   title,
@@ -197,6 +243,7 @@ function App() {
     };
   }, []);
   const navigate = (next: string) => {
+    if (next !== location.hash.slice(1) && !canLeavePage()) return;
     location.hash = next;
     setPage(next);
   };
@@ -215,6 +262,7 @@ function App() {
     }
   };
   const logout = async () => {
+    if (!canLeavePage()) return;
     setError("");
     try {
       await api("/session", { method: "DELETE" });
@@ -329,6 +377,7 @@ function App() {
                 <Projects group={g} navigate={navigate} changed={changed} />
               )}
               renderTokens={(g) => <TokensView group={g} />}
+              renderEnvironments={(g) => <EnvironmentsView group={g} />}
             />
           ) : page === "tokens" ? (
             <TokensView />
@@ -873,7 +922,9 @@ function ProjectView({
             key={id}
             role="tab"
             aria-selected={tab === id}
-            onClick={() => setTab(id)}
+            onClick={() => {
+              if (id !== tab && canLeavePage()) setTab(id);
+            }}
           >
             {label}
           </button>
@@ -1138,22 +1189,28 @@ function UploadRelease({ slug, done }: { slug: string; done: () => void }) {
     </form>
   );
 }
-function EnvironmentsView({ project }: { project: Project }) {
-  const {
-      data: envs,
-      loading,
-      error,
-      reload,
-    } = useData<string[]>(`/projects/${project.slug}/environments`, []),
-    [env, setEnv] = useState(project.default_environment),
+function EnvironmentsView({
+  project,
+  group,
+}: {
+  project?: Project;
+  group?: Group;
+}) {
+  const slug = group?.slug || project!.slug;
+  const base = `/${group ? "groups" : "projects"}/${slug}/environments`;
+  const { data: envs, loading, error, reload } = useData<string[]>(base, []),
+    [env, setEnv] = useState(project?.default_environment || ""),
     [newEnv, setNewEnv] = useState(""),
     [creating, setCreating] = useState(false),
+    [creatingBusy, setCreatingBusy] = useState(false),
     [err, setErr] = useState("");
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCreatingBusy(true);
+    setErr("");
     try {
       await api(
-        `/projects/${project.slug}/environments/${newEnv}`,
+        `${base}/${newEnv}`,
         send("PUT", {
           expected_revision: 0,
           runtime_env: [],
@@ -1166,6 +1223,8 @@ function EnvironmentsView({ project }: { project: Project }) {
       reload();
     } catch (e) {
       setErr(message(e));
+    } finally {
+      setCreatingBusy(false);
     }
   };
   return (
@@ -1174,7 +1233,9 @@ function EnvironmentsView({ project }: { project: Project }) {
         <div>
           <h2>环境配置</h2>
           <p className="muted small">
-            管理台配置优先于安装时的同名参数；保存后，下次安装或升级生效。
+            {group
+              ? "组内项目继承本环境的业务变量和安装参数；项目同名配置优先。保存后，下次安装或升级生效。"
+              : "项目同名配置覆盖组配置；删除项目覆盖后恢复继承。保存后，下次安装或升级生效。"}
           </p>
         </div>
         <button onClick={() => setCreating(true)}>
@@ -1185,6 +1246,8 @@ function EnvironmentsView({ project }: { project: Project }) {
       <ErrorMessage text={error} />
       {loading ? (
         <Loading />
+      ) : error ? (
+        <button onClick={reload}>重新加载环境</button>
       ) : (
         <>
           <div className="env-switch" role="tablist" aria-label="选择环境">
@@ -1192,9 +1255,12 @@ function EnvironmentsView({ project }: { project: Project }) {
               <button
                 key={name}
                 role="tab"
-                aria-selected={env === name}
+                aria-selected={(envs.includes(env) ? env : envs[0]) === name}
                 onClick={() => {
-                  if (name !== env && confirm("切换环境会关闭当前草稿，继续？"))
+                  if (
+                    name !== (envs.includes(env) ? env : envs[0]) &&
+                    canLeavePage()
+                  )
                     setEnv(name);
                 }}
               >
@@ -1202,15 +1268,28 @@ function EnvironmentsView({ project }: { project: Project }) {
               </button>
             ))}
           </div>
-          <EnvironmentEditor
-            key={project.slug + env}
-            slug={project.slug}
-            env={env}
-          />
+          {envs.length ? (
+            <EnvironmentEditor
+              key={slug + (envs.includes(env) ? env : envs[0])}
+              slug={slug}
+              env={envs.includes(env) ? env : envs[0]}
+              group={!!group}
+            />
+          ) : (
+            <Empty
+              title="尚未配置环境"
+              detail="新增环境，为组内项目提供共享变量和安装参数。"
+            />
+          )}
         </>
       )}
       {creating && (
-        <Modal title="新增环境" close={() => setCreating(false)}>
+        <Modal
+          title="新增环境"
+          close={() => {
+            if (!creatingBusy) setCreating(false);
+          }}
+        >
           <form className="form-stack" onSubmit={create}>
             <label>
               环境名称
@@ -1224,7 +1303,9 @@ function EnvironmentsView({ project }: { project: Project }) {
               />
             </label>
             <ErrorMessage text={err} />
-            <button className="primary">创建环境</button>
+            <button className="primary" disabled={creatingBusy}>
+              {creatingBusy ? "正在创建…" : "创建环境"}
+            </button>
           </form>
         </Modal>
       )}
@@ -1236,11 +1317,15 @@ function VariableEditor({
   detail,
   rows,
   setRows,
+  inherited = [],
+  source,
 }: {
   title: string;
   detail: string;
   rows: DraftRow[];
   setRows: (rows: DraftRow[]) => void;
+  inherited?: MaskedVariable[];
+  source?: string;
 }) {
   return (
     <section className="panel">
@@ -1272,7 +1357,7 @@ function VariableEditor({
               }
             >
               <label>
-                变量名
+                {source ? "项目自有 · 变量名" : "变量名"}
                 <input
                   aria-label={title + "变量名 " + (index + 1)}
                   className="mono"
@@ -1359,18 +1444,51 @@ function VariableEditor({
         </div>
       ) : (
         <p className="muted small panel-empty">
-          尚未配置变量。添加后，下次部署会自动获取。
+          {source && inheritedRows(rows, inherited).length
+            ? "尚无项目自有变量，当前使用下方的组配置。"
+            : "尚未配置变量。添加后，下次部署会自动获取。"}
         </p>
       )}
+      {inheritedRows(rows, inherited).map((value) => (
+        <div className="inherited-variable" key={value.key}>
+          <div>
+            <code>{value.key}</code>
+            <small className="block muted">继承自项目组 {source}</small>
+          </div>
+          <span className="mono">
+            {value.secret
+              ? "已配置 · 秘密值"
+              : value.value === ""
+                ? "（空值）"
+                : value.value}
+          </span>
+          <button
+            className="text-button"
+            onClick={() => setRows(overrideVariable(rows, value))}
+            aria-label={`覆盖 ${value.key}`}
+          >
+            项目覆盖
+          </button>
+        </div>
+      ))}
     </section>
   );
 }
-function EnvironmentEditor({ slug, env }: { slug: string; env: string }) {
+function EnvironmentEditor({
+  slug,
+  env,
+  group = false,
+}: {
+  slug: string;
+  env: string;
+  group?: boolean;
+}) {
+  const path = `/${group ? "groups" : "projects"}/${slug}/environments/${env}`;
   const { data, loading, error, reload } = useData<Environment | null>(
-      `/projects/${slug}/environments/${env}`,
+      path,
       null,
     ),
-    releases = useData<Release[]>(`/projects/${slug}/releases`, []);
+    releases = useData<Release[]>(`/projects/${slug}/releases`, [], !group);
   const [runtime, setRuntime] = useState<DraftRow[]>([]),
     [params, setParams] = useState<DraftRow[]>([]),
     [defaults, setDefaults] = useState<Defaults>({}),
@@ -1379,13 +1497,31 @@ function EnvironmentEditor({ slug, env }: { slug: string; env: string }) {
     [notice, setNotice] = useState(""),
     [err, setErr] = useState(""),
     [conflict, setConflict] = useState<Environment | null>(null),
-    [preview, setPreview] = useState(false);
+    [preview, setPreview] = useState(false),
+    [baseline, setBaseline] = useState("");
+  const snapshot = (
+    runtime: DraftRow[],
+    params: DraftRow[],
+    defaults: Defaults,
+    target: string,
+  ) => JSON.stringify({ runtime, params, defaults, target });
+  const dirty =
+    !!baseline && snapshot(runtime, params, defaults, target) !== baseline;
+  useDirtyGuard(dirty);
   useEffect(() => {
     if (data) {
       setRuntime(draftRows(data.runtime_env));
       setParams(draftRows(data.install_params));
-      setDefaults(data.deployment_defaults);
-      setTarget(data.target_version);
+      setDefaults(data.deployment_defaults || {});
+      setTarget(data.target_version || "stable");
+      setBaseline(
+        snapshot(
+          draftRows(data.runtime_env),
+          draftRows(data.install_params),
+          data.deployment_defaults || {},
+          data.target_version || "stable",
+        ),
+      );
     }
   }, [data]);
   const save = async () => {
@@ -1394,27 +1530,27 @@ function EnvironmentEditor({ slug, env }: { slug: string; env: string }) {
     setErr("");
     try {
       const result = await api<Environment>(
-        `/projects/${slug}/environments/${env}`,
+        path,
         send("PUT", {
           expected_revision: data.revision,
           runtime_env: changes(runtime),
           install_params: changes(params),
-          deployment_defaults: defaults,
-          target_version: target,
+          ...(!group
+            ? { deployment_defaults: defaults, target_version: target }
+            : {}),
         }),
       );
       setPreview(false);
       setNotice(`已保存修订 ${result.revision}。下次安装或升级时生效。`);
       setConflict(null);
+      setBaseline(snapshot(runtime, params, defaults, target));
       reload();
     } catch (e) {
       setErr(message(e));
       if (e instanceof APIError && e.status === 409) {
         setPreview(false);
         try {
-          setConflict(
-            await api<Environment>(`/projects/${slug}/environments/${env}`),
-          );
+          setConflict(await api<Environment>(path));
         } catch {}
       }
     } finally {
@@ -1422,6 +1558,7 @@ function EnvironmentEditor({ slug, env }: { slug: string; env: string }) {
     }
   };
   const requestSave = () => {
+    setNotice("");
     try {
       changes(runtime);
       changes(params);
@@ -1449,8 +1586,14 @@ function EnvironmentEditor({ slug, env }: { slug: string; env: string }) {
           <Clock size={13} />
           修订 {data.revision}
         </span>
-        <span className="muted small">{date(data.created_at)}</span>
-        <span className="source-label">来源：管理台 · 最高优先级</span>
+        <span className="muted small">
+          {data.created_at ? date(data.created_at) : "尚无项目覆盖"}
+        </span>
+        <span className="source-label">
+          {group
+            ? "来源：项目组 · 组内项目继承"
+            : `项目覆盖优先${data.group_source ? ` · 继承自项目组 ${data.group_source.slug} 修订 ${data.group_source.revision}` : ""}`}
+        </span>
       </div>
       {notice && (
         <div className="notice" role="status">
@@ -1478,6 +1621,7 @@ function EnvironmentEditor({ slug, env }: { slug: string; env: string }) {
               if (confirm("重新加载将丢弃当前草稿，确定？")) {
                 setConflict(null);
                 setErr("");
+                setNotice("");
                 reload();
               }
             }}
@@ -1486,85 +1630,101 @@ function EnvironmentEditor({ slug, env }: { slug: string; env: string }) {
           </button>
         </section>
       )}
-      <section className="panel target-panel">
-        <div>
-          <h3>安装目标</h3>
-          <p className="muted small">
-            环境名与版本独立。固定版本，或跟随 stable 通道。
-          </p>
-        </div>
-        <label>
-          目标版本
-          <select value={target} onChange={(e) => setTarget(e.target.value)}>
-            <option value="stable">stable · 跟随已发布版本</option>
-            {!releases.data.some((r) => r.version === target) &&
-              target !== "stable" && <option value={target}>{target}</option>}
-            {releases.data
-              .filter((r) => r.status === "published")
-              .map((r) => (
-                <option key={r.id} value={r.version}>
-                  {r.version}
-                </option>
-              ))}
-          </select>
-        </label>
-      </section>
+      {!group && (
+        <section className="panel target-panel">
+          <div>
+            <h3>安装目标</h3>
+            <p className="muted small">
+              环境名与版本独立。固定版本，或跟随 stable 通道。
+            </p>
+          </div>
+          <label>
+            目标版本
+            <select value={target} onChange={(e) => setTarget(e.target.value)}>
+              <option value="stable">stable · 跟随已发布版本</option>
+              {!releases.data.some((r) => r.version === target) &&
+                target !== "stable" && <option value={target}>{target}</option>}
+              {releases.data
+                .filter((r) => r.status === "published")
+                .map((r) => (
+                  <option key={r.id} value={r.version}>
+                    {r.version}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </section>
+      )}
       <VariableEditor
         title="业务变量"
         detail="注入应用的运行环境。秘密值保存后不再显示。"
         rows={runtime}
         setRows={setRuntime}
+        inherited={group ? [] : data.inherited_runtime_env}
+        source={group ? undefined : data.group_source?.slug}
       />
       <VariableEditor
         title="安装参数"
         detail="用于项目的安装准备与初始化，例如管理员邮箱。"
         rows={params}
         setRows={setParams}
+        inherited={group ? [] : data.inherited_install_params}
+        source={group ? undefined : data.group_source?.slug}
       />
-      <section className="panel">
-        <h3>部署默认值</h3>
-        <p className="muted small">
-          首次安装使用这些默认值。已安装主机保留当前端口，命令行可指定新端口。
-        </p>
-        <div className="defaults-grid">
-          {(
-            [
-              ["host_port", "主机端口", "8080"],
-              ["bind_address", "绑定地址", "127.0.0.1"],
-              ["memory_limit", "内存上限", "512m"],
-              ["cpus", "CPU 上限", "1"],
-            ] as const
-          ).map(([key, label, placeholder]) => (
-            <label key={key}>
-              {label}
-              <input
-                type={key === "host_port" || key === "cpus" ? "number" : "text"}
-                min={key === "cpus" ? 0.1 : 1}
-                max={
-                  key === "host_port" ? 65535 : key === "cpus" ? 128 : undefined
-                }
-                step={key === "cpus" ? 0.1 : 1}
-                value={defaults[key] ?? ""}
-                placeholder={"例如 " + placeholder}
-                onChange={(e) => {
-                  const next = { ...defaults };
-                  if (e.target.value === "") delete next[key];
-                  else
-                    Object.assign(next, {
-                      [key]:
-                        key === "cpus" || key === "host_port"
-                          ? Number(e.target.value)
-                          : e.target.value,
-                    });
-                  setDefaults(next);
-                }}
-              />
-            </label>
-          ))}
-        </div>
-      </section>
+      {!group && (
+        <section className="panel">
+          <h3>部署默认值</h3>
+          <p className="muted small">
+            首次安装使用这些默认值。已安装主机保留当前端口，命令行可指定新端口。
+          </p>
+          <div className="defaults-grid">
+            {(
+              [
+                ["host_port", "主机端口", "8080"],
+                ["bind_address", "绑定地址", "127.0.0.1"],
+                ["memory_limit", "内存上限", "512m"],
+                ["cpus", "CPU 上限", "1"],
+              ] as const
+            ).map(([key, label, placeholder]) => (
+              <label key={key}>
+                {label}
+                <input
+                  type={
+                    key === "host_port" || key === "cpus" ? "number" : "text"
+                  }
+                  min={key === "cpus" ? 0.1 : 1}
+                  max={
+                    key === "host_port"
+                      ? 65535
+                      : key === "cpus"
+                        ? 128
+                        : undefined
+                  }
+                  step={key === "cpus" ? 0.1 : 1}
+                  value={defaults[key] ?? ""}
+                  placeholder={"例如 " + placeholder}
+                  onChange={(e) => {
+                    const next = { ...defaults };
+                    if (e.target.value === "") delete next[key];
+                    else
+                      Object.assign(next, {
+                        [key]:
+                          key === "cpus" || key === "host_port"
+                            ? Number(e.target.value)
+                            : e.target.value,
+                      });
+                    setDefaults(next);
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="save-bar">
-        <p className="small muted">保存配置不会重启正在运行的服务。</p>
+        <p className="small muted">
+          {dirty ? "有未保存的修改。" : ""}保存配置不会重启正在运行的服务。
+        </p>
         <button
           className="primary"
           disabled={busy || !!conflict}
@@ -1584,7 +1744,7 @@ function EnvironmentEditor({ slug, env }: { slug: string; env: string }) {
               "无值变更（包含秘密标记、目标版本或默认值调整）"}
           </p>
           <p className="muted small">
-            目标版本：{target}。秘密值不会在此显示。
+            {!group && `目标版本：${target}。`}秘密值不会在此显示。
           </p>
           <div className="actions">
             <button onClick={() => setPreview(false)}>返回编辑</button>
@@ -1600,9 +1760,14 @@ function EnvironmentEditor({ slug, env }: { slug: string; env: string }) {
 function TokensView({ group }: { group?: Group }) {
   const { data, loading, error, reload } = useData<Token[]>("/tokens", []),
     [create, setCreate] = useState(false),
+    [editing, setEditing] = useState<Token | null>(null),
+    [reveal, setReveal] = useState<Token | null>(null),
+    [formDirty, setFormDirty] = useState(false),
+    [saved, setSaved] = useState(""),
     [fresh, setFresh] = useState(""),
     [err, setErr] = useState(""),
     [revoking, setRevoking] = useState("");
+  useDirtyGuard(formDirty);
   const revoke = async (t: Token) => {
     if (
       !confirm(
@@ -1621,9 +1786,24 @@ function TokensView({ group }: { group?: Group }) {
       setRevoking("");
     }
   };
-  const items = group
-    ? data.filter((t) => t.groups?.includes(group.slug))
-    : data;
+  const items = data.filter(
+    (t) => !t.revoked && (!group || t.groups?.includes(group.slug)),
+  );
+  const closeForm = () => {
+    if (!formDirty || confirm("关闭将丢弃未保存的凭据修改，继续？")) {
+      setCreate(false);
+      setEditing(null);
+      setFormDirty(false);
+    }
+  };
+  useEffect(() => {
+    const hide = () => {
+      setFresh("");
+      setReveal(null);
+    };
+    window.addEventListener("hashchange", hide);
+    return () => window.removeEventListener("hashchange", hide);
+  }, []);
   const Title = group ? "h2" : "h1";
   return (
     <>
@@ -1646,11 +1826,18 @@ function TokensView({ group }: { group?: Group }) {
         </button>
       </div>
       <ErrorMessage text={error || err} />
+      {saved && (
+        <p className="notice" role="status">
+          {saved}
+        </p>
+      )}
       {fresh && (
         <section className="notice token-result">
           <KeyRound size={20} />
           <div>
-            <strong>凭据只显示这一次，请现在安全保存。</strong>
+            <strong>
+              请安全保存凭据。管理员可稍后通过“查看 Token”再次查看。
+            </strong>
             <code className="code-block" data-testid="new-token">
               {fresh}
             </code>
@@ -1692,11 +1879,7 @@ function TokensView({ group }: { group?: Group }) {
                     {t.role === "deployer" ? t.environments.join(", ") : "—"}
                   </td>
                   <td data-label="授权范围">
-                    {t.groups?.length ? (
-                      tokenScopeLabel(t)
-                    ) : (
-                      <span className="muted">旧版项目凭据 · 仅兼容原权限</span>
-                    )}
+                    {tokenScopeLabel(t) || "无授权项目"}
                   </td>
                   <td className="muted" data-label="到期">
                     {date(t.expires_at)}
@@ -1710,7 +1893,26 @@ function TokensView({ group }: { group?: Group }) {
                           : "有效"}
                     </span>
                   </td>
-                  <td>
+                  <td className="credential-actions">
+                    {!t.revoked && (
+                      <>
+                        <button
+                          className="text-button"
+                          onClick={() => {
+                            setFormDirty(false);
+                            setEditing(t);
+                          }}
+                        >
+                          编辑
+                        </button>
+                        <button
+                          className="text-button"
+                          onClick={() => setReveal(t)}
+                        >
+                          查看 Token
+                        </button>
+                      </>
+                    )}
                     {!t.revoked && (
                       <button
                         className="text-button danger"
@@ -1732,188 +1934,135 @@ function TokensView({ group }: { group?: Group }) {
           detail="分别为流水线和安装服务器创建所需权限的凭据。"
         />
       )}
-      {create && (
-        <Modal title="创建访问凭据" close={() => setCreate(false)}>
-          <TokenForm
+      {(create || editing) && (
+        <Modal
+          title={editing ? "编辑访问凭据" : "创建访问凭据"}
+          close={closeForm}
+        >
+          <CredentialForm
             group={group}
+            token={editing || undefined}
+            dirtyChanged={setFormDirty}
             done={(token) => {
               setFresh(token);
+              setSaved(editing ? "凭据已保存，授权立即生效。" : "");
               setCreate(false);
+              setEditing(null);
+              setFormDirty(false);
               reload();
             }}
           />
         </Modal>
       )}
+      {reveal && (
+        <TokenReveal
+          token={reveal}
+          close={() => setReveal(null)}
+          changed={reload}
+        />
+      )}
     </>
   );
 }
-function TokenForm({
-  group,
-  done,
+function TokenReveal({
+  token,
+  close,
+  changed,
 }: {
-  group?: Group;
-  done: (token: string) => void;
+  token: Token;
+  close: () => void;
+  changed: () => void;
 }) {
-  const projectOptions = useData<Project[]>("/projects", []),
-    groupOptions = useData<Group[]>("/groups", []);
-  const [selectedGroups, setSelectedGroups] = useState<string[]>(
-    group ? [group.slug] : [],
-  );
-  const [name, setName] = useState(""),
-    [role, setRole] = useState("deployer"),
-    [envs, setEnvs] = useState("prod"),
-    [days, setDays] = useState(90),
+  const rotation = useRef<AbortController | null>(null);
+  const [value, setValue] = useState(""),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const covered = projectOptions.data.filter((p) =>
-    selectedGroups.includes(p.group || "default"),
-  );
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
+    [busy, setBusy] = useState(true),
+    [legacy, setLegacy] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    api<{ token: string }>(`/tokens/${token.id}/secret`, {
+      signal: controller.signal,
+    })
+      .then((result) => {
+        if (!controller.signal.aborted) setValue(result.token);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) {
+          setError(message(e));
+          setLegacy(e instanceof APIError && e.status === 409);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setBusy(false);
+      });
+    return () => {
+      controller.abort();
+      rotation.current?.abort();
+    };
+  }, [token.id]);
+  const rotate = async () => {
+    if (
+      !confirm(
+        `重新生成「${token.name}」的 Token？旧 Token 将立即失效，请把新 Token 更新到 CLI、服务器和 CI。授权范围保持不变。`,
+      )
+    )
+      return;
     setBusy(true);
     setError("");
+    const controller = new AbortController();
+    rotation.current = controller;
     try {
-      if (!selectedGroups.length) throw new Error("至少选择一个项目组。");
-      const value = await api<{ token: string }>(
-        "/tokens",
-        send("POST", {
-          name,
-          role,
-          groups: selectedGroups,
-          environments:
-            role === "deployer"
-              ? envs
-                  .split(",")
-                  .map((v) => v.trim())
-                  .filter(Boolean)
-              : [],
-          expires_at: new Date(Date.now() + days * 86400000).toISOString(),
-        }),
+      const result = await api<{ token: string }>(
+        `/tokens/${token.id}/rotate`,
+        { ...send("POST", {}), signal: controller.signal },
       );
-      done(value.token);
+      if (!controller.signal.aborted) {
+        setValue(result.token);
+        setLegacy(false);
+        changed();
+      }
     } catch (e) {
-      setError(message(e));
+      if (!controller.signal.aborted) setError(message(e));
     } finally {
-      setBusy(false);
+      if (!controller.signal.aborted) setBusy(false);
     }
   };
   return (
-    <form className="form-stack" onSubmit={save}>
-      <label>
-        名称
-        <input
-          required
-          maxLength={128}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="prod-server / github-actions"
-        />
-      </label>
-      <label>
-        权限
-        <select value={role} onChange={(e) => setRole(e.target.value)}>
-          <option value="deployer">部署 · 拉取镜像与指定环境配置</option>
-          <option value="publisher">发布 · 推送镜像与发布包</option>
-        </select>
-      </label>
-      {group ? (
-        <div className="scope-summary">
-          <strong>{`授权项目组：${group.slug}`}</strong>
-          <span className="muted">{group.name}</span>
-        </div>
-      ) : (
-        <fieldset className="scope-options">
-          <legend>授权项目组</legend>
-          {groupOptions.data.map((g) => (
-            <label className="scope-option" key={g.slug}>
-              <input
-                type="checkbox"
-                aria-label={`授权项目组 ${g.slug}`}
-                checked={selectedGroups.includes(g.slug)}
-                onChange={(e) =>
-                  setSelectedGroups(
-                    e.target.checked
-                      ? [...selectedGroups, g.slug]
-                      : selectedGroups.filter((v) => v !== g.slug),
-                  )
-                }
-              />
-              <span>
-                {g.name}
-                <code className="block muted">{g.slug}</code>
-              </span>
-            </label>
-          ))}
-        </fieldset>
+    <Modal title={`查看 Token · ${token.name}`} close={close}>
+      <dl className="token-details">
+        <dt>权限</dt>
+        <dd>{token.role === "publisher" ? "发布" : "部署"}</dd>
+        <dt>授权范围</dt>
+        <dd>{tokenScopeLabel(token) || "无"}</dd>
+        <dt>环境</dt>
+        <dd>
+          {token.role === "deployer"
+            ? token.environments.join("、")
+            : "不限制发布环境"}
+        </dd>
+        <dt>到期</dt>
+        <dd>{date(token.expires_at)}</dd>
+      </dl>
+      <p className="muted small">
+        Token 加密保存，仅管理员可查看。关闭此窗口或离开当前页面后将隐藏展示。
+      </p>
+      {busy && <Loading />}
+      <ErrorMessage text={error} />
+      {value && (
+        <code className="code-block" data-testid="revealed-token">
+          {value}
+        </code>
       )}
-      <section className="scope-preview">
-        <strong>当前覆盖 {covered.length} 个项目</strong>
-        <div className="scope-projects">
-          {covered.map((p) => (
-            <span className="badge" key={p.slug}>
-              {p.name}
-            </span>
-          ))}
-        </div>
-        <p className="muted small">
-          以后加入的项目自动获得授权，移出组的项目失去授权。
-          {role === "deployer"
-            ? "只能读取所选环境配置及拉取镜像，不能发布或管理项目。"
-            : "可以推送镜像和发布版本，不能读取生产环境配置。"}
-        </p>
-      </section>
-      <ErrorMessage text={projectOptions.error || groupOptions.error} />
-      {(projectOptions.error || groupOptions.error) && (
+      {legacy && (
         <button
-          type="button"
-          onClick={() => {
-            projectOptions.reload();
-            groupOptions.reload();
-          }}
+          className="danger"
+          disabled={busy}
+          onClick={() => void rotate()}
         >
-          重新加载授权范围
+          重新生成 Token
         </button>
       )}
-      {role === "deployer" && (
-        <label>
-          允许的环境
-          <input
-            required
-            value={envs}
-            onChange={(e) => setEnvs(e.target.value)}
-            placeholder="prod,test"
-          />
-          <span className="muted small">
-            仅允许这些环境，多个环境以逗号分隔。
-          </span>
-        </label>
-      )}
-      <label>
-        有效天数
-        <input
-          type="number"
-          min={1}
-          max={365}
-          required
-          value={days}
-          onChange={(e) => setDays(Number(e.target.value))}
-        />
-      </label>
-      <ErrorMessage text={error} />
-      <button
-        className="primary"
-        disabled={
-          busy ||
-          !selectedGroups.length ||
-          projectOptions.loading ||
-          groupOptions.loading ||
-          !!projectOptions.error ||
-          !!groupOptions.error
-        }
-      >
-        {busy ? "正在创建…" : group ? "创建组凭据" : "创建凭据"}
-      </button>
-    </form>
+    </Modal>
   );
 }
 function ReceiptsView({ slug }: { slug: string }) {

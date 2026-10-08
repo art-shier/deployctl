@@ -164,6 +164,9 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request, p auth.Principa
 	if err != nil {
 		return err
 	}
+	if !p.CanInGroup("resolve", result.Project.Slug, result.Project.Group, body.Environment) {
+		return errForbidden
+	}
 	release, rev := result.Release, result.Revision
 	reply(w, 200, map[string]any{"schema_version": 1, "minimum_client_version": "1.7.0", "project": slug, "environment": body.Environment,
 		"release":       map[string]any{"id": release.ID, "version": release.Version, "image": release.Image, "package_path": "/api/v1/projects/" + slug + "/artifacts/" + release.ID, "sha256": release.SHA256},

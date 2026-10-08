@@ -145,6 +145,7 @@ set -Eeuo pipefail
             installation = cli('install',app,'--prod','--env-var','TEXT=cli-local','--set','ADMIN=cli-admin',*flags)
             assert '[working] Downloading and verifying release package' in installation.stderr
             assert '[done] Pulling image' in installation.stderr
+            assert 'Image: Pulled' in installation.stderr, 'real authenticated Compose events were not streamed'
             assert '[done] Final readiness check' in installation.stderr
             assert '[done] Saving deployment state' in installation.stderr
             assert publisher not in installation.stderr and deployer not in installation.stderr

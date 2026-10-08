@@ -9,9 +9,12 @@ import json
 import os
 from pathlib import Path
 import re
+import select
+import signal
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
@@ -100,6 +103,7 @@ def parse_env(path):
 
 class DockerDriver:
     docker_config = None
+    progress = None
 
     def _run(self, command, environment=None, timeout=600):
         if self.docker_config:
@@ -123,15 +127,77 @@ class DockerDriver:
             raise RuntimeError('Docker Compose >=2.30.0 is required for raw env files')
         self._run(['docker', 'info', '--format', '{{.ServerVersion}}'], timeout=30)
 
-    def compose(self, directory, project, environment, *arguments):
-        return self._run(['docker', 'compose', '--project-name', project,
+    def _compose_command(self, directory, project, environment, *arguments):
+        return ['docker', 'compose', '--project-name', project,
                           '--project-directory', str(directory),
                           '--file', environment.get('DEPLOYCTL_COMPOSE_FILE', str(directory / 'compose.yaml')),
-                          *arguments], environment)
+                          *arguments]
+
+    def compose(self, directory, project, environment, *arguments):
+        return self._run(self._compose_command(directory, project, environment, *arguments), environment)
+
+    def _stream_pull(self, command, environment=None, timeout=600):
+        reporter = self.progress if self.progress is not None else Progress(enabled=False)
+        if self.docker_config:
+            environment = dict(os.environ if environment is None else environment, DOCKER_CONFIG=self.docker_config)
+        try:
+            process = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+        except OSError as exc:
+            raise RuntimeError('cannot execute Docker pull') from exc
+        stopped = threading.Event()
+        errors = []
+        def read_events():
+            pending, dropping = b'', False
+            try:
+                while not stopped.is_set():
+                    if not select.select([process.stdout], [], [], .1)[0]:
+                        continue
+                    chunk = os.read(process.stdout.fileno(), 8192)
+                    if not chunk:
+                        if pending and not dropping:
+                            reporter.image_event(pending)
+                        break
+                    pending += chunk
+                    while b'\n' in pending:
+                        line, pending = pending.split(b'\n', 1)
+                        if not dropping and len(line) <= 16384:
+                            reporter.image_event(line)
+                        dropping = False
+                    if len(pending) > 16384:
+                        pending, dropping = b'', True
+            except (OSError, ValueError) as exc:
+                errors.append(exc)
+        reader = threading.Thread(target=read_events, daemon=True)
+        def terminate():
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        reader.start()
+        try:
+            try:
+                code = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError('Docker pull timed out') from exc
+            reader.join(timeout=2)
+            if code:
+                raise RuntimeError(f'Docker command failed (exit {code}); check deployctl logs and Docker daemon')
+            if errors or reader.is_alive():
+                raise RuntimeError('cannot read Docker pull progress')
+        finally:
+            # Cancellation/timeout must close the CLI and its inherited pipes.
+            if process.poll() is None or reader.is_alive():
+                terminate()
+            process.wait()
+            stopped.set()
+            reader.join()
+            process.stdout.close()
 
     def pull(self, directory, project, environment):
         self.compose(directory, project, environment, 'config', '--quiet')
-        self.compose(directory, project, environment, 'pull', '--policy', 'always', 'app')
+        self._stream_pull(self._compose_command(directory, project, environment,
+            '--ansi', 'never', '--progress', 'json', 'pull', '--policy', 'always', 'app'), environment)
 
     def up(self, directory, project, environment):
         self.compose(directory, project, environment, 'up', '-d', '--no-build',
@@ -193,6 +259,8 @@ class Manager:
         self.driver = driver or DockerDriver()
         self.hook_runner = hook_runner or HookRunner()
         self.progress = progress if progress is not None else Progress(enabled=False)
+        if isinstance(self.driver, DockerDriver):
+            self.driver.progress = self.progress
 
     def paths(self, app, env):
         validate_name(app)

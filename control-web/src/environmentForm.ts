@@ -7,6 +7,30 @@ export interface DraftRow {
   operation: "keep" | "set" | "remove";
   beforeRemove?: "keep" | "set";
 }
+export function inheritedRows(
+  rows: DraftRow[],
+  inherited: MaskedVariable[],
+): MaskedVariable[] {
+  return inherited.filter(
+    (value) =>
+      !rows.some((row) => row.key === value.key && row.operation !== "remove"),
+  );
+}
+export function overrideVariable(
+  rows: DraftRow[],
+  value: MaskedVariable,
+): DraftRow[] {
+  const index = rows.findIndex((row) => row.key === value.key);
+  const update = {
+    value: value.value ?? "",
+    secret: value.secret,
+    operation: "set" as const,
+    beforeRemove: undefined,
+  };
+  return index < 0
+    ? [...rows, { key: value.key, ...update }]
+    : editRow(rows, index, update);
+}
 export function toggleRemoval(rows: DraftRow[], index: number): DraftRow[] {
   const row = rows[index];
   if (!row.original) return rows.filter((_, i) => i !== index);

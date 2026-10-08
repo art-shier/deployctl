@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"errors"
 	"github.com/art-shier/deployctl/control-server/internal/auth"
 	"github.com/art-shier/deployctl/control-server/internal/domain"
+	"github.com/art-shier/deployctl/control-server/internal/store"
 	"net/http"
 	"time"
 )
@@ -26,8 +28,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, p auth.Prin
 	if err := decode(w, r, &token); err != nil {
 		return err
 	}
-	// New credentials are group-scoped. Existing project tokens remain readable/revocable.
-	if len(token.Groups) == 0 || token.Project != "" || len(token.Projects) != 0 {
+	if len(token.Groups)+len(token.Projects) == 0 || token.Project != "" {
 		return domain.ErrInvalid
 	}
 	if token.ExpiresAt.IsZero() {
@@ -37,11 +38,64 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, p auth.Prin
 	if err != nil {
 		return err
 	}
-	created, err := s.store.CreateToken(r.Context(), token, auth.HashToken(raw), p.ID)
+	created, err := s.store.CreateReadableToken(r.Context(), token, raw, p.ID)
 	if err != nil {
 		return err
 	}
 	reply(w, 201, map[string]any{"credential": created, "token": raw})
+	return nil
+}
+func (s *Server) updateToken(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	if err := owner(p); err != nil {
+		return err
+	}
+	var body struct {
+		Name             string    `json:"name"`
+		Role             string    `json:"role"`
+		Groups           []string  `json:"groups"`
+		Projects         []string  `json:"projects"`
+		ExcludedProjects []string  `json:"excluded_projects"`
+		Environments     []string  `json:"environments"`
+		ExpiresAt        time.Time `json:"expires_at"`
+	}
+	if err := decode(w, r, &body); err != nil {
+		return err
+	}
+	next, err := s.store.UpdateToken(r.Context(), r.PathValue("id"), domain.Token{Name: body.Name, Role: body.Role, Groups: body.Groups, Projects: body.Projects, ExcludedProjects: body.ExcludedProjects, Environments: body.Environments, ExpiresAt: body.ExpiresAt}, p.ID)
+	if err != nil {
+		return err
+	}
+	reply(w, 200, next)
+	return nil
+}
+func (s *Server) tokenSecret(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	if err := owner(p); err != nil {
+		return err
+	}
+	raw, err := s.store.TokenSecret(r.Context(), r.PathValue("id"), p.ID)
+	if errors.Is(err, store.ErrTokenUnavailable) {
+		reply(w, 409, map[string]string{"code": "token_unavailable", "message": "旧凭据未保存可恢复的Token，请重新生成Token后更新使用方。"})
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	reply(w, 200, map[string]string{"token": raw})
+	return nil
+}
+func (s *Server) rotateToken(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	if err := owner(p); err != nil {
+		return err
+	}
+	raw, err := auth.NewToken()
+	if err != nil {
+		return err
+	}
+	next, err := s.store.RotateToken(r.Context(), r.PathValue("id"), raw, p.ID)
+	if err != nil {
+		return err
+	}
+	reply(w, 200, map[string]any{"credential": next, "token": raw})
 	return nil
 }
 func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
