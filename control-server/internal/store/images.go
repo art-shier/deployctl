@@ -5,6 +5,24 @@ import (
 	"github.com/art-shier/deployctl/control-server/internal/domain"
 )
 
+func (s *Store) WithRepositoryLock(ctx context.Context, repository string, operate func() error) error {
+	if domain.ValidateImage(repository+"@sha256:0000000000000000000000000000000000000000000000000000000000000000") != nil {
+		return domain.ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", "ctl-images:"+repository); err != nil {
+		return err
+	}
+	if err = operate(); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) ManageImages(ctx context.Context, slug, actor, action string, operate func(domain.Project, []string) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

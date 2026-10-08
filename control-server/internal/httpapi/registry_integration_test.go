@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,10 @@ import (
 	"github.com/art-shier/deployctl/control-server/internal/registry"
 	"github.com/art-shier/deployctl/control-server/internal/testutil"
 )
+
+type registryRoundTrip func(*http.Request) (*http.Response, error)
+
+func (f registryRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // Real Distribution validates our JWT and enforces repository/action boundaries.
 func TestRealRegistryScopesAndIndex(t *testing.T) {
@@ -65,9 +70,13 @@ func TestRealRegistryScopesAndIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := strings.TrimSpace(string(out))
-	origin := "http://" + host
+	backendHost := strings.TrimSpace(string(out))
+	origin := "http://" + backendHost
+	host := strings.TrimPrefix(apiServer.URL, "http://")
 	api.options.RegistryPublicHost = host
+	verifier := registry.Verifier{InternalURL: origin, PublicHost: host, Signer: signer}
+	api.options.Verifier = verifier
+	api.options.ArtifactsDir = filepath.Join(dir, "artifacts")
 	for _, slug := range []string{"notes", "other"} {
 		if _, err = db.CreateProject(ctx, domain.Project{Slug: slug, Name: slug, ImageRepository: host + "/" + slug, DefaultEnvironment: "prod"}, "owner"); err != nil {
 			t.Fatal(err)
@@ -114,7 +123,7 @@ func TestRealRegistryScopesAndIndex(t *testing.T) {
 	}
 	call := func(method, path, bearer, media string, raw []byte) (int, http.Header) {
 		t.Helper()
-		req, _ := http.NewRequest(method, origin+path, bytes.NewReader(raw))
+		req, _ := http.NewRequest(method, apiServer.URL+path, bytes.NewReader(raw))
 		req.Header.Set("Authorization", "Bearer "+bearer)
 		req.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json")
 		if media != "" {
@@ -158,9 +167,6 @@ func TestRealRegistryScopesAndIndex(t *testing.T) {
 	if status != 201 {
 		t.Fatal("index push", status)
 	}
-	verifier := registry.Verifier{InternalURL: origin, PublicHost: host, Signer: signer}
-	api.options.Verifier = verifier
-	api.options.ArtifactsDir = filepath.Join(dir, "artifacts")
 	images, err := verifier.ListImages(ctx, host+"/notes")
 	if err != nil || len(images) != 2 {
 		t.Fatal("real registry image inventory", images, err)
@@ -220,6 +226,33 @@ func TestRealRegistryScopesAndIndex(t *testing.T) {
 	if out, e := exec.Command("docker", "save", "--output", archive, localImage).CombinedOutput(); e != nil {
 		t.Fatal("Docker save", string(out))
 	}
+	credentialsDir := filepath.Join(dir, "docker-client")
+	if err = os.Mkdir(credentialsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	docker := func(args ...string) *exec.Cmd {
+		command := exec.Command("docker", args...)
+		command.Env = append(os.Environ(), "DOCKER_CONFIG="+credentialsDir)
+		return command
+	}
+	login := docker("login", host, "--username", "ctl", "--password-stdin")
+	login.Stdin = strings.NewReader(publisher)
+	if _, err = login.CombinedOutput(); err != nil {
+		t.Fatal("native Docker login through gateway failed", err)
+	}
+	nativeTag := host + "/notes:native"
+	if _, err = docker("tag", localImage, nativeTag).CombinedOutput(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { exec.Command("docker", "image", "rm", "-f", nativeTag).Run() })
+	if _, err = docker("push", nativeTag).CombinedOutput(); err != nil {
+		t.Fatal("native Docker push through gateway failed", err)
+	}
+	status, nativeHeaders := call("HEAD", "/v2/notes/manifests/native", push, "", nil)
+	if status != 200 {
+		t.Fatal("native push result unavailable", status)
+	}
+	nativeDigest := nativeHeaders.Get("Docker-Content-Digest")
 	var imported registry.Image
 	for _, tag := range []string{"manual", "alias"} {
 		file, e := os.Open(archive)
@@ -236,17 +269,71 @@ func TestRealRegistryScopesAndIndex(t *testing.T) {
 		t.Fatal("actual image details", details, e)
 	}
 	images, err = verifier.ListImages(ctx, host+"/notes")
-	if err != nil || len(images) != 4 {
+	if err != nil || len(images) != 5 {
 		t.Fatal("aliases inventory", images, err)
 	}
 	if status, _ = apiCall("DELETE", "images/"+imported.Digest, deployer, nil); status != 403 {
 		t.Fatal("deployer allowed delete", status)
 	}
-	if status, _ = apiCall("DELETE", "images/"+imported.Digest, owner, nil); status != 200 {
-		t.Fatal("unreferenced deletion failed", status)
+	// Pause deletion after its dependency scan but before Registry mutation.
+	// An actual concurrent index PUT must wait, then fail because the child is gone.
+	deletionEntered := make(chan struct{})
+	allowDeletion := make(chan struct{})
+	var allowOnce sync.Once
+	defer allowOnce.Do(func() { close(allowDeletion) })
+	guarded := verifier
+	guarded.Client = &http.Client{Timeout: 10 * time.Second, Transport: registryRoundTrip(func(req *http.Request) (*http.Response, error) {
+		if req.Method == "DELETE" && strings.HasSuffix(req.URL.Path, imported.Digest) {
+			close(deletionEntered)
+			<-allowDeletion
+		}
+		return http.DefaultTransport.RoundTrip(req)
+	})}
+	api.options.Verifier = guarded
+	deleted := make(chan int, 1)
+	go func() { code, _ := apiCall("DELETE", "images/"+imported.Digest, owner, nil); deleted <- code }()
+	select {
+	case <-deletionEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deletion did not reach controlled race point")
+	}
+	// Registry requires authenticated manifest reads; use the existing pull token.
+	manifestReq, _ := http.NewRequest("GET", origin+"/v2/notes/manifests/"+imported.Digest, nil)
+	manifestReq.Header.Set("Authorization", "Bearer "+push)
+	manifestReq.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json")
+	manifestRes, e := client.Do(manifestReq)
+	if e != nil {
+		t.Fatal(e)
+	}
+	manifestRaw, e := io.ReadAll(manifestRes.Body)
+	manifestRes.Body.Close()
+	if e != nil || manifestRes.StatusCode != 200 {
+		t.Fatal("race child read", e)
+	}
+	candidate, _ := json.Marshal(map[string]any{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": []any{map[string]any{"mediaType": imported.MediaType, "digest": imported.Digest, "size": len(manifestRaw), "platform": map[string]string{"architecture": "amd64", "os": "linux"}}}})
+	pushed := make(chan int, 1)
+	go func() {
+		code, _ := call("PUT", "/v2/notes/manifests/racing-index", push, "application/vnd.oci.image.index.v1+json", candidate)
+		pushed <- code
+	}()
+	select {
+	case code := <-pushed:
+		t.Fatal("concurrent index write bypassed deletion lock", code)
+	case <-time.After(100 * time.Millisecond):
+	}
+	allowOnce.Do(func() { close(allowDeletion) })
+	if code := <-deleted; code != 200 {
+		t.Fatal("unreferenced deletion failed", code)
+	}
+	if code := <-pushed; code != 400 {
+		t.Fatal("Registry installed index with deleted child", code)
 	}
 	images, err = verifier.ListImages(ctx, host+"/notes")
-	if err != nil || len(images) != 2 {
+	expected := 3
+	if nativeDigest == imported.Digest {
+		expected = 2
+	}
+	if err != nil || len(images) != expected {
 		t.Fatal("all aliases must be removed", images, err)
 	}
 	if err = verifier.CheckManifest(ctx, host+"/notes@"+manifestDigest, host+"/notes"); err != nil {

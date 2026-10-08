@@ -10,7 +10,7 @@ services:
       CTL_KEYS_DIR: /run/ctl-keys
       CTL_ARTIFACTS_DIR: /var/lib/ctl/artifacts
       CTL_WEB_DIR: /app/web
-    ports: ['127.0.0.1:${CTL_API_PORT:-8080}:8080']
+    ports: ['127.0.0.1:${CTL_API_PORT:-8080}:8080', '127.0.0.1:${CTL_REGISTRY_PORT:-5000}:8080']
     volumes:
       - ${CTL_HOME}/keys:/run/ctl-keys:ro
       - ${CTL_HOME}/artifacts:/var/lib/ctl/artifacts
@@ -32,7 +32,7 @@ services:
       REGISTRY_AUTH_TOKEN_ROOTCERTBUNDLE: /cert/signing.crt
       REGISTRY_HTTP_SECRET: ${CTL_REGISTRY_HTTP_SECRET}
       REGISTRY_STORAGE_DELETE_ENABLED: 'true'
-    ports: ['127.0.0.1:${CTL_REGISTRY_PORT:-5000}:5000']
+      REGISTRY_HTTP_RELATIVEURLS: 'true'
     volumes:
       - ${CTL_HOME}/registry:/var/lib/registry
       - ${CTL_HOME}/keys/signing.crt:/cert/signing.crt:ro

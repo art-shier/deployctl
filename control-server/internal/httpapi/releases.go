@@ -106,18 +106,20 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, p auth.Principa
 		return domain.ErrInvalid
 	}
 	check := func(project domain.Project) error {
+		var err error
 		if proof != "" {
 			verifier, ok := s.options.Verifier.(ProofManifestVerifier)
 			if !ok {
 				return domain.ErrInvalid
 			}
-			return verifier.CheckManifestWithToken(r.Context(), pack.Release.Image, project.ImageRepository, proof)
+			err = verifier.CheckManifestWithToken(r.Context(), pack.Release.Image, project.ImageRepository, proof)
 		} else {
-			return s.options.Verifier.CheckManifest(r.Context(), pack.Release.Image, project.ImageRepository)
+			err = s.options.Verifier.CheckManifest(r.Context(), pack.Release.Image, project.ImageRepository)
 		}
-	}
-	if err = artifacts.PublishFile(s.options.ArtifactsDir, *pack); err != nil {
-		return err
+		if err != nil {
+			return err
+		}
+		return artifacts.PublishFile(s.options.ArtifactsDir, *pack)
 	}
 	release, err := s.store.PublishReleaseChecked(r.Context(), pack.Release, fields["channel"] == "stable", p.ID, check)
 	if err != nil {

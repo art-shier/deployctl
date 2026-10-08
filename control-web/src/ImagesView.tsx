@@ -61,6 +61,7 @@ export function ImagesView({
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [actionError, setActionError] = useState(""),
+    [capabilityError, setCapabilityError] = useState(""),
     [notice, setNotice] = useState(""),
     [proof, setProof] = useState(""),
     [query, setQuery] = useState(""),
@@ -79,7 +80,19 @@ export function ImagesView({
     controller.current = current;
     setLoading(true);
     setError("");
+    setCapabilityError("");
     setProof("");
+    void api<{ managed: boolean; max_archive_bytes: number }>(
+      `/projects/${project.slug}/images/capabilities`,
+      { signal: current.signal },
+    )
+      .then((value) => {
+        if (!current.signal.aborted) setCapabilities(value);
+      })
+      .catch((err) => {
+        if (!current.signal.aborted)
+          setCapabilityError("镜像管理权限读取失败：" + message(err));
+      });
     try {
       const result = await api<ImageTag[]>(`/projects/${project.slug}/images`, {
         signal: current.signal,
@@ -96,19 +109,15 @@ export function ImagesView({
     }
   };
   useEffect(() => {
-    const current = new AbortController();
+    setImages([]);
+    setCapabilities(null);
+    setSelected(null);
+    setRemoving(null);
     void load();
-    api<{ managed: boolean; max_archive_bytes: number }>(
-      `/projects/${project.slug}/images/capabilities`,
-      { signal: current.signal },
-    )
-      .then(setCapabilities)
-      .catch(() => {});
     return () => {
-      current.abort();
       controller.current?.abort();
     };
-  }, [project.slug]);
+  }, [project.slug, project.image_repository]);
   useEffect(() => setPage(1), [query]);
   const groups = useMemo(() => groupImages(images), [images]);
   const filtered = useMemo(() => filterImages(groups, query), [groups, query]);
@@ -223,6 +232,7 @@ export function ImagesView({
       </details>
       <Notice text={notice} />
       <Notice text={error || actionError} error />
+      <Notice text={capabilityError} error />
       <label className="image-search">
         <Search size={17} />
         <input

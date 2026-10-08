@@ -256,9 +256,8 @@ func (v Verifier) ImportDockerArchive(ctx context.Context, allowed, tag, file st
 	if !ValidTag(tag) {
 		return out, domain.ErrInvalid
 	}
-	s, err := v.managedSession(allowed, "pull", "push")
-	if err != nil {
-		return out, err
+	if strings.Split(allowed, "/")[0] != v.PublicHost || v.Signer == nil {
+		return out, ErrExternal
 	}
 	image, err := readDockerArchive(ctx, file)
 	if err != nil {
@@ -274,6 +273,10 @@ func (v Verifier) ImportDockerArchive(ctx context.Context, allowed, tag, file st
 		return out, ErrArchive
 	}
 	out.MediaType = string(media)
+	s, err := v.managedSession(allowed, "pull", "push")
+	if err != nil {
+		return out, err
+	}
 	existing, err := s.request(ctx, "HEAD", "/v2/"+s.repository+"/manifests/"+tag)
 	if err != nil {
 		return out, err
@@ -306,3 +309,5 @@ func (v Verifier) ImportDockerArchive(ctx context.Context, allowed, tag, file st
 	}
 	return out, nil
 }
+
+func (v Verifier) RegistryOrigin() string { return v.InternalURL }

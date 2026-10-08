@@ -96,8 +96,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/images/upload") {
 		timeout = 15 * time.Minute
 	}
+	native := strings.HasPrefix(r.URL.Path, "/v2/") || r.URL.Path == "/v2"
+	if native && !strings.Contains(r.URL.Path, "/manifests/") {
+		timeout = 60 * time.Minute
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
+	if native {
+		s.registryGateway(w, r.WithContext(ctx))
+		return
+	}
 	s.mux.ServeHTTP(w, r.WithContext(ctx))
 }
 func (s *Server) principal(r *http.Request) (auth.Principal, bool, error) {
@@ -182,6 +190,8 @@ func reply(w http.ResponseWriter, status int, value any) {
 func failure(w http.ResponseWriter, err error) {
 	status, code, message := 500, "internal_error", "服务暂时不可用"
 	switch {
+	case errors.Is(err, registry.ErrMixedLayers):
+		status, code, message = 400, "unsupported_layer_encoding", "归档包含不兼容的镜像层压缩格式，请使用 docker push 上传此镜像"
 	case errors.Is(err, registry.ErrReferenced):
 		status, code, message = 409, "image_referenced", "该镜像被发布版本、回滚版本或多架构镜像引用，不能删除"
 	case errors.Is(err, registry.ErrExternal):

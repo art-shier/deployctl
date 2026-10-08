@@ -9,6 +9,7 @@ import (
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +25,56 @@ type RegistrySigner struct {
 	Key     *rsa.PrivateKey
 	Issuer  string
 	Service string
+}
+
+// The gateway checks the same bounded RS256 token the Registry will verify.
+// Cookie sessions and raw platform credentials never authorize OCI writes.
+func (s RegistrySigner) Allows(token, repository, action string, now time.Time) bool {
+	if s.Key == nil || len(token) > 16384 {
+		return false
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	header, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return false
+	}
+	var h struct {
+		Alg string `json:"alg"`
+	}
+	if json.Unmarshal(header, &h) != nil || h.Alg != "RS256" {
+		return false
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return false
+	}
+	hash := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	if rsa.VerifyPKCS1v15(&s.Key.PublicKey, crypto.SHA256, hash[:], signature) != nil {
+		return false
+	}
+	body, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return false
+	}
+	var claims struct {
+		Issuer    string   `json:"iss"`
+		Audience  string   `json:"aud"`
+		Expires   int64    `json:"exp"`
+		NotBefore int64    `json:"nbf"`
+		Access    []Access `json:"access"`
+	}
+	if json.Unmarshal(body, &claims) != nil || claims.Issuer != s.Issuer || claims.Audience != s.Service || claims.Expires <= now.Unix() || claims.NotBefore > now.Unix() || len(claims.Access) > 128 {
+		return false
+	}
+	for _, access := range claims.Access {
+		if access.Type == "repository" && access.Name == repository && slices.Contains(access.Actions, action) {
+			return true
+		}
+	}
+	return false
 }
 
 func ScopedAccess(p Principal, scope, project, repository string) []Access {

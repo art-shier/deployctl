@@ -57,7 +57,7 @@ jobs:
           CTL_WEB_DIR: ${{ github.workspace }}/control-web/dist
           CTL_KEYS_DIR: ${{ runner.temp }}/ctl-browser-keys
           CTL_ARTIFACTS_DIR: ${{ runner.temp }}/ctl-browser-artifacts
-          CTL_REGISTRY_HOST: 127.0.0.1:5000
+          CTL_REGISTRY_HOST: 127.0.0.1:8080
           CTL_REGISTRY_INTERNAL_URL: http://127.0.0.1:5000
         run: |
           cd control-server

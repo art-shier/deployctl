@@ -15,7 +15,7 @@ sudo bash control-deploy/bootstrap.sh \
 
 脚本构建 API/管理台镜像，初始化 `/opt/ctl-platform`，生成独立的配置加密密钥、Registry 签名私钥/验证证书、owner 凭据和数据库连接，启动 API、Registry 和独立 PostgreSQL。重复运行保留密钥、密码和数据。使用预构建镜像可加 `--image <经过验证的镜像地址>`；不会下载未发布的假定版本。
 
-默认 API 监听本机 **8080**，Registry **5000**；通过 `--api-port` / `--registry-port` 修改。绑定在 127.0.0.1，需自行将 HTTPS 反向代理指向这两个端口、配置 DNS 和证书。Registry 入口允许镜像上传的大请求体，保留 Authorization / WWW-Authenticate 头，代理超时按镜像大小调整。API 发布包不超过 10 MiB；网页镜像上传路径 `/api/v1/projects/*/images/upload` 需允许 2 GiB 请求体及至少 16 分钟代理读写超时。脚本不修改现有网站。
+默认管理入口监听本机 **8080**，Registry入口 **5000**；通过 `--api-port` / `--registry-port` 修改。两个端口都由API网关接收，底层Registry只在Compose内部开放。绑定在127.0.0.1，需自行将HTTPS反向代理指向这两个端口、配置DNS和证书。Registry入口允许大请求体，保留Authorization / WWW-Authenticate头，blob传输超时按镜像大小调整（网关最长60分钟）。API发布包不超过10 MiB；网页镜像上传路径 `/api/v1/projects/*/images/upload` 需允许2 GiB请求体及至少16分钟代理读写超时。脚本不修改现有网站。
 
 实例配置在私有 `instance.json` / `compose.env`；重复引导拒绝自动更换已记录的域名、端口或数据库目标。如需变更，停止平台、备份，明确编辑这些实例设置后重启。业务项目的域名与 ctl 的域名独立。
 
@@ -52,7 +52,11 @@ sudo bash control-deploy/bootstrap.sh --database-url-file /root/ctl-database.url
 
 上传由Go OCI客户端完成，不执行镜像，不挂载Docker socket。归档流式写入私有 `artifacts/.uploads`，不在内存缓冲整个文件、不解压到宿主机目录；验证路径、成员、配置、实际层哈希、压缩展开限制及仓库目标。普通结束或取消后清理文件；进程异常留下的旧普通上传文件在下一次上传时清理（超过24小时）。每个服务实例只处理一个镜像上传任务，其他请求收到忙碌提示。上传失败/取消可能留下未引用的 Registry 内容，刷新确认结果后可重试；同标签同内容重试允许，不覆盖同标签的不同镜像。上传镜像不自动发布或推进stable，仍需在“版本”关联标准部署包。
 
+归档内的镜像层必须使用一致的压缩模式（全未压缩或全压缩）；混合模式、无法正确声明的压缩类型返回明确提示，改用docker push，避免SDK错误转换层内容。归档校验和digest计算完成后才签发本次HEAD验证凭据，推送时按请求重新签发短期凭据，不因大文件校验耗时而提前过期。
+
 **删除**仅管理员通过API/管理台执行，只支持托管仓库，须确认Digest及全部受影响标签。所有项目共享该仓库的发布版本都受保护，包括已停用、用于回滚的版本；多架构索引引用的子manifest也不能删除。发布的镜像校验与登记、手动上传、删除使用同一PostgreSQL仓库锁，避免并发发布登记一个刚被删除的镜像。删除行为写入审计。CLI/CI的普通publisher/deployer凭据不具备此删除权限。
+
+普通Docker推送的manifest PUT也通过网关获取同一仓库锁，先验证短期JWT的签名、范围、issuer/audience与期限，读取有界manifest后才加锁；blob上传保持流式转发。底层Registry不可向外直接暴露，否则会绕过这项并发保护。公共OCI DELETE禁止直达Registry，删除统一走管理接口；管理API自身上传/删除在已持锁时访问内部Registry，避免锁重入。升级已有实例时使用更新的Compose重新启动，域名和原入口端口不变。
 
 删除manifest会让全部对应标签失效，**不会立刻回收镜像层占用的磁盘空间**。维护时停止API写入，暂停Registry写入并备份后，用Distribution的 `registry garbage-collect /etc/docker/registry/config.yml` 回收无引用内容；不要使用 `--delete-untagged`，它可能影响多架构子manifest及无标签的回滚版本。维护回收需要按实际配置/备份制度执行，管理台不自动运行垃圾回收。
 

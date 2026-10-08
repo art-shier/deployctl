@@ -19,8 +19,26 @@ test("actual API project, secret, conflict, credential and logout", async ({
   await page.getByRole("button", { name: /Notes 浏览器验收/ }).click();
   const imageArchive = process.env.CTL_BROWSER_IMAGE_ARCHIVE;
   if (!imageArchive) throw new Error("real Docker archive fixture required");
+  let capabilityFailures = 0;
+  await page.route("**/images/capabilities", async (route) => {
+    if (capabilityFailures++ === 0) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "temporary fixture outage" }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
   await page.getByRole("tab", { name: "镜像管理" }).click();
   await expect(page.getByTestId("image-count")).toHaveText("0");
+  await expect(page.getByRole("alert")).toContainText("镜像管理权限读取失败");
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "上传镜像", exact: true }),
+  ).toBeVisible();
+  await page.unroute("**/images/capabilities");
   for (const tag of ["manual", "manual-alias"]) {
     await page.getByRole("button", { name: "上传镜像", exact: true }).click();
     await page.getByLabel("目标标签").fill(tag);
@@ -57,13 +75,11 @@ test("actual API project, secret, conflict, credential and logout", async ({
   await expect(page.getByTestId("image-tag-count")).toHaveText("0");
   await page.getByRole("button", { name: "上传镜像", exact: true }).click();
   await page.getByLabel("目标标签").fill("bad-archive");
-  await page
-    .getByLabel("镜像 tar 文件")
-    .setInputFiles({
-      name: "invalid.tar",
-      mimeType: "application/x-tar",
-      buffer: Buffer.from("invalid archive"),
-    });
+  await page.getByLabel("镜像 tar 文件").setInputFiles({
+    name: "invalid.tar",
+    mimeType: "application/x-tar",
+    buffer: Buffer.from("invalid archive"),
+  });
   await page.getByRole("button", { name: "上传并入库" }).click();
   await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
     "镜像文件无效",
