@@ -8,6 +8,7 @@ test("actual API project, secret, conflict, credential and logout", async ({
   await page.goto("/");
   await page.getByLabel("管理员凭据").fill(token);
   await page.getByRole("button", { name: "进入管理台" }).click();
+  await page.getByRole("link", { name: "全部项目", exact: true }).click();
   await page.getByRole("button", { name: "注册项目", exact: true }).click();
   await page.getByLabel("项目标识").fill("browser-notes");
   await page.getByLabel("项目名称").fill("Notes 浏览器验收");
@@ -16,7 +17,9 @@ test("actual API project, secret, conflict, credential and logout", async ({
     .getByRole("dialog")
     .getByRole("button", { name: "注册项目" })
     .click();
-  await page.getByRole("button", { name: /Notes 浏览器验收/ }).click();
+  await page
+    .getByRole("link", { name: "打开项目 Notes 浏览器验收", exact: true })
+    .click();
   const imageArchive = process.env.CTL_BROWSER_IMAGE_ARCHIVE;
   if (!imageArchive) throw new Error("real Docker archive fixture required");
   let capabilityFailures = 0;
@@ -139,9 +142,11 @@ test("actual API project, secret, conflict, credential and logout", async ({
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
-  await page.getByRole("tab", { name: "访问凭据" }).click();
+  await expect(page.getByRole("tab", { name: "访问凭据" })).toHaveCount(0);
+  await page.getByRole("link", { name: "组凭据", exact: true }).click();
   await page.getByRole("button", { name: "创建凭据", exact: true }).click();
   await page.getByLabel("名称", { exact: true }).fill("prod-host");
+  await page.getByLabel("授权项目组 default").check();
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "创建凭据", exact: true })

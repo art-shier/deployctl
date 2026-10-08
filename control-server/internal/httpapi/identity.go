@@ -26,6 +26,10 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, p auth.Prin
 	if err := decode(w, r, &token); err != nil {
 		return err
 	}
+	// New credentials are group-scoped. Existing project tokens remain readable/revocable.
+	if len(token.Groups) == 0 || token.Project != "" || len(token.Projects) != 0 {
+		return domain.ErrInvalid
+	}
 	if token.ExpiresAt.IsZero() {
 		token.ExpiresAt = time.Now().Add(90 * 24 * time.Hour)
 	}

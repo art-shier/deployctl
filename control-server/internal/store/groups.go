@@ -79,3 +79,32 @@ func (s *Store) UpdateGroup(ctx context.Context, g domain.Group, actor string) (
 	}
 	return g, tx.Commit(ctx)
 }
+
+// MoveProjectGroup changes membership without overwriting concurrently edited metadata.
+func (s *Store) MoveProjectGroup(ctx context.Context, slug, expected, target, actor string) (domain.Project, error) {
+	var p domain.Project
+	if domain.ValidateName(target, 48) != nil || domain.ValidateName(expected, 48) != nil {
+		return p, domain.ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return p, err
+	}
+	defer tx.Rollback(ctx)
+	p, err = scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 FOR UPDATE", slug))
+	if err != nil {
+		return p, err
+	}
+	if p.Group != expected {
+		return p, domain.ErrConflict
+	}
+	p.Group = target
+	b, _ := json.Marshal(p)
+	if _, err = tx.Exec(ctx, "UPDATE ctl_projects SET group_slug=$2,data=$3 WHERE slug=$1", slug, target, b); err != nil {
+		return p, mapped(err)
+	}
+	if err = audit(ctx, tx, actor, "project.move", slug, "", []string{expected, target}); err != nil {
+		return p, err
+	}
+	return p, tx.Commit(ctx)
+}

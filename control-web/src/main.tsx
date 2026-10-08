@@ -40,9 +40,10 @@ import {
 } from "./environmentForm";
 import { ImagesView } from "./ImagesView";
 import { GroupsView } from "./ProjectGroups";
-import { tokenCoversProject, tokenScopeLabel } from "./tokenScope";
+import { tokenScopeLabel } from "./tokenScope";
 import { projectFormPayload } from "./projectForm";
 import "./styles.css";
+import "./workspace.css";
 
 const date = (value: string) =>
   new Date(value).toLocaleString("zh-CN", {
@@ -167,7 +168,7 @@ function App() {
     [token, setToken] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const [page, setPage] = useState(location.hash.slice(1) || "projects");
+  const [page, setPage] = useState(location.hash.slice(1) || "groups");
   const check = () => {
     setSession("loading");
     setSessionError("");
@@ -188,7 +189,7 @@ function App() {
     check();
     const expired = () => setSession("out");
     window.addEventListener("ctl-session-expired", expired);
-    const hash = () => setPage(location.hash.slice(1) || "projects");
+    const hash = () => setPage(location.hash.slice(1) || "groups");
     window.addEventListener("hashchange", hash);
     return () => {
       window.removeEventListener("ctl-session-expired", expired);
@@ -219,7 +220,7 @@ function App() {
       await api("/session", { method: "DELETE" });
       setSession("out");
       setToken("");
-      navigate("projects");
+      navigate("groups");
     } catch (e) {
       setError(message(e));
     }
@@ -269,71 +270,90 @@ function App() {
       </div>
     );
   const selected = page.startsWith("project/") ? page.split("/")[1] : null;
+  const groupSlug = page.startsWith("group/") ? page.split("/")[1] : undefined;
+  const inGroups = page === "groups" || !!groupSlug || !!selected;
   return (
-    <>
-      <header className="topbar">
-        <a className="brand" href="#projects">
+    <div className="app-layout">
+      <aside className="sidebar">
+        <a className="brand" href="#groups">
           <Terminal size={22} />
           <span>
             ctl<span className="brand-dot">.</span>
           </span>
         </a>
-        <span className="top-divider" />
-        <span className="top-title">部署管理台</span>
-        <span className="badge owner-badge">超级管理员</span>
+        <p className="sidebar-label">部署工作台</p>
         <nav aria-label="主导航">
-          <a
-            href="#projects"
-            className={
-              page === "projects" || page.startsWith("project/") ? "active" : ""
-            }
-          >
-            项目
-          </a>
-          <a href="#groups" className={page === "groups" ? "active" : ""}>
+          <a href="#groups" className={inGroups ? "active" : ""}>
+            <FolderGit2 size={18} />
             项目组
           </a>
+          <a href="#projects" className={page === "projects" ? "active" : ""}>
+            <Box size={18} />
+            全部项目
+          </a>
           <a href="#tokens" className={page === "tokens" ? "active" : ""}>
-            访问凭据
+            <KeyRound size={18} />
+            组凭据
           </a>
           <a href="#audit" className={page === "audit" ? "active" : ""}>
+            <Clock size={18} />
             审计
           </a>
         </nav>
-        <button
-          className="text-button logout"
-          aria-label="退出"
-          onClick={logout}
-        >
-          <LogOut size={16} />
-          <span>退出</span>
-        </button>
-      </header>
-      <main className="main">
-        <ErrorMessage text={error} />
-        {page === "groups" ? (
-          <GroupsView />
-        ) : page === "tokens" ? (
-          <TokensView />
-        ) : page === "audit" ? (
-          <AuditView />
-        ) : selected ? (
-          <ProjectView slug={selected} navigate={navigate} />
-        ) : (
-          <Projects navigate={navigate} />
-        )}
-      </main>
-      <footer className="footer">
-        ctl control plane<span>配置集中管理 · 部署在你的服务器执行</span>
-      </footer>
-    </>
+        <div className="sidebar-account">
+          <ShieldCheck size={17} />
+          <div>
+            <strong>超级管理员</strong>
+            <span>管理所有项目组</span>
+          </div>
+        </div>
+      </aside>
+      <div className="app-workspace">
+        <header className="workspace-topbar">
+          <span>部署管理台</span>
+          <button className="text-button" aria-label="退出" onClick={logout}>
+            <LogOut size={16} />
+            退出
+          </button>
+        </header>
+        <main className="main">
+          <ErrorMessage text={error} />
+          {page === "groups" || groupSlug ? (
+            <GroupsView
+              key={groupSlug || "groups"}
+              slug={groupSlug}
+              tab={page.split("/")[2]}
+              navigate={navigate}
+              Dialog={Modal}
+              renderProjects={(g, changed) => (
+                <Projects group={g} navigate={navigate} changed={changed} />
+              )}
+              renderTokens={(g) => <TokensView group={g} />}
+            />
+          ) : page === "tokens" ? (
+            <TokensView />
+          ) : page === "audit" ? (
+            <AuditView />
+          ) : selected ? (
+            <ProjectView slug={selected} navigate={navigate} />
+          ) : (
+            <Projects navigate={navigate} />
+          )}
+        </main>
+        <footer className="footer">
+          ctl control plane<span>项目、配置与发布集中管理</span>
+        </footer>
+      </div>
+    </div>
   );
 }
 function ProjectForm({
+  group,
   project,
   done,
   close,
 }: {
+  group?: Group;
   project?: Project;
   done: () => void;
   close: () => void;
@@ -346,7 +366,7 @@ function ProjectForm({
       repository: project?.repository ?? "",
       image_repository: project?.image_repository ?? "",
       default_environment: project?.default_environment ?? "prod",
-      group: project?.group ?? "default",
+      group: project?.group ?? group?.slug ?? "default",
     }),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -430,7 +450,7 @@ function ProjectForm({
         所属项目组
         <select
           value={value.group}
-          disabled={groups.loading || !!groups.error}
+          disabled={!!group || groups.loading || !!groups.error}
           onChange={(e) => setValue({ ...value, group: e.target.value })}
         >
           {groups.data.map((g) => (
@@ -473,49 +493,153 @@ function ProjectForm({
     </form>
   );
 }
-function Projects({ navigate }: { navigate: (page: string) => void }) {
-  const { data, loading, error, reload } = useData<Project[]>("/projects", []),
-    [create, setCreate] = useState(false),
-    [group, setGroup] = useState("");
+function Projects({
+  navigate,
+  group,
+  changed,
+}: {
+  navigate: (page: string) => void;
+  group?: Group;
+  changed?: () => void;
+}) {
+  const { data, loading, error, reload } = useData<Project[]>("/projects", []);
   const groups = useData<Group[]>("/groups", []);
+  const [create, setCreate] = useState(false),
+    [filterGroup, setFilterGroup] = useState(""),
+    [search, setSearch] = useState("");
+  const [joining, setJoining] = useState(false),
+    [selected, setSelected] = useState<string[]>([]),
+    [busy, setBusy] = useState(false),
+    [actionError, setActionError] = useState("");
+  const members = data.filter(
+    (p) => !group || (p.group || "default") === group.slug,
+  );
+  const items = members.filter(
+    (p) =>
+      (!filterGroup || (p.group || "default") === filterGroup) &&
+      `${p.name} ${p.slug}`.toLowerCase().includes(search.toLowerCase()),
+  );
+  const candidates = data.filter((p) => (p.group || "default") !== group?.slug);
+  const move = (p: Project, target: string) =>
+    api(
+      `/projects/${p.slug}/group`,
+      send("PATCH", { expected_group: p.group || "default", group: target }),
+    );
+  const add = async () => {
+    setBusy(true);
+    setActionError("");
+    const completed: string[] = [];
+    try {
+      for (const slug of selected) {
+        const p = data.find((p) => p.slug === slug);
+        if (!p || !group) throw new Error("项目已变化，请刷新后重试。");
+        await move(p, group.slug);
+        completed.push(slug);
+      }
+      setJoining(false);
+      setSelected([]);
+      reload();
+      changed?.();
+    } catch (e) {
+      setSelected(selected.filter((slug) => !completed.includes(slug)));
+      reload();
+      setActionError(
+        `${completed.length ? `已加入 ${completed.length} 个项目，剩余未完成。` : ""}${message(e)}`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async (p: Project) => {
+    if (
+      !confirm(
+        `将「${p.name}」移到 default？当前组凭据将失去该项目的访问权限，default 组凭据将获得权限。`,
+      )
+    )
+      return;
+    setBusy(true);
+    setActionError("");
+    try {
+      await move(p, "default");
+      reload();
+      changed?.();
+    } catch (e) {
+      setActionError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">WORKSPACE</p>
-          <h1>项目</h1>
-          <p className="muted">从发布到部署，所有项目井然有序。</p>
+      {!group && (
+        <div className="page-heading">
+          <div>
+            <h1>全部项目</h1>
+            <p className="muted">查看所有项目，也可以从项目组进入管理。</p>
+          </div>
         </div>
-        <button className="primary" onClick={() => setCreate(true)}>
-          <Plus size={18} />
-          注册项目
-        </button>
+      )}
+      <div className="list-toolbar">
+        <div className="list-filters">
+          <input
+            aria-label="搜索项目"
+            placeholder="搜索项目名称或标识"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {!group && (
+            <select
+              aria-label="按项目组筛选"
+              value={filterGroup}
+              onChange={(e) => setFilterGroup(e.target.value)}
+            >
+              <option value="">全部项目组</option>
+              {groups.data.map((g) => (
+                <option key={g.slug} value={g.slug}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        <div className="toolbar-actions">
+          {group && (
+            <button
+              disabled={loading || busy || !!error}
+              onClick={() => {
+                setActionError("");
+                setSelected([]);
+                setJoining(true);
+              }}
+            >
+              加入已有项目
+            </button>
+          )}
+          <button className="primary" onClick={() => setCreate(true)}>
+            <Plus size={16} />
+            注册项目
+          </button>
+        </div>
       </div>
-      <ErrorMessage text={error} />
-      <label className="group-filter">
-        按项目组筛选
-        <select
-          aria-label="按项目组筛选"
-          value={group}
-          onChange={(e) => setGroup(e.target.value)}
-        >
-          <option value="">全部项目组</option>
-          {groups.data.map((g) => (
-            <option value={g.slug} key={g.slug}>
-              {g.name} ({g.slug})
-            </option>
-          ))}
-        </select>
-      </label>
-      <ErrorMessage text={groups.error} />
-      {error && <button onClick={reload}>重新加载</button>}
+      <ErrorMessage text={error || actionError} />
+      {error && <button onClick={reload}>重新加载项目</button>}
       {loading ? (
         <Loading />
-      ) : data.length ? (
-        <>
-          <div className="section-heading">
-            <span className="small muted">
-              全部项目 <span className="count">{data.length}</span>
+      ) : !members.length ? (
+        <Empty
+          title={group ? "组内还没有项目" : "还没有项目"}
+          detail={
+            group
+              ? "在当前组注册新项目，或将已有项目加入此组。"
+              : "先选择项目组，再注册需要部署的服务。"
+          }
+        />
+      ) : (
+        <section className="data-panel">
+          <div className="data-panel-heading">
+            <span>
+              {group ? "组内项目" : "项目列表"}
+              <span className="count">{items.length}</span>
             </span>
             <button
               className="icon-button"
@@ -525,42 +649,157 @@ function Projects({ navigate }: { navigate: (page: string) => void }) {
               <RefreshCw size={16} />
             </button>
           </div>
-          <div className="project-grid">
-            {data
-              .filter((p) => !group || (p.group || "default") === group)
-              .map((p) => (
-                <button
-                  key={p.slug}
-                  className="project-card"
-                  onClick={() => navigate("project/" + p.slug)}
-                >
-                  <div className="project-card-top">
-                    <div className="project-icon">
-                      <FolderGit2 size={23} />
-                    </div>
-                    <ArrowUpRight size={18} />
-                  </div>
-                  <h2>{p.name}</h2>
-                  <p className="muted">{p.description || "还没有项目说明"}</p>
-                  <div className="project-meta">
-                    <code>{p.slug}</code>
-                    <span className="badge">{p.default_environment}</span>
-                    <span className="badge">{p.group || "default"}</span>
-                  </div>
-                  <div className="project-source">{p.image_repository}</div>
-                </button>
-              ))}
+          <div className="table-wrap">
+            <table className="member-table">
+              <thead>
+                <tr>
+                  <th>项目</th>
+                  <th>默认环境</th>
+                  <th>镜像仓库</th>
+                  {!group && <th>项目组</th>}
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((p) => (
+                  <tr key={p.slug}>
+                    <td>
+                      <a
+                        className="project-name-link"
+                        href={`#project/${p.slug}`}
+                        aria-label={`打开项目 ${p.name}`}
+                      >
+                        <span className="project-icon">
+                          <FolderGit2 size={18} />
+                        </span>
+                        <span>
+                          <strong>{p.name}</strong>
+                          <code className="block muted">{p.slug}</code>
+                        </span>
+                      </a>
+                      {p.description && (
+                        <p className="project-row-description muted">
+                          {p.description}
+                        </p>
+                      )}
+                    </td>
+                    <td data-label="环境">
+                      <span className="badge">{p.default_environment}</span>
+                    </td>
+                    <td data-label="镜像仓库">
+                      <code
+                        className="repository-cell"
+                        title={p.image_repository}
+                      >
+                        {p.image_repository}
+                      </code>
+                    </td>
+                    {!group && (
+                      <td>
+                        <a
+                          className="inline-link"
+                          href={`#group/${p.group || "default"}`}
+                        >
+                          {p.group || "default"}
+                        </a>
+                      </td>
+                    )}
+                    <td className="row-actions">
+                      <button
+                        className="text-button"
+                        onClick={() => navigate(`project/${p.slug}`)}
+                      >
+                        管理项目
+                        <ChevronRight size={14} />
+                      </button>
+                      {group && group.slug !== "default" && (
+                        <button
+                          className="text-button danger"
+                          disabled={busy}
+                          aria-label={`移出项目 ${p.slug}`}
+                          onClick={() => void remove(p)}
+                        >
+                          移出组
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!items.length && <p className="list-empty">没有匹配的项目</p>}
           </div>
-        </>
-      ) : (
-        <Empty
-          title="注册你的第一个项目"
-          detail="注册项目后，即可发布镜像和配置安装环境。"
-        />
+        </section>
       )}
       {create && (
         <Modal title="注册项目" close={() => setCreate(false)}>
-          <ProjectForm done={reload} close={() => setCreate(false)} />
+          <ProjectForm
+            group={group}
+            done={() => {
+              reload();
+              changed?.();
+            }}
+            close={() => setCreate(false)}
+          />
+        </Modal>
+      )}
+      {joining && (
+        <Modal
+          title="加入已有项目"
+          close={() => {
+            if (!busy) {
+              setJoining(false);
+              changed?.();
+            }
+          }}
+        >
+          <p className="muted">
+            每个项目只属于一个组。加入后，原组凭据失去访问权，当前组凭据获得访问权。
+          </p>
+          <fieldset className="scope-options">
+            <legend>选择要加入的项目</legend>
+            {candidates.map((p) => (
+              <label className="scope-option" key={p.slug}>
+                <input
+                  type="checkbox"
+                  disabled={busy}
+                  aria-label={`加入项目 ${p.slug}`}
+                  checked={selected.includes(p.slug)}
+                  onChange={(e) =>
+                    setSelected(
+                      e.target.checked
+                        ? [...selected, p.slug]
+                        : selected.filter((v) => v !== p.slug),
+                    )
+                  }
+                />
+                <span>
+                  <strong>{p.name}</strong>
+                  <small className="block muted">
+                    {p.slug} · 当前组 {p.group || "default"}
+                  </small>
+                </span>
+              </label>
+            ))}
+            {!candidates.length && (
+              <p className="muted">
+                没有可加入的项目，可以在当前组注册新项目。
+              </p>
+            )}
+          </fieldset>
+          <ErrorMessage text={actionError} />
+          <div className="actions">
+            <button disabled={busy} onClick={() => setJoining(false)}>
+              取消
+            </button>
+            <button
+              className="primary"
+              disabled={busy || !selected.length}
+              onClick={() => void add()}
+            >
+              {busy ? "正在加入…" : "确认加入"}
+            </button>
+          </div>
         </Modal>
       )}
     </>
@@ -571,7 +810,6 @@ const tabs = [
   ["images", "镜像管理"],
   ["environments", "环境配置"],
   ["receipts", "安装记录"],
-  ["tokens", "访问凭据"],
 ] as const;
 function ProjectView({
   slug,
@@ -603,9 +841,13 @@ function ProjectView({
     );
   return (
     <>
-      <button className="back text-button" onClick={() => navigate("projects")}>
+      <button
+        className="back text-button"
+        aria-label="返回所属项目组"
+        onClick={() => navigate("group/" + (project.group || "default"))}
+      >
         <ArrowLeft size={16} />
-        全部项目
+        {project.group || "default"} / 组内项目
       </button>
       <div className="page-heading project-heading">
         <div>
@@ -644,10 +886,8 @@ function ProjectView({
           <ImagesView project={project} Dialog={Modal} />
         ) : tab === "environments" ? (
           <EnvironmentsView project={project} />
-        ) : tab === "receipts" ? (
-          <ReceiptsView slug={slug} />
         ) : (
-          <TokensView project={project} />
+          <ReceiptsView slug={slug} />
         )}
       </div>
       {edit && (
@@ -1357,11 +1597,12 @@ function EnvironmentEditor({ slug, env }: { slug: string; env: string }) {
     </>
   );
 }
-function TokensView({ project }: { project?: Project }) {
+function TokensView({ group }: { group?: Group }) {
   const { data, loading, error, reload } = useData<Token[]>("/tokens", []),
     [create, setCreate] = useState(false),
     [fresh, setFresh] = useState(""),
-    [err, setErr] = useState("");
+    [err, setErr] = useState(""),
+    [revoking, setRevoking] = useState("");
   const revoke = async (t: Token) => {
     if (
       !confirm(
@@ -1369,23 +1610,28 @@ function TokensView({ project }: { project?: Project }) {
       )
     )
       return;
+    setRevoking(t.id);
+    setErr("");
     try {
       await api(`/tokens/${t.id}`, { method: "DELETE" });
       reload();
     } catch (e) {
       setErr(message(e));
+    } finally {
+      setRevoking("");
     }
   };
-  const items = project
-    ? data.filter((t) => tokenCoversProject(t, project))
+  const items = group
+    ? data.filter((t) => t.groups?.includes(group.slug))
     : data;
+  const Title = group ? "h2" : "h1";
   return (
     <>
-      <div className="section-heading">
+      <div className={group ? "section-heading" : "page-heading"}>
         <div>
-          <h2>访问凭据</h2>
+          <Title>{group ? "组授权" : "组凭据"}</Title>
           <p className="muted small">
-            发布凭据用于 CI，部署凭据用于目标服务器。
+            为项目组创建发布或部署凭据。组内所有项目共用授权，部署凭据仍受环境限制。
           </p>
         </div>
         <button
@@ -1396,7 +1642,7 @@ function TokensView({ project }: { project?: Project }) {
           }}
         >
           <Plus size={16} />
-          创建凭据
+          {group ? "创建组凭据" : "创建凭据"}
         </button>
       </div>
       <ErrorMessage text={error || err} />
@@ -1418,7 +1664,7 @@ function TokensView({ project }: { project?: Project }) {
         <Loading />
       ) : items.length ? (
         <div className="table-wrap">
-          <table>
+          <table className="credential-table">
             <thead>
               <tr>
                 <th>名称</th>
@@ -1439,13 +1685,23 @@ function TokensView({ project }: { project?: Project }) {
                       {t.id.slice(0, 8)}
                     </small>
                   </td>
-                  <td>{t.role === "publisher" ? "发布" : "部署"}</td>
-                  <td>
+                  <td data-label="权限">
+                    {t.role === "publisher" ? "发布" : "部署"}
+                  </td>
+                  <td data-label="环境">
                     {t.role === "deployer" ? t.environments.join(", ") : "—"}
                   </td>
-                  <td>{tokenScopeLabel(t)}</td>
-                  <td className="muted">{date(t.expires_at)}</td>
-                  <td>
+                  <td data-label="授权范围">
+                    {t.groups?.length ? (
+                      tokenScopeLabel(t)
+                    ) : (
+                      <span className="muted">旧版项目凭据 · 仅兼容原权限</span>
+                    )}
+                  </td>
+                  <td className="muted" data-label="到期">
+                    {date(t.expires_at)}
+                  </td>
+                  <td data-label="状态">
                     <span className="badge">
                       {t.revoked
                         ? "已撤销"
@@ -1458,9 +1714,10 @@ function TokensView({ project }: { project?: Project }) {
                     {!t.revoked && (
                       <button
                         className="text-button danger"
+                        disabled={!!revoking}
                         onClick={() => revoke(t)}
                       >
-                        撤销
+                        {revoking === t.id ? "正在撤销…" : "撤销"}
                       </button>
                     )}
                   </td>
@@ -1478,7 +1735,7 @@ function TokensView({ project }: { project?: Project }) {
       {create && (
         <Modal title="创建访问凭据" close={() => setCreate(false)}>
           <TokenForm
-            project={project}
+            group={group}
             done={(token) => {
               setFresh(token);
               setCreate(false);
@@ -1491,39 +1748,38 @@ function TokensView({ project }: { project?: Project }) {
   );
 }
 function TokenForm({
-  project,
+  group,
   done,
 }: {
-  project?: Project;
+  group?: Group;
   done: (token: string) => void;
 }) {
   const projectOptions = useData<Project[]>("/projects", []),
     groupOptions = useData<Group[]>("/groups", []);
-  const [scope, setScope] = useState<"projects" | "groups">("projects"),
-    [selectedProjects, setSelectedProjects] = useState<string[]>(
-      project ? [project.slug] : [],
-    ),
-    [selectedGroups, setSelectedGroups] = useState<string[]>([]);
+  const [selectedGroups, setSelectedGroups] = useState<string[]>(
+    group ? [group.slug] : [],
+  );
   const [name, setName] = useState(""),
     [role, setRole] = useState("deployer"),
-    [envs, setEnvs] = useState(project?.default_environment || "prod"),
+    [envs, setEnvs] = useState("prod"),
     [days, setDays] = useState(90),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const covered = projectOptions.data.filter((p) =>
+    selectedGroups.includes(p.group || "default"),
+  );
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError("");
     try {
-      if (!(scope === "projects" ? selectedProjects : selectedGroups).length)
-        throw new Error("至少选择一个项目或项目组。");
+      if (!selectedGroups.length) throw new Error("至少选择一个项目组。");
       const value = await api<{ token: string }>(
         "/tokens",
         send("POST", {
           name,
           role,
-          projects: scope === "projects" ? selectedProjects : [],
-          groups: scope === "groups" ? selectedGroups : [],
+          groups: selectedGroups,
           environments:
             role === "deployer"
               ? envs
@@ -1560,61 +1816,52 @@ function TokenForm({
           <option value="publisher">发布 · 推送镜像与发布包</option>
         </select>
       </label>
-      <label>
-        授权范围
-        <select
-          value={scope}
-          onChange={(e) => setScope(e.target.value as "projects" | "groups")}
-        >
-          <option value="projects">指定项目 · 固定范围</option>
-          <option value="groups">项目组 · 包含以后加入的项目</option>
-        </select>
-      </label>
-      <fieldset className="scope-options">
-        <legend>{scope === "projects" ? "选择项目" : "选择项目组"}</legend>
-        {scope === "projects"
-          ? projectOptions.data.map((p) => (
-              <label className="scope-option" key={p.slug}>
-                <input
-                  type="checkbox"
-                  aria-label={`授权项目 ${p.slug}`}
-                  checked={selectedProjects.includes(p.slug)}
-                  onChange={(e) =>
-                    setSelectedProjects(
-                      e.target.checked
-                        ? [...selectedProjects, p.slug]
-                        : selectedProjects.filter((id) => id !== p.slug),
-                    )
-                  }
-                />
-                <span>
-                  {p.name} <code>{p.slug}</code>
-                </span>
-              </label>
-            ))
-          : groupOptions.data.map((g) => (
-              <label className="scope-option" key={g.slug}>
-                <input
-                  type="checkbox"
-                  aria-label={`授权项目组 ${g.slug}`}
-                  checked={selectedGroups.includes(g.slug)}
-                  onChange={(e) =>
-                    setSelectedGroups(
-                      e.target.checked
-                        ? [...selectedGroups, g.slug]
-                        : selectedGroups.filter((id) => id !== g.slug),
-                    )
-                  }
-                />
-                <span>
-                  {g.name} <code>{g.slug}</code>
-                </span>
-              </label>
-            ))}
-      </fieldset>
-      <p className="muted small">
-        项目组凭据包含组内当前和以后加入的项目。项目移出组后，下一次请求重新判断访问范围。
-      </p>
+      {group ? (
+        <div className="scope-summary">
+          <strong>{`授权项目组：${group.slug}`}</strong>
+          <span className="muted">{group.name}</span>
+        </div>
+      ) : (
+        <fieldset className="scope-options">
+          <legend>授权项目组</legend>
+          {groupOptions.data.map((g) => (
+            <label className="scope-option" key={g.slug}>
+              <input
+                type="checkbox"
+                aria-label={`授权项目组 ${g.slug}`}
+                checked={selectedGroups.includes(g.slug)}
+                onChange={(e) =>
+                  setSelectedGroups(
+                    e.target.checked
+                      ? [...selectedGroups, g.slug]
+                      : selectedGroups.filter((v) => v !== g.slug),
+                  )
+                }
+              />
+              <span>
+                {g.name}
+                <code className="block muted">{g.slug}</code>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+      <section className="scope-preview">
+        <strong>当前覆盖 {covered.length} 个项目</strong>
+        <div className="scope-projects">
+          {covered.map((p) => (
+            <span className="badge" key={p.slug}>
+              {p.name}
+            </span>
+          ))}
+        </div>
+        <p className="muted small">
+          以后加入的项目自动获得授权，移出组的项目失去授权。
+          {role === "deployer"
+            ? "只能读取所选环境配置及拉取镜像，不能发布或管理项目。"
+            : "可以推送镜像和发布版本，不能读取生产环境配置。"}
+        </p>
+      </section>
       <ErrorMessage text={projectOptions.error || groupOptions.error} />
       {(projectOptions.error || groupOptions.error) && (
         <button
@@ -1636,7 +1883,9 @@ function TokenForm({
             onChange={(e) => setEnvs(e.target.value)}
             placeholder="prod,test"
           />
-          <span className="muted small">多个环境以逗号分隔。</span>
+          <span className="muted small">
+            仅允许这些环境，多个环境以逗号分隔。
+          </span>
         </label>
       )}
       <label>
@@ -1645,6 +1894,7 @@ function TokenForm({
           type="number"
           min={1}
           max={365}
+          required
           value={days}
           onChange={(e) => setDays(Number(e.target.value))}
         />
@@ -1654,13 +1904,14 @@ function TokenForm({
         className="primary"
         disabled={
           busy ||
+          !selectedGroups.length ||
           projectOptions.loading ||
           groupOptions.loading ||
           !!projectOptions.error ||
           !!groupOptions.error
         }
       >
-        {busy ? "正在创建…" : "创建凭据"}
+        {busy ? "正在创建…" : group ? "创建组凭据" : "创建凭据"}
       </button>
     </form>
   );

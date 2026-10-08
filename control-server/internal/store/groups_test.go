@@ -71,6 +71,33 @@ func TestDefaultGroupMigrationPreservesLegacyIdentity(t *testing.T) {
 	}
 }
 
+func TestMoveProjectGroupPreservesMetadataAndChecksExpectedMembership(t *testing.T) {
+	s := fixture(t)
+	ctx := context.Background()
+	if _, err := s.CreateGroup(ctx, domain.Group{Slug: "apps", Name: "Apps"}, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	prior, _ := s.GetProject(ctx, "notes")
+	prior.Description = "latest metadata"
+	if _, err := s.UpdateProject(ctx, prior, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := s.MoveProjectGroup(ctx, "notes", "default", "apps", "owner")
+	if err != nil || moved.Group != "apps" || moved.Description != "latest metadata" || moved.ImageRepository != prior.ImageRepository {
+		t.Fatal(moved, err)
+	}
+	if _, err = s.MoveProjectGroup(ctx, "notes", "default", "default", "owner"); !errors.Is(err, domain.ErrConflict) {
+		t.Fatal("stale membership accepted", err)
+	}
+	if _, err = s.MoveProjectGroup(ctx, "notes", "apps", "missing", "owner"); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatal("invalid group accepted", err)
+	}
+	current, _ := s.GetProject(ctx, "notes")
+	if current.Group != "apps" {
+		t.Fatal("failed move altered membership")
+	}
+}
+
 func TestGroupScopesFollowMembershipAndPreserveExplicitProjects(t *testing.T) {
 	s := fixture(t)
 	ctx := context.Background()

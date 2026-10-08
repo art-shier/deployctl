@@ -50,3 +50,22 @@ func (s *Server) updateGroup(w http.ResponseWriter, r *http.Request, p auth.Prin
 	reply(w, 200, result)
 	return nil
 }
+
+func (s *Server) moveProjectGroup(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	if err := owner(p); err != nil {
+		return err
+	}
+	var body struct {
+		Group         string `json:"group"`
+		ExpectedGroup string `json:"expected_group"`
+	}
+	if err := decode(w, r, &body); err != nil {
+		return err
+	}
+	project, err := s.store.MoveProjectGroup(r.Context(), r.PathValue("slug"), body.ExpectedGroup, body.Group, p.ID)
+	if err != nil {
+		return err
+	}
+	reply(w, 200, project)
+	return nil
+}

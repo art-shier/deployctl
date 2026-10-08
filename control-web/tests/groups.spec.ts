@@ -26,7 +26,7 @@ test("group assignment and one login authorizes multiple projects", async ({
     page.getByRole("heading", { name: `应用服务 ${suffix}` }),
   ).toBeVisible();
   for (const slug of [notes, config]) {
-    await page.getByRole("link", { name: "项目", exact: true }).click();
+    await page.getByRole("link", { name: "全部项目", exact: true }).click();
     await page.getByRole("button", { name: "注册项目", exact: true }).click();
     await page.getByLabel("项目标识").fill(slug);
     await page.getByLabel("项目名称").fill(slug);
@@ -37,14 +37,11 @@ test("group assignment and one login authorizes multiple projects", async ({
       .click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
   }
-  await page.getByRole("link", { name: "访问凭据", exact: true }).click();
+  await page.getByRole("link", { name: "组凭据", exact: true }).click();
   await page.getByRole("button", { name: "创建凭据", exact: true }).click();
   await page
     .getByLabel("名称", { exact: true })
     .fill(`shared-prod-host-${suffix}`);
-  await page
-    .getByRole("combobox", { name: "授权范围", exact: true })
-    .selectOption("groups");
   await page.getByLabel(`授权项目组 ${group}`).check();
   await page
     .getByRole("dialog")
@@ -76,8 +73,10 @@ test("group assignment and one login authorizes multiple projects", async ({
     ),
   ).not.toContain(token);
   // An unrelated save from a stale tab must not undo a membership move by another owner tab.
-  await page.getByRole("link", { name: "项目", exact: true }).click();
-  await page.getByRole("button", { name: new RegExp(notes) }).click();
+  await page.getByRole("link", { name: "全部项目", exact: true }).click();
+  await page
+    .getByRole("link", { name: `打开项目 ${notes}`, exact: true })
+    .click();
   await page.getByRole("button", { name: "项目设置", exact: true }).click();
   const prior = await page.request.get(`/api/v1/projects/${notes}`);
   const moved = await page.request.patch(`/api/v1/projects/${notes}`, {
