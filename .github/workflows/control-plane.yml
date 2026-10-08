@@ -1,0 +1,129 @@
+name: Control plane verification
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: control-plane-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  server:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: fixture-only
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-server/go.mod
+          cache-dependency-path: control-server/go.sum
+      - name: Real PostgreSQL transactions, crypto and permissions
+        working-directory: control-server
+        env:
+          CTL_TEST_DATABASE_URL: postgres://postgres:fixture-only@127.0.0.1:5432/postgres?sslmode=disable
+          CTL_TEST_REGISTRY: '1'
+        run: |
+          go test -race ./...
+          go vet ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: control-web/package-lock.json
+      - name: Build and test management UI
+        working-directory: control-web
+        run: |
+          npm ci
+          npm test
+          npm run build
+          npx playwright install --with-deps chromium
+      - name: Browser against real API
+        env:
+          CTL_DATABASE_URL: postgres://postgres:fixture-only@127.0.0.1:5432/postgres?sslmode=disable
+          CTL_PUBLIC_ORIGIN: http://127.0.0.1:8080
+          CTL_WEB_DIR: ${{ github.workspace }}/control-web/dist
+          CTL_KEYS_DIR: ${{ runner.temp }}/ctl-browser-keys
+          CTL_ARTIFACTS_DIR: ${{ runner.temp }}/ctl-browser-artifacts
+          CTL_REGISTRY_HOST: 127.0.0.1:8080
+          CTL_REGISTRY_INTERNAL_URL: http://127.0.0.1:5000
+        run: |
+          cd control-server
+          go build -o "$RUNNER_TEMP/ctl-server" ./cmd/ctl-server
+          "$RUNNER_TEMP/ctl-server" init --keys-dir "$CTL_KEYS_DIR"
+          "$RUNNER_TEMP/ctl-server" > "$RUNNER_TEMP/ctl-server.log" 2>&1 &
+          API_PID=$!
+          trap 'kill "$API_PID" || true; docker rm -f -v ctl-browser-registry >/dev/null 2>&1 || true; docker image rm -f ctl-browser-manual >/dev/null 2>&1 || true' EXIT
+          docker run -d --name ctl-browser-registry -p 127.0.0.1:5000:5000 \
+            -v "$CTL_KEYS_DIR/signing.crt:/cert.pem:ro" \
+            -e REGISTRY_AUTH=token -e REGISTRY_AUTH_TOKEN_REALM=http://127.0.0.1:8080/registry/token \
+            -e REGISTRY_AUTH_TOKEN_SERVICE=ctl-registry -e REGISTRY_AUTH_TOKEN_ISSUER=ctl \
+            -e REGISTRY_AUTH_TOKEN_ROOTCERTBUNDLE=/cert.pem -e REGISTRY_STORAGE_DELETE_ENABLED=true registry:2.8.3
+          for i in $(seq 1 50); do
+            if curl --fail --silent http://127.0.0.1:8080/api/v1/health/ready >/dev/null; then break; fi
+            sleep .2
+          done
+          for i in $(seq 1 50); do
+            if [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:5000/v2/)" == 401 ]]; then break; fi
+            sleep .2
+          done
+          mkdir -p "$RUNNER_TEMP/ctl-browser-image"
+          printf 'FROM scratch\nCOPY fixture /fixture\n' > "$RUNNER_TEMP/ctl-browser-image/Dockerfile"
+          printf 'browser-image-fixture\n' > "$RUNNER_TEMP/ctl-browser-image/fixture"
+          docker build -t ctl-browser-manual "$RUNNER_TEMP/ctl-browser-image"
+          docker save --output "$RUNNER_TEMP/browser-image.tar" ctl-browser-manual
+          export CTL_BROWSER_IMAGE_ARCHIVE="$RUNNER_TEMP/browser-image.tar"
+          export CTL_OWNER_TOKEN="$(cat "$CTL_KEYS_DIR/owner.token")"
+          cd ../control-web
+          npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: control-web-browser-evidence
+          path: control-web/test-results/*.png
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Real managed CLI and authenticated Docker deployment
+        env:
+          CTL_FIXTURE_DATABASE_URL: postgres://postgres:fixture-only@127.0.0.1:5432/postgres?sslmode=disable
+          CTL_SERVER_BINARY: ${{ runner.temp }}/ctl-server
+        run: |
+          python -m pip install PyYAML==6.0.3
+          python tests/control_plane_integration.py
+      - name: Build and repeat actual platform bootstrap
+        run: |
+          docker build -f control-deploy/Dockerfile -t ctl-platform-ci .
+          docker run -d --name ctl-bundle-fixture -p 127.0.0.1:5002:5000 registry:2.8.3
+          trap 'sudo docker compose --project-name ctl-platform --env-file /root/ctl-ci-platform/compose.env -f control-deploy/compose.yaml --profile database down || true; docker rm -f -v ctl-bundle-fixture >/dev/null 2>&1 || true' EXIT
+          docker tag ctl-platform-ci 127.0.0.1:5002/ctl-server:fixture
+          docker push 127.0.0.1:5002/ctl-server:fixture
+          IMAGE=$(docker inspect --format '{{index .RepoDigests 0}}' 127.0.0.1:5002/ctl-server:fixture)
+          python scripts/build_server_bundle.py --image "$IMAGE" --version v1.7.0
+          python scripts/build_release_assets.py
+          sudo python3 dist/deployctl.pyz server install --release dist/ctl-platform-v1.7.0.tar.gz --home /root/ctl-ci-platform \
+            --origin http://127.0.0.1:8091 --registry-host 127.0.0.1:5091 --api-port 8091 --registry-port 5091
+          KEY_SUM=$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)
+          sudo python3 dist/deployctl.pyz server upgrade --release dist/ctl-platform-v1.7.0.tar.gz --home /root/ctl-ci-platform
+          test "$KEY_SUM" = "$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
+          curl --fail --silent http://127.0.0.1:8091/api/v1/health/ready >/dev/null
+          sudo docker compose --project-name ctl-platform --env-file /root/ctl-ci-platform/compose.env \
+            -f control-deploy/compose.yaml --profile database down

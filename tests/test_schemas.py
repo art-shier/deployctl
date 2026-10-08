@@ -14,6 +14,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SchemaTests(unittest.TestCase):
+    def test_refresh_hook_schemas_and_minimum_match_contract(self):
+        ds = json.loads((ROOT / 'schemas/deployment.schema.json').read_text())
+        rs = json.loads((ROOT / 'schemas/release.schema.json').read_text())
+        registry = Registry().with_resource('deployment.schema.json', Resource.from_contents(ds))
+        project_validator = Draft202012Validator(ds)
+        release_validator = Draft202012Validator(rs, registry=registry)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'pre.sh').write_text('true\n')
+            for index, refresh in enumerate((True, False)):
+                config = copy.deepcopy(CONFIG)
+                config['hooks'] = {'pre_install': {'script': 'pre.sh', 'refresh_config': refresh}}
+                self.assertEqual(list(project_validator.iter_errors(config)), [])
+                archive = build_release(config, IMAGE, f'v1.0.{index}', root / 'packages', project_root=root)
+                release = unpack_release(archive, root / f'r{index}')
+                self.assertEqual(list(release_validator.iter_errors(release)), [])
+                release['minimum_deployctl_version'] = '1.5.0'
+                self.assertTrue(list(release_validator.iter_errors(release)))
+            config['hooks'] = {'post_install': {'script': 'pre.sh', 'refresh_config': True}}
+            self.assertTrue(list(project_validator.iter_errors(config)))
+
     def test_project_and_release_schemas_agree_with_v1_v2_packages(self):
         ds = json.loads((ROOT / 'schemas/deployment.schema.json').read_text())
         rs = json.loads((ROOT / 'schemas/release.schema.json').read_text())

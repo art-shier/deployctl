@@ -29,6 +29,15 @@ def run_cli(*args):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_archive_does_not_depend_on_clock_or_output_directory(self):
+        from unittest.mock import patch
+        from deployctl.release import build_release
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            with patch('time.time',return_value=1000000000): first=build_release(CONFIG,IMAGE,'v1.0.0',root/'a').read_bytes()
+            with patch('time.time',return_value=2000000000): second=build_release(CONFIG,IMAGE,'v1.0.0',root/'b').read_bytes()
+            self.assertEqual(first,second)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)

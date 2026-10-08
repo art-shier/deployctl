@@ -207,6 +207,26 @@ PY
             assert failure.returncode != 0 and not state()['current']['legacy']
             assert container_config()['RAW_VALUE'] == 'legacy actual'
             cli('restart')
+            # Explicit refresh: the real pre hook publishes server values, and
+            # the actual container consumes a new immutable snapshot.
+            refresh_source = base / 'refresh-source'
+            refresh_source.mkdir()
+            (refresh_source / 'pre.sh').write_text('''#!/usr/bin/env bash
+set -euo pipefail
+printf 'GENERATED_VALUE=from pre hook\\n' > "$DEPLOYCTL_CONFIG_DIR/secrets.env"
+chmod 600 "$DEPLOYCTL_CONFIG_DIR/secrets.env"
+''', newline='\n')
+            refreshed = copy.deepcopy(config)
+            refreshed['required_config'] = ['GENERATED_VALUE']
+            refreshed['hooks'] = {'pre_install': {'script': 'pre.sh', 'refresh_config': True}}
+            refresh_archive = build_release(refreshed, good_digest, 'v1.5.0', base / 'packages', project_root=refresh_source)
+            old_ref = state()['current']
+            cli('upgrade', '--release', refresh_archive)
+            assert container_config()['GENERATED_VALUE'] == 'from pre hook'
+            assert state()['previous'] == old_ref
+            cli('rollback')
+            assert state()['current'] == old_ref
+            assert 'GENERATED_VALUE' not in container_config()
         print('PASS: real install/upgrade, JSON/raw env and nonroot read-only mount, pre/post/timeout failures, configuration recovery/unset/same-version rollback, status/logs and restart')
     finally:
         containers = run('docker', 'ps', '-aq', '--filter', f'label=com.docker.compose.project={project}', check=False).stdout.split()

@@ -4,23 +4,25 @@
 
 平台仓库：[art-shier/deployctl](https://github.com/art-shier/deployctl) · [版本与安装资产](https://github.com/art-shier/deployctl/releases) · [构建流水线](https://github.com/art-shier/deployctl/actions)
 
+本版本新增**管理服务与管理台0.1.0及CLI1.7.0平台模式**：注册项目、托管镜像/发布包、管理环境和访问凭据；服务器登录后可直接 `ctl install notes --prod`。管理服务支持 `ctl server install --release <服务端发布包URL>`，无需clone源码。原业务 `--release` 安装方式保留。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)。
+
 支持单个无状态 HTTP 服务、Docker Compose、私有 GitHub Release 下载、升级失败恢复、人工回滚和状态/日志查询。单机更新可能短暂中断；数据库迁移、多机滚动发布、HTTPS 入口和持久化存储需另行配置。
 
 ## 一键安装 ctl
 
-仓库目前是私有的。先通过 `gh auth login --hostname github.com` 登录有仓库读取权限的账户，然后在 Linux/Bash 中运行：
+公开仓库可直接在 Linux/Bash 中安装已发布版本：
 
 ```bash
 set -o pipefail
-gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.5.0' \
-  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.5.0
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.7.0/install.sh \
+  | bash -s -- --user --version v1.7.0
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```
 
 安装器下载 CLI、检查 SHA256 和版本，安装 `ctl` 与 `deployctl` 到 `~/.local/bin`。CLI 内置依赖，无需服务器 pip 安装。再次执行可升级本安装器管理的命令；已有其他同名工具会保留并报告冲突。
 
-安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.5.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
+安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.7.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
 
 要求 Python >=3.10；服务部署另需 Docker Engine、Docker Compose >=2.30。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
 
@@ -42,6 +44,8 @@ ctl validate deploy/deployment.yaml
 `--dry-run` 可预览生成内容；`--with-deploy-workflow` 可生成可选 SSH 部署入口。已有文件不会覆盖，详见 [init](docs/init.md) 和 [项目接入手册](docs/onboarding.md)。
 
 v1.4.0新增构建参数：init继续生成基础配置，项目后续可在deployment.yaml添加build.args，并通过release.yml的build-args逐次覆盖。参数交给Dockerfile ARG和项目自己的脚本，详见 [构建参数](docs/build-args.md)。
+
+待发布的v1.6.0增加可选pre `refresh_config: true`，让钩子生成的服务器配置在启动前重新加载到新快照；普通钩子行为不变。此新字段要求ctl>=1.6.0，旧v1.5.0不支持。
 
 v1.5.0新增 `--env-var` 应用运行配置、`--set` 安装参数、`--unset-env` 删除覆盖值，以及可选宿主机pre/post hooks。应用通过 `DEPLOYCTL_ENV_FILE` 读取只读 `.env.json`；成功配置随版本提交，失败恢复旧快照。项目接入见 [运行时配置与钩子](docs/runtime-config.md)。
 

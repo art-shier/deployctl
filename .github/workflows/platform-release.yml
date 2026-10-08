@@ -22,11 +22,16 @@ jobs:
     uses: ./.github/workflows/verify.yml
     with:
       ref: ${{ inputs.version || github.ref_name }}
+  control-plane:
+    uses: ./.github/workflows/control-plane.yml
+    with:
+      ref: ${{ inputs.version || github.ref_name }}
   publish:
-    needs: verify
+    needs: [verify, control-plane]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -48,6 +53,36 @@ jobs:
           if os.environ['TAG'] != 'v' + __version__ or metadata['project']['version'] != __version__:
               raise SystemExit('Tag, deployctl version and pyproject version must match')
           PY
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Server image repository
+        id: server-repository
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/ctl-server" >> "$GITHUB_OUTPUT"
+      - name: Build and push platform image
+        id: server-image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: control-deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.server-repository.outputs.image }}:${{ inputs.version || github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=ctl API and management console
+      - name: Verify public image and build server bundle
+        env:
+          IMAGE: ${{ steps.server-repository.outputs.image }}@${{ steps.server-image.outputs.digest }}
+          TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/anonymous-docker"
+          docker --config "$RUNNER_TEMP/anonymous-docker" pull --platform linux/amd64 "$IMAGE"
+          python scripts/build_server_bundle.py --image "$IMAGE" --version "$TAG"
       - name: Build wheel and release assets
         run: |
           python -m build --wheel
@@ -67,6 +102,7 @@ jobs:
           gh release create "$TAG" dist/deployctl.pyz dist/deployctl.pyz.sha256 \
             dist/install.sh dist/install.sh.sha256 dist/SHA256SUMS \
             dist/team-deploy-skill-*.zip dist/team-deploy-skill-*.zip.sha256 \
+            dist/ctl-platform-*.tar.gz dist/ctl-platform-*.tar.gz.sha256 \
             dist/*.whl dist/*.whl.sha256 \
             --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --generate-notes --draft
           gh api "repos/$GITHUB_REPOSITORY/releases" > "$RUNNER_TEMP/releases.json"
@@ -94,15 +130,38 @@ jobs:
           "$RUNNER_TEMP/one-click/ctl" self-update --version "$TAG" --release-id "$RELEASE_ID"
           test "$("$RUNNER_TEMP/one-click/ctl" --version)" = "${TAG#v}"
           test "$("$RUNNER_TEMP/one-click/deployctl" --version)" = "${TAG#v}"
+      - name: Install actual draft server bundle through ctl
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          mkdir "$RUNNER_TEMP/server-draft"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "ctl-platform-${TAG}.tar.gz*" --dir "$RUNNER_TEMP/server-draft"
+          trap 'sudo docker compose --project-name ctl-platform --env-file /root/ctl-release-fixture/compose.env -f control-deploy/compose.yaml --profile database down || true' EXIT
+          sudo "$RUNNER_TEMP/installed/ctl" server install --release "$RUNNER_TEMP/server-draft/ctl-platform-${TAG}.tar.gz" --home /root/ctl-release-fixture \
+            --origin http://127.0.0.1:8092 --registry-host 127.0.0.1:5092 --api-port 8092 --registry-port 5092
+          curl --fail --silent http://127.0.0.1:8092/api/v1/health/ready >/dev/null
+          sudo "$RUNNER_TEMP/installed/ctl" server upgrade --release "$RUNNER_TEMP/server-draft/ctl-platform-${TAG}.tar.gz" --home /root/ctl-release-fixture
       - name: Publish verified Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.version || github.ref_name }}
         run: |
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
-          bash dist/install.sh --repo "$GITHUB_REPOSITORY" --version "$TAG" --install-dir "$RUNNER_TEMP/published"
+          env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$RUNNER_TEMP/anonymous-gh" \
+            bash dist/install.sh --repo "$GITHUB_REPOSITORY" --version "$TAG" --install-dir "$RUNNER_TEMP/published"
           test "$("$RUNNER_TEMP/published/ctl" --version)" = "${TAG#v}"
-          PATH="$RUNNER_TEMP/published:$PATH" ctl self-update
+          env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$RUNNER_TEMP/anonymous-gh" PATH="$RUNNER_TEMP/published:$PATH" ctl self-update
           test "$("$RUNNER_TEMP/published/ctl" --version)" = "${TAG#v}"
           test "$("$RUNNER_TEMP/published/deployctl" --version)" = "${TAG#v}"
+          RELEASE_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/ctl-platform-${TAG}.tar.gz"
+          env -u GH_TOKEN -u GITHUB_TOKEN python - "$RELEASE_URL" <<'PY'
+          import sys, tempfile
+          from deployctl.download import acquire_release
+          from deployctl.server_bundle import read_bundle
+          with tempfile.TemporaryDirectory() as cache:
+              manifest, _ = read_bundle(acquire_release(sys.argv[1], cache))
+              print('Verified public server bundle:', manifest['version'], manifest['image'])
+          PY
+          echo "Server bundle: $RELEASE_URL" >> "$GITHUB_STEP_SUMMARY"
           echo "Published $TAG after real GitHub asset download and installer verification" >> "$GITHUB_STEP_SUMMARY"

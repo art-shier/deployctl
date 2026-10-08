@@ -1,5 +1,7 @@
 # 运维和恢复
 
+CLI1.7.0的管理服务与 `ctl install <项目> --prod` 平台模式见 [控制面运维](control-plane.md)。本页保留显式 `--release` 模式及通用恢复操作。
+
 ## 目录与运行状态
 
 ```text
@@ -15,7 +17,7 @@
 /etc/deployctl/<application>/<environment>/
 ├── config.env
 ├── secrets.env                 # Linux 要求权限600
-├── runtime/<ID>/               # 五个不可修改的配置快照文件
+├── runtime/<ID>/               # 五个快照文件；平台模式另有受检.management.json
 └── hook-logs/                  # 可选钩子日志，权限600
 ```
 

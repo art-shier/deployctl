@@ -80,7 +80,7 @@ def validate_unset(names):
     return seen
 
 
-def merge_runtime_values(config, secrets, previous_overrides, updates, unset, version):
+def merge_runtime_values(config, secrets, previous_overrides, updates, unset, version, managed=None):
     validate_version(version)
     base = validate_values(config, 'config.env')
     base.update(validate_values(secrets, 'secrets.env'))
@@ -94,9 +94,16 @@ def merge_runtime_values(config, secrets, previous_overrides, updates, unset, ve
     overrides.update(updates)
     overrides = validate_values(overrides, 'persisted overrides')
     base.update(overrides)
+    base.update(validate_values(managed or {}, 'managed runtime'))
     values = validate_values(base)
     values['APP_VERSION'] = version
     return values, overrides
+
+
+def merge_install_params(local, managed):
+    values = validate_values(local, 'installation parameters', False)
+    values.update(validate_values(managed or {}, 'managed installation parameters', False))
+    return validate_values(values, 'installation parameters', False)
 
 
 def render_json(values):

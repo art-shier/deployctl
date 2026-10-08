@@ -1,0 +1,82 @@
+"""Private local platform identity. Never copied into application snapshots."""
+from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
+import stat
+import tempfile
+
+from .runtime_snapshot import reject_links
+
+DEFAULT_PATH = '/etc/deployctl/client.json'
+
+
+@dataclass
+class Credentials:
+    server: str
+    token: str
+
+    @classmethod
+    def load(cls, path=DEFAULT_PATH):
+        path = Path(path).absolute()
+        reject_links(path)
+        for item in (path, path.parent):
+            info = item.stat()
+            if os.name != 'nt' and (info.st_uid != os.getuid() or info.st_mode & 0o077):
+                raise ValueError('platform credentials require current ownership and private permissions')
+        flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NONBLOCK', 0)
+        with os.fdopen(os.open(path, flags), 'rb') as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 16384:
+                raise ValueError('platform credentials must be a bounded regular file')
+            try: value = json.loads(handle.read(16385))
+            except (ValueError, UnicodeError): raise ValueError('invalid platform credentials') from None
+        if not isinstance(value, dict) or set(value) != {'server','token'}:
+            raise ValueError('invalid platform credentials')
+        from .platform_client import validate_origin, validate_token
+        return cls(validate_origin(value['server']), validate_token(value['token']))
+
+    @classmethod
+    def save(cls, path, server, token):
+        from .platform_client import validate_origin, validate_token
+        value = cls(validate_origin(server), validate_token(token))
+        path = Path(path).absolute()
+        reject_links(path)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if os.name != 'nt':
+            info = path.parent.stat()
+            if info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise ValueError('credential directory requires current ownership and permissions 700')
+        fd, name = tempfile.mkstemp(dir=path.parent, prefix='.client-')
+        try:
+            with os.fdopen(fd,'w',encoding='utf-8') as handle:
+                json.dump(value.__dict__,handle); handle.flush(); os.fsync(handle.fileno())
+            os.chmod(name,0o600)
+            os.replace(name,path)
+        finally:
+            if os.path.exists(name): os.unlink(name)
+        return value
+
+
+def read_token_file(path):
+    path = Path(path).absolute()
+    reject_links(path)
+    flags = os.O_RDONLY | getattr(os,'O_NOFOLLOW',0) | getattr(os,'O_NONBLOCK',0) | getattr(os,'O_BINARY',0)
+    with os.fdopen(os.open(path,flags),'rb') as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 4096 or (os.name != 'nt' and (info.st_uid != os.getuid() or info.st_mode & 0o077)):
+            raise ValueError('token file requires current ownership, regular file and permissions 600')
+        from .platform_client import validate_token
+        return validate_token(handle.read(4097).decode('ascii').strip())
+
+
+def read_registry_token_file(path):
+    path=Path(path).absolute();reject_links(path)
+    flags=os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_NONBLOCK',0)|getattr(os,'O_BINARY',0)
+    with os.fdopen(os.open(path,flags),'rb') as handle:
+        info=os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size>12290 or (os.name!='nt' and (info.st_uid!=os.getuid() or info.st_mode&0o077)):
+            raise ValueError('registry verification file requires current ownership and permissions 600')
+        from .platform_client import validate_registry_token
+        try:return validate_registry_token(handle.read(12291).decode('ascii').strip())
+        except UnicodeError:raise ValueError('invalid external registry verification token') from None
