@@ -81,5 +81,5 @@ func TestInvalidImagePublicationDoesNotPersistPackage(t *testing.T) {
  var buffer bytes.Buffer;form:=multipart.NewWriter(&buffer);part,_:=form.CreateFormFile("package","release.tar.gz");part.Write(raw);form.WriteField("version","v1.0.0");hash:=sha256.Sum256(raw);form.WriteField("sha256",hex.EncodeToString(hash[:]));form.Close()
  req:=httptest.NewRequest("POST","/api/v1/projects/notes/releases",&buffer);req.Header.Set("Content-Type",form.FormDataContentType());req.Header.Set("Authorization","Bearer "+owner)
  response:=httptest.NewRecorder();api.ServeHTTP(response,req);if response.Code!=400 {t.Fatal(response.Code)}
- files,err:=filepath.Glob(filepath.Join(dir,"*","*.tar.gz"));if err!=nil || len(files)!=0 {t.Fatal("failed verification persisted orphan package",files,err)}
+ files,err:=filepath.Glob(filepath.Join(dir,"*.tar.gz"));if err!=nil || len(files)!=0 {t.Fatal("failed verification persisted orphan package",files,err)}
 }
