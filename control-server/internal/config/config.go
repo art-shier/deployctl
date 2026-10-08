@@ -143,6 +143,16 @@ func Initialize(dir string) error {
 }
 func Load() (Config, error) {
 	c := Config{DatabaseURL: os.Getenv("CTL_DATABASE_URL"), Listen: env("CTL_LISTEN", ":8080")}
+	if file := os.Getenv("CTL_DATABASE_URL_FILE"); file != "" {
+		if c.DatabaseURL != "" {
+			return c, errors.New("use only one database configuration source")
+		}
+		raw, err := read(file, true)
+		if err != nil {
+			return c, errors.New("invalid database URL file")
+		}
+		c.DatabaseURL = strings.TrimSpace(string(raw))
+	}
 	if c.DatabaseURL == "" {
 		return c, errors.New("CTL_DATABASE_URL required")
 	}

@@ -1,0 +1,11 @@
+.git
+.superpowers
+**/node_modules
+**/dist
+**/test-results
+**/__pycache__
+control-deploy/local
+*.pem
+*.key
+secrets.env
+.env

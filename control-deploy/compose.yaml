@@ -1,0 +1,56 @@
+services:
+  api:
+    image: ${CTL_IMAGE:?run bootstrap.sh}
+    restart: unless-stopped
+    environment:
+      CTL_DATABASE_URL_FILE: /run/ctl-keys/database.url
+      CTL_PUBLIC_ORIGIN: ${CTL_PUBLIC_ORIGIN}
+      CTL_REGISTRY_HOST: ${CTL_REGISTRY_HOST}
+      CTL_REGISTRY_INTERNAL_URL: http://registry:5000
+      CTL_KEYS_DIR: /run/ctl-keys
+      CTL_ARTIFACTS_DIR: /var/lib/ctl/artifacts
+      CTL_WEB_DIR: /app/web
+    ports: ['127.0.0.1:${CTL_API_PORT:-8080}:8080']
+    volumes:
+      - ${CTL_HOME}/keys:/run/ctl-keys:ro
+      - ${CTL_HOME}/artifacts:/var/lib/ctl/artifacts
+    depends_on: [registry]
+    read_only: true
+    tmpfs: ['/tmp:size=32m,mode=1777']
+    security_opt: ['no-new-privileges:true']
+    cap_drop: [ALL]
+    mem_limit: 256m
+    cpus: 1.0
+  registry:
+    image: registry:2.8.3
+    restart: unless-stopped
+    environment:
+      REGISTRY_AUTH: token
+      REGISTRY_AUTH_TOKEN_REALM: ${CTL_PUBLIC_ORIGIN}/registry/token
+      REGISTRY_AUTH_TOKEN_SERVICE: ctl-registry
+      REGISTRY_AUTH_TOKEN_ISSUER: ctl
+      REGISTRY_AUTH_TOKEN_ROOTCERTBUNDLE: /cert/signing.crt
+      REGISTRY_HTTP_SECRET: ${CTL_REGISTRY_HTTP_SECRET}
+      REGISTRY_STORAGE_DELETE_ENABLED: 'false'
+    ports: ['127.0.0.1:${CTL_REGISTRY_PORT:-5000}:5000']
+    volumes:
+      - ${CTL_HOME}/registry:/var/lib/registry
+      - ${CTL_HOME}/keys/signing.crt:/cert/signing.crt:ro
+    mem_limit: 256m
+    cpus: 1.0
+  database:
+    image: postgres:16-alpine
+    profiles: [database]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ctl
+      POSTGRES_DB: ctl
+      POSTGRES_PASSWORD: ${CTL_POSTGRES_PASSWORD}
+    volumes: ['${CTL_HOME}/database:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ctl -d ctl']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    mem_limit: 512m
+    cpus: 1.0

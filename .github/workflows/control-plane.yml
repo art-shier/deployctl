@@ -76,3 +76,13 @@ jobs:
         with:
           name: control-web-browser-evidence
           path: control-web/test-results/*.png
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Real managed CLI and authenticated Docker deployment
+        env:
+          CTL_FIXTURE_DATABASE_URL: postgres://postgres:fixture-only@127.0.0.1:5432/postgres?sslmode=disable
+          CTL_SERVER_BINARY: ${{ runner.temp }}/ctl-server
+        run: |
+          python -m pip install PyYAML==6.0.3
+          python tests/control_plane_integration.py

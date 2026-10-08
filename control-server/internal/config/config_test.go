@@ -34,6 +34,15 @@ func TestInitializePreservesKeysAndLoadFailsClosed(t *testing.T) {
 	if _, err := Load(); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("CTL_DATABASE_URL", "")
+	dsn := filepath.Join(dir, "database.url")
+	if err := os.WriteFile(dsn, []byte("postgres://fixture-only"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CTL_DATABASE_URL_FILE", dsn)
+	if c, err := Load(); err != nil || c.DatabaseURL != "postgres://fixture-only" {
+		t.Fatal("database file not loaded", err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "encryption.key"), []byte("bad"), 0600); err != nil {
 		t.Fatal(err)
 	}
