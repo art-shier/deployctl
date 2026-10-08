@@ -32,7 +32,20 @@ type Resolved struct {
 
 func New(pool *pgxpool.Pool, cipher *secrets.Cipher) *Store { return &Store{pool, cipher} }
 func (s *Store) Ping(ctx context.Context) error             { return s.pool.Ping(ctx) }
-func (s *Store) Migrate(ctx context.Context) error          { _, err := s.pool.Exec(ctx, schema); return err }
+func (s *Store) Migrate(ctx context.Context) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext(current_database() || ':ctl-schema'))"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, schema); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
 func mapped(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrNotFound
@@ -41,9 +54,15 @@ func mapped(err error) error {
 	if errors.As(err, &p) && p.Code == "23505" {
 		return domain.ErrConflict
 	}
+	if errors.As(err, &p) && p.Code == "23503" {
+		return domain.ErrInvalid
+	}
 	return err
 }
 func validProject(p domain.Project) error {
+	if p.Group != "" && domain.ValidateName(p.Group, 48) != nil {
+		return domain.ErrInvalid
+	}
 	if domain.ValidateName(p.Slug, 48) != nil || domain.ValidateName(p.DefaultEnvironment, 32) != nil || p.Name == "" || len(p.Name) > 512 || len(p.Description) > 8192 || len(p.Repository) > 1024 {
 		return domain.ErrInvalid
 	}
@@ -60,6 +79,9 @@ func audit(ctx context.Context, tx pgx.Tx, actor, action, project, environment s
 	return err
 }
 func (s *Store) CreateProject(ctx context.Context, p domain.Project, actor string) (domain.Project, error) {
+	if p.Group == "" {
+		p.Group = "default"
+	}
 	if p.DefaultEnvironment == "" {
 		p.DefaultEnvironment = "prod"
 	}
@@ -73,7 +95,7 @@ func (s *Store) CreateProject(ctx context.Context, p domain.Project, actor strin
 		return p, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, "INSERT INTO ctl_projects(slug,data) VALUES($1,$2)", p.Slug, b); err != nil {
+	if _, err = tx.Exec(ctx, "INSERT INTO ctl_projects(slug,group_slug,data) VALUES($1,$2,$3)", p.Slug, p.Group, b); err != nil {
 		return p, mapped(err)
 	}
 	if _, err = s.saveRevision(ctx, tx, p.Slug, p.DefaultEnvironment, 0, domain.Configuration{}, "stable"); err != nil {
@@ -130,6 +152,9 @@ func (s *Store) UpdateProject(ctx context.Context, p domain.Project, actor strin
 		return p, err
 	}
 	p.CreatedAt = old.CreatedAt
+	if p.Group == "" {
+		p.Group = old.Group
+	}
 	// Existing environment identities and immutable releases remain intact.
 	var exists bool
 	if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM ctl_environments WHERE project=$1 AND name=$2)", p.Slug, p.DefaultEnvironment).Scan(&exists); err != nil {
@@ -141,8 +166,8 @@ func (s *Store) UpdateProject(ctx context.Context, p domain.Project, actor strin
 		}
 	}
 	b, _ := json.Marshal(p)
-	if _, err = tx.Exec(ctx, "UPDATE ctl_projects SET data=$2 WHERE slug=$1", p.Slug, b); err != nil {
-		return p, err
+	if _, err = tx.Exec(ctx, "UPDATE ctl_projects SET data=$2,group_slug=$3 WHERE slug=$1", p.Slug, b, p.Group); err != nil {
+		return p, mapped(err)
 	}
 	if err = audit(ctx, tx, actor, "project.update", p.Slug, "", nil); err != nil {
 		return p, err

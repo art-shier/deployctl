@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/art-shier/deployctl/control-server/internal/auth"
@@ -10,11 +11,27 @@ import (
 )
 
 func (s *Store) CreateToken(ctx context.Context, t domain.Token, hash, actor string) (domain.Token, error) {
-	if t.Name == "" || len(t.Name) > 128 || domain.ValidateName(t.Project, 48) != nil || len(t.Environments) > 128 || (t.Role != "publisher" && t.Role != "deployer") || len(hash) != 64 || !t.ExpiresAt.After(time.Now()) || t.ExpiresAt.After(time.Now().Add(366*24*time.Hour)) {
+	if t.Name == "" || len(t.Name) > 128 || len(t.Projects)+len(t.Groups) > 128 || len(t.Environments) > 128 || (t.Role != "publisher" && t.Role != "deployer") || len(hash) != 64 || !t.ExpiresAt.After(time.Now()) || t.ExpiresAt.After(time.Now().Add(366*24*time.Hour)) {
 		return t, domain.ErrInvalid
 	}
 	if t.Role == "deployer" && len(t.Environments) == 0 {
 		return t, domain.ErrInvalid
+	}
+	projects := append([]string{}, t.Projects...)
+	if t.Project != "" {
+		projects = append(projects, t.Project)
+	}
+	if len(projects)+len(t.Groups) == 0 || len(projects)+len(t.Groups) > 128 {
+		return t, domain.ErrInvalid
+	}
+	for _, scope := range [][]string{projects, t.Groups} {
+		seen := map[string]bool{}
+		for _, id := range scope {
+			if domain.ValidateName(id, 48) != nil || seen[id] {
+				return t, domain.ErrInvalid
+			}
+			seen[id] = true
+		}
 	}
 	seen := map[string]bool{}
 	for _, env := range t.Environments {
@@ -32,10 +49,27 @@ func (s *Store) CreateToken(ctx context.Context, t domain.Token, hash, actor str
 		return t, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, "INSERT INTO ctl_tokens(id,hash,project,expires_at,data) VALUES($1,$2,$3,$4,$5)", t.ID, hash, t.Project, t.ExpiresAt, b); err != nil {
+	// Validate every scope, including empty groups, before persisting any credential.
+	for _, id := range projects {
+		var slug string
+		if err = tx.QueryRow(ctx, "SELECT slug FROM ctl_projects WHERE slug=$1 FOR KEY SHARE", id).Scan(&slug); err != nil {
+			return t, mapped(err)
+		}
+	}
+	for _, id := range t.Groups {
+		var slug string
+		if err = tx.QueryRow(ctx, "SELECT slug FROM ctl_groups WHERE slug=$1 FOR KEY SHARE", id).Scan(&slug); err != nil {
+			return t, mapped(err)
+		}
+	}
+	var legacyProject any
+	if t.Project != "" {
+		legacyProject = t.Project
+	}
+	if _, err = tx.Exec(ctx, "INSERT INTO ctl_tokens(id,hash,project,expires_at,data) VALUES($1,$2,$3,$4,$5)", t.ID, hash, legacyProject, t.ExpiresAt, b); err != nil {
 		return t, mapped(err)
 	}
-	if err = audit(ctx, tx, actor, "token.create", t.Project, "", nil); err != nil {
+	if err = audit(ctx, tx, actor, "token.create", t.Project, "", append(projects, t.Groups...)); err != nil {
 		return t, err
 	}
 	return t, tx.Commit(ctx)
@@ -50,7 +84,30 @@ func (s *Store) Authenticate(ctx context.Context, hash string) (auth.Principal, 
 	if err := json.Unmarshal(b, &t); err != nil {
 		return p, err
 	}
-	return auth.Principal{ID: t.ID, Role: t.Role, Project: t.Project, Environments: t.Environments}, nil
+	projects := append([]string{}, t.Projects...)
+	if t.Project != "" && !slices.Contains(projects, t.Project) {
+		projects = append(projects, t.Project)
+	}
+	if len(t.Groups) > 0 {
+		rows, err := s.pool.Query(ctx, "SELECT slug FROM ctl_projects WHERE group_slug=ANY($1) ORDER BY slug", t.Groups)
+		if err != nil {
+			return p, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var slug string
+			if err = rows.Scan(&slug); err != nil {
+				return p, err
+			}
+			if !slices.Contains(projects, slug) {
+				projects = append(projects, slug)
+			}
+		}
+		if err = rows.Err(); err != nil {
+			return p, err
+		}
+	}
+	return auth.Principal{ID: t.ID, Role: t.Role, Project: t.Project, Projects: projects, Groups: t.Groups, Environments: t.Environments}, nil
 }
 func (s *Store) RevokeToken(ctx context.Context, id, actor string) error {
 	tx, err := s.pool.Begin(ctx)
@@ -59,7 +116,7 @@ func (s *Store) RevokeToken(ctx context.Context, id, actor string) error {
 	}
 	defer tx.Rollback(ctx)
 	var project string
-	if err = tx.QueryRow(ctx, "UPDATE ctl_tokens SET revoked=true WHERE id=$1 RETURNING project", id).Scan(&project); err != nil {
+	if err = tx.QueryRow(ctx, "UPDATE ctl_tokens SET revoked=true WHERE id=$1 RETURNING COALESCE(project,'')", id).Scan(&project); err != nil {
 		return mapped(err)
 	}
 	if err = audit(ctx, tx, actor, "token.revoke", project, "", nil); err != nil {

@@ -46,12 +46,19 @@ type Configuration struct {
 }
 type Project struct {
 	Slug               string    `json:"slug"`
+	Group              string    `json:"group"`
 	Name               string    `json:"name"`
 	Description        string    `json:"description"`
 	Repository         string    `json:"repository"`
 	ImageRepository    string    `json:"image_repository"`
 	DefaultEnvironment string    `json:"default_environment"`
 	CreatedAt          time.Time `json:"created_at"`
+}
+type Group struct {
+	Slug        string    `json:"slug"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 type Revision struct {
 	ID            string        `json:"id"`
@@ -99,6 +106,8 @@ type Token struct {
 	Role         string    `json:"role"`
 	Project      string    `json:"project"`
 	Environments []string  `json:"environments"`
+	Projects     []string  `json:"projects,omitempty"`
+	Groups       []string  `json:"groups,omitempty"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	Revoked      bool      `json:"revoked"`
 	CreatedAt    time.Time `json:"created_at"`

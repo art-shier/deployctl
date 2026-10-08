@@ -675,6 +675,32 @@ tr:last-child td {
   background: #fff;
   box-shadow: 0 24px 100px #132d2733;
 }
+.group-filter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.group-filter select {
+  width: auto;
+  max-width: 100%;
+}
+.scope-options {
+  border: 1px solid var(--border, #e4e8ee);
+  border-radius: 10px;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+.scope-options label.scope-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.scope-options .scope-option input {
+  width: auto;
+}
 .form-stack {
   display: grid;
   gap: 20px;
@@ -928,15 +954,21 @@ tr:last-child td {
   }
   .topbar {
     padding: 0 18px;
-    height: 62px;
+    min-height: 62px;
+    height: auto;
+    flex-wrap: wrap;
     gap: 14px;
   }
   .top-title,
+  .owner-badge,
   .top-divider {
     display: none;
   }
   .topbar nav {
-    margin-left: 8px;
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+    padding-bottom: 12px;
     gap: 22px;
   }
   .logout span {

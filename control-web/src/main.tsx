@@ -29,6 +29,7 @@ import {
   type Receipt,
   type Audit,
   type Defaults,
+  type Group,
 } from "./api";
 import {
   draftRows,
@@ -38,6 +39,9 @@ import {
   type DraftRow,
 } from "./environmentForm";
 import { ImagesView } from "./ImagesView";
+import { GroupsView } from "./ProjectGroups";
+import { tokenCoversProject, tokenScopeLabel } from "./tokenScope";
+import { projectFormPayload } from "./projectForm";
 import "./styles.css";
 
 const date = (value: string) =>
@@ -276,9 +280,21 @@ function App() {
         </a>
         <span className="top-divider" />
         <span className="top-title">部署管理台</span>
+        <span className="badge owner-badge">超级管理员</span>
         <nav aria-label="主导航">
-          <a href="#projects" className={page !== "audit" ? "active" : ""}>
+          <a
+            href="#projects"
+            className={
+              page === "projects" || page.startsWith("project/") ? "active" : ""
+            }
+          >
             项目
+          </a>
+          <a href="#groups" className={page === "groups" ? "active" : ""}>
+            项目组
+          </a>
+          <a href="#tokens" className={page === "tokens" ? "active" : ""}>
+            访问凭据
           </a>
           <a href="#audit" className={page === "audit" ? "active" : ""}>
             审计
@@ -295,7 +311,11 @@ function App() {
       </header>
       <main className="main">
         <ErrorMessage text={error} />
-        {page === "audit" ? (
+        {page === "groups" ? (
+          <GroupsView />
+        ) : page === "tokens" ? (
+          <TokensView />
+        ) : page === "audit" ? (
           <AuditView />
         ) : selected ? (
           <ProjectView slug={selected} navigate={navigate} />
@@ -318,6 +338,7 @@ function ProjectForm({
   done: () => void;
   close: () => void;
 }) {
+  const groups = useData<Group[]>("/groups", []);
   const [value, setValue] = useState({
       slug: project?.slug ?? "",
       name: project?.name ?? "",
@@ -325,6 +346,7 @@ function ProjectForm({
       repository: project?.repository ?? "",
       image_repository: project?.image_repository ?? "",
       default_environment: project?.default_environment ?? "prod",
+      group: project?.group ?? "default",
     }),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -335,7 +357,13 @@ function ProjectForm({
     try {
       await api(
         project ? `/projects/${project.slug}` : "/projects",
-        send(project ? "PATCH" : "POST", value),
+        send(
+          project ? "PATCH" : "POST",
+          projectFormPayload(
+            value,
+            project ? project.group || "default" : undefined,
+          ),
+        ),
       );
       done();
       close();
@@ -399,6 +427,26 @@ function ProjectForm({
         />
       </label>
       <label>
+        所属项目组
+        <select
+          value={value.group}
+          disabled={groups.loading || !!groups.error}
+          onChange={(e) => setValue({ ...value, group: e.target.value })}
+        >
+          {groups.data.map((g) => (
+            <option value={g.slug} key={g.slug}>
+              {g.name} ({g.slug})
+            </option>
+          ))}
+        </select>
+      </label>
+      <ErrorMessage text={groups.error} />
+      {groups.error && (
+        <button type="button" onClick={groups.reload}>
+          重新加载项目组
+        </button>
+      )}
+      <label>
         默认环境
         <input
           required
@@ -415,7 +463,10 @@ function ProjectForm({
         <button type="button" onClick={close}>
           取消
         </button>
-        <button className="primary" disabled={busy}>
+        <button
+          className="primary"
+          disabled={busy || groups.loading || !!groups.error}
+        >
           {busy ? "正在保存…" : project ? "保存项目" : "注册项目"}
         </button>
       </div>
@@ -424,7 +475,9 @@ function ProjectForm({
 }
 function Projects({ navigate }: { navigate: (page: string) => void }) {
   const { data, loading, error, reload } = useData<Project[]>("/projects", []),
-    [create, setCreate] = useState(false);
+    [create, setCreate] = useState(false),
+    [group, setGroup] = useState("");
+  const groups = useData<Group[]>("/groups", []);
   return (
     <>
       <div className="page-heading">
@@ -439,6 +492,22 @@ function Projects({ navigate }: { navigate: (page: string) => void }) {
         </button>
       </div>
       <ErrorMessage text={error} />
+      <label className="group-filter">
+        按项目组筛选
+        <select
+          aria-label="按项目组筛选"
+          value={group}
+          onChange={(e) => setGroup(e.target.value)}
+        >
+          <option value="">全部项目组</option>
+          {groups.data.map((g) => (
+            <option value={g.slug} key={g.slug}>
+              {g.name} ({g.slug})
+            </option>
+          ))}
+        </select>
+      </label>
+      <ErrorMessage text={groups.error} />
       {error && <button onClick={reload}>重新加载</button>}
       {loading ? (
         <Loading />
@@ -457,27 +526,30 @@ function Projects({ navigate }: { navigate: (page: string) => void }) {
             </button>
           </div>
           <div className="project-grid">
-            {data.map((p) => (
-              <button
-                key={p.slug}
-                className="project-card"
-                onClick={() => navigate("project/" + p.slug)}
-              >
-                <div className="project-card-top">
-                  <div className="project-icon">
-                    <FolderGit2 size={23} />
+            {data
+              .filter((p) => !group || (p.group || "default") === group)
+              .map((p) => (
+                <button
+                  key={p.slug}
+                  className="project-card"
+                  onClick={() => navigate("project/" + p.slug)}
+                >
+                  <div className="project-card-top">
+                    <div className="project-icon">
+                      <FolderGit2 size={23} />
+                    </div>
+                    <ArrowUpRight size={18} />
                   </div>
-                  <ArrowUpRight size={18} />
-                </div>
-                <h2>{p.name}</h2>
-                <p className="muted">{p.description || "还没有项目说明"}</p>
-                <div className="project-meta">
-                  <code>{p.slug}</code>
-                  <span className="badge">{p.default_environment}</span>
-                </div>
-                <div className="project-source">{p.image_repository}</div>
-              </button>
-            ))}
+                  <h2>{p.name}</h2>
+                  <p className="muted">{p.description || "还没有项目说明"}</p>
+                  <div className="project-meta">
+                    <code>{p.slug}</code>
+                    <span className="badge">{p.default_environment}</span>
+                    <span className="badge">{p.group || "default"}</span>
+                  </div>
+                  <div className="project-source">{p.image_repository}</div>
+                </button>
+              ))}
           </div>
         </>
       ) : (
@@ -1285,7 +1357,7 @@ function EnvironmentEditor({ slug, env }: { slug: string; env: string }) {
     </>
   );
 }
-function TokensView({ project }: { project: Project }) {
+function TokensView({ project }: { project?: Project }) {
   const { data, loading, error, reload } = useData<Token[]>("/tokens", []),
     [create, setCreate] = useState(false),
     [fresh, setFresh] = useState(""),
@@ -1304,7 +1376,9 @@ function TokensView({ project }: { project: Project }) {
       setErr(message(e));
     }
   };
-  const items = data.filter((t) => t.project === project.slug);
+  const items = project
+    ? data.filter((t) => tokenCoversProject(t, project))
+    : data;
   return (
     <>
       <div className="section-heading">
@@ -1350,6 +1424,7 @@ function TokensView({ project }: { project: Project }) {
                 <th>名称</th>
                 <th>权限</th>
                 <th>环境</th>
+                <th>授权范围</th>
                 <th>到期</th>
                 <th>状态</th>
                 <th />
@@ -1368,6 +1443,7 @@ function TokensView({ project }: { project: Project }) {
                   <td>
                     {t.role === "deployer" ? t.environments.join(", ") : "—"}
                   </td>
+                  <td>{tokenScopeLabel(t)}</td>
                   <td className="muted">{date(t.expires_at)}</td>
                   <td>
                     <span className="badge">
@@ -1418,12 +1494,19 @@ function TokenForm({
   project,
   done,
 }: {
-  project: Project;
+  project?: Project;
   done: (token: string) => void;
 }) {
+  const projectOptions = useData<Project[]>("/projects", []),
+    groupOptions = useData<Group[]>("/groups", []);
+  const [scope, setScope] = useState<"projects" | "groups">("projects"),
+    [selectedProjects, setSelectedProjects] = useState<string[]>(
+      project ? [project.slug] : [],
+    ),
+    [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [name, setName] = useState(""),
     [role, setRole] = useState("deployer"),
-    [envs, setEnvs] = useState(project.default_environment),
+    [envs, setEnvs] = useState(project?.default_environment || "prod"),
     [days, setDays] = useState(90),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -1432,12 +1515,15 @@ function TokenForm({
     setBusy(true);
     setError("");
     try {
+      if (!(scope === "projects" ? selectedProjects : selectedGroups).length)
+        throw new Error("至少选择一个项目或项目组。");
       const value = await api<{ token: string }>(
         "/tokens",
         send("POST", {
           name,
           role,
-          project: project.slug,
+          projects: scope === "projects" ? selectedProjects : [],
+          groups: scope === "groups" ? selectedGroups : [],
           environments:
             role === "deployer"
               ? envs
@@ -1474,6 +1560,73 @@ function TokenForm({
           <option value="publisher">发布 · 推送镜像与发布包</option>
         </select>
       </label>
+      <label>
+        授权范围
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value as "projects" | "groups")}
+        >
+          <option value="projects">指定项目 · 固定范围</option>
+          <option value="groups">项目组 · 包含以后加入的项目</option>
+        </select>
+      </label>
+      <fieldset className="scope-options">
+        <legend>{scope === "projects" ? "选择项目" : "选择项目组"}</legend>
+        {scope === "projects"
+          ? projectOptions.data.map((p) => (
+              <label className="scope-option" key={p.slug}>
+                <input
+                  type="checkbox"
+                  aria-label={`授权项目 ${p.slug}`}
+                  checked={selectedProjects.includes(p.slug)}
+                  onChange={(e) =>
+                    setSelectedProjects(
+                      e.target.checked
+                        ? [...selectedProjects, p.slug]
+                        : selectedProjects.filter((id) => id !== p.slug),
+                    )
+                  }
+                />
+                <span>
+                  {p.name} <code>{p.slug}</code>
+                </span>
+              </label>
+            ))
+          : groupOptions.data.map((g) => (
+              <label className="scope-option" key={g.slug}>
+                <input
+                  type="checkbox"
+                  aria-label={`授权项目组 ${g.slug}`}
+                  checked={selectedGroups.includes(g.slug)}
+                  onChange={(e) =>
+                    setSelectedGroups(
+                      e.target.checked
+                        ? [...selectedGroups, g.slug]
+                        : selectedGroups.filter((id) => id !== g.slug),
+                    )
+                  }
+                />
+                <span>
+                  {g.name} <code>{g.slug}</code>
+                </span>
+              </label>
+            ))}
+      </fieldset>
+      <p className="muted small">
+        项目组凭据包含组内当前和以后加入的项目。项目移出组后，下一次请求重新判断访问范围。
+      </p>
+      <ErrorMessage text={projectOptions.error || groupOptions.error} />
+      {(projectOptions.error || groupOptions.error) && (
+        <button
+          type="button"
+          onClick={() => {
+            projectOptions.reload();
+            groupOptions.reload();
+          }}
+        >
+          重新加载授权范围
+        </button>
+      )}
       {role === "deployer" && (
         <label>
           允许的环境
@@ -1497,7 +1650,16 @@ function TokenForm({
         />
       </label>
       <ErrorMessage text={error} />
-      <button className="primary" disabled={busy}>
+      <button
+        className="primary"
+        disabled={
+          busy ||
+          projectOptions.loading ||
+          groupOptions.loading ||
+          !!projectOptions.error ||
+          !!groupOptions.error
+        }
+      >
         {busy ? "正在创建…" : "创建凭据"}
       </button>
     </form>
