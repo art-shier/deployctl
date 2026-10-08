@@ -109,6 +109,11 @@ set -Eeuo pipefail
             cfg['hooks']={'pre_install':{'script':'pre.sh','refresh_config':True},'post_install':{'script':'post.sh'}}
             package=build_release(cfg,image,'v1.0.0',base/'packages',project_root=source)
             cli('publish',app,'--version','v1.0.0','--package',package,'--channel','stable','--client-config',publisher_config)
+            publisher_client=PlatformClient(Credentials(origin,publisher))
+            recovered=publisher_client.recover_release(app,'v1.0.0',base/'delivery-retry','')
+            assert recovered['image']==image and (base/'delivery-retry'/package.name).read_bytes()==package.read_bytes()
+            # Lost publication response can be retried without rebuilding or reading prod config.
+            cli('publish',app,'--version','v1.0.0','--package',base/'delivery-retry'/package.name,'--channel','stable','--client-config',publisher_config)
             owner.json('PUT',f'/api/v1/projects/{app}/environments/prod',{'expected_revision':1,
                 'runtime_env':[{'key':'TEXT','operation':'set','value':'pinned-managed'}],
                 'install_params':[{'key':k,'operation':'set','value':v} for k,v in {

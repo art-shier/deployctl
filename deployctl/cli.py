@@ -26,6 +26,7 @@ def parser():
     publish.add_argument('--package', required=True)
     publish.add_argument('--channel', choices=['stable'])
     publish.add_argument('--client-config', default='/etc/deployctl/client.json')
+    publish.add_argument('--registry-token-file', help='private short-lived pull verification token for an external private Registry')
     self_update = sub.add_parser('self-update', help='update the installed CLI itself; leaves deployed services unchanged')
     self_update.add_argument('--version', default='latest', help='tool Release tag; default: latest published version')
     self_update.add_argument('--sha256', help='optional independently obtained CLI artifact checksum')
@@ -98,7 +99,9 @@ def main(argv=None):
                 Credentials.save(args.client_config, args.server, token)
                 print('OK: platform credentials saved privately')
             else:
-                release = PlatformClient(Credentials.load(args.client_config)).publish(args.application,args.version,args.package,args.channel)
+                from .platform_credentials import read_registry_token_file
+                proof=read_registry_token_file(args.registry_token_file) if args.registry_token_file else None
+                release = PlatformClient(Credentials.load(args.client_config)).publish(args.application,args.version,args.package,args.channel,proof)
                 print(f"OK: published {args.application}/{release['version']}")
         elif args.command == 'self-update':
             from .self_update import update_tool

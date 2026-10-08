@@ -5,6 +5,18 @@ export interface DraftRow {
   value: string;
   secret: boolean;
   operation: "keep" | "set" | "remove";
+  beforeRemove?: "keep" | "set";
+}
+export function toggleRemoval(rows: DraftRow[], index: number): DraftRow[] {
+  const row = rows[index];
+  if (!row.original) return rows.filter((_, i) => i !== index);
+  return editRow(
+    rows,
+    index,
+    row.operation === "remove"
+      ? { operation: row.beforeRemove ?? "keep", beforeRemove: undefined }
+      : { operation: "remove", beforeRemove: row.operation },
+  );
 }
 export function draftRows(values: MaskedVariable[]): DraftRow[] {
   return values.map((v) => ({

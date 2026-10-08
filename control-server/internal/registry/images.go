@@ -5,13 +5,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/art-shier/deployctl/control-server/internal/auth"
 	"github.com/art-shier/deployctl/control-server/internal/domain"
 )
 
@@ -23,43 +20,19 @@ type Image struct {
 }
 
 func (v Verifier) ListImages(ctx context.Context, allowed string) ([]Image, error) {
+	return v.ListImagesWithToken(ctx, allowed, "")
+}
+func (v Verifier) ListImagesWithToken(ctx context.Context, allowed, proof string) ([]Image, error) {
 	if domain.ValidateImage(allowed+"@sha256:"+strings.Repeat("0", 64)) != nil {
 		return nil, domain.ErrInvalid
 	}
-	host, repository, ok := strings.Cut(allowed, "/")
-	if !ok {
-		return nil, domain.ErrInvalid
+	s, err := v.newSession(allowed, proof)
+	if err != nil {
+		return nil, err
 	}
-	origin := "https://" + host
-	internal := host == v.PublicHost
-	if internal {
-		origin = v.InternalURL
-	}
-	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && !(internal && u.Scheme == "http")) {
-		return nil, domain.ErrInvalid
-	}
-	bearer := ""
-	if internal && v.Signer != nil {
-		bearer, err = v.Signer.Sign(auth.Principal{ID: "control-server", Role: "owner"}, []auth.Access{{Type: "repository", Name: repository, Actions: []string{"pull"}}}, time.Now())
-		if err != nil {
-			return nil, err
-		}
-	}
-	client := v.Client
-	if client == nil {
-		client = &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	}
+	repository := s.repository
 	request := func(method, path string) (*http.Response, error) {
-		req, e := http.NewRequestWithContext(ctx, method, strings.TrimRight(origin, "/")+path, nil)
-		if e != nil {
-			return nil, e
-		}
-		req.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")
-		if bearer != "" {
-			req.Header.Set("Authorization", "Bearer "+bearer)
-		}
-		return client.Do(req)
+		return s.request(ctx, method, path)
 	}
 	res, err := request("GET", "/v2/"+repository+"/tags/list?n=100")
 	if err != nil {

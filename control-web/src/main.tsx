@@ -30,7 +30,13 @@ import {
   type Audit,
   type Defaults,
 } from "./api";
-import { draftRows, changes, editRow, type DraftRow } from "./environmentForm";
+import {
+  draftRows,
+  changes,
+  editRow,
+  toggleRemoval,
+  type DraftRow,
+} from "./environmentForm";
 import "./styles.css";
 
 const date = (value: string) =>
@@ -725,9 +731,43 @@ function ReleasesView({ project }: { project: Project }) {
   );
 }
 function ImagesView({ slug }: { slug: string }) {
-  const { data, loading, error, reload } = useData<
+  const {
+    data: publicImages,
+    loading: publicLoading,
+    error: publicError,
+    reload,
+  } = useData<
     { tag: string; digest: string; media_type: string; versions: string[] }[]
   >(`/projects/${slug}/images`, []);
+  const [proof, setProof] = useState(""),
+    [verified, setVerified] = useState<typeof publicImages | null>(null),
+    [proofError, setProofError] = useState(""),
+    [checking, setChecking] = useState(false);
+  const refresh = async () => {
+    if (!proof) {
+      setVerified(null);
+      setProofError("");
+      reload();
+      return;
+    }
+    setChecking(true);
+    setProofError("");
+    try {
+      setVerified(
+        await api<typeof publicImages>(`/projects/${slug}/images`, {
+          headers: { "X-Registry-Verification-Token": proof },
+        }),
+      );
+    } catch (e) {
+      setProofError(message(e));
+    } finally {
+      setChecking(false);
+      setProof("");
+    }
+  };
+  const data = verified ?? publicImages,
+    loading = checking || (publicLoading && !verified),
+    error = proofError || (!verified ? publicError : "");
   return (
     <section className="image-inventory">
       <div className="section-heading">
@@ -737,11 +777,27 @@ function ImagesView({ slug }: { slug: string }) {
             显示最多 100 个标签；镜像推送后仍需登记发布包，才能安装。
           </p>
         </div>
-        <button onClick={reload}>
+        <button onClick={refresh} disabled={checking}>
           <RefreshCw size={16} />
           刷新镜像
         </button>
       </div>
+      <details className="registry-proof">
+        <summary>外部私有仓库验证</summary>
+        <label>
+          短期 pull Token
+          <input
+            type="password"
+            autoComplete="off"
+            maxLength={12288}
+            value={proof}
+            onChange={(e) => setProof(e.target.value)}
+          />
+        </label>
+        <p className="muted small">
+          只用于本次刷新，不保存。目标服务器使用其已有 Docker 凭据。
+        </p>
+      </details>
       {loading ? (
         <Loading />
       ) : error ? (
@@ -791,6 +847,7 @@ function UploadRelease({ slug, done }: { slug: string; done: () => void }) {
   const [version, setVersion] = useState(""),
     [file, setFile] = useState<File | null>(null),
     [stable, setStable] = useState(true),
+    [proof, setProof] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const submit = async (e: React.FormEvent) => {
@@ -812,12 +869,17 @@ function UploadRelease({ slug, done }: { slug: string; done: () => void }) {
       form.set("version", version);
       form.set("sha256", sum);
       if (stable) form.set("channel", "stable");
-      await api(`/projects/${slug}/releases`, { method: "POST", body: form });
+      await api(`/projects/${slug}/releases`, {
+        method: "POST",
+        body: form,
+        headers: proof ? { "X-Registry-Verification-Token": proof } : undefined,
+      });
       done();
     } catch (e) {
       setError(message(e));
     } finally {
       setBusy(false);
+      setProof("");
     }
   };
   return (
@@ -851,6 +913,22 @@ function UploadRelease({ slug, done }: { slug: string; done: () => void }) {
         />
         发布成功后设为 stable
       </label>
+      <details className="registry-proof">
+        <summary>外部私有仓库验证（可选）</summary>
+        <label>
+          短期 pull Token
+          <input
+            type="password"
+            autoComplete="off"
+            maxLength={12288}
+            value={proof}
+            onChange={(e) => setProof(e.target.value)}
+          />
+        </label>
+        <p className="muted small">
+          只验证本次镜像，不保存或转交安装主机。托管 Registry 无需填写。
+        </p>
+      </details>
       <ErrorMessage text={error} />
       <button className="primary" disabled={busy}>
         {busy ? "正在验证并发布…" : "登记版本"}
@@ -1066,16 +1144,7 @@ function VariableEditor({
                   (row.operation === "remove" ? "恢复 " : "删除 ") +
                   (row.key || "变量")
                 }
-                onClick={() =>
-                  row.original
-                    ? setRows(
-                        editRow(rows, index, {
-                          operation:
-                            row.operation === "remove" ? "keep" : "remove",
-                        }),
-                      )
-                    : setRows(rows.filter((_, i) => i !== index))
-                }
+                onClick={() => setRows(toggleRemoval(rows, index))}
               >
                 {row.operation === "remove" ? (
                   <RefreshCw size={16} />

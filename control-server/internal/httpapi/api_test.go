@@ -89,6 +89,10 @@ func TestProjectSecretRevisionAndPublisherBoundary(t *testing.T) {
 	if w.Code != 201 {
 		t.Fatal("publish failed", w.Code, w.Body.String())
 	}
+	w = call("GET", "/api/v1/projects/notes/releases/v1.0.0", nil, minted.Token)
+	if w.Code != 200 || strings.Contains(w.Body.String(), "private-sentinel") {
+		t.Fatal("publisher cannot recover release metadata", w.Code)
+	}
 	w = call("POST", "/api/v1/projects/notes/resolve", map[string]any{}, owner)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "private-sentinel") || !strings.Contains(w.Body.String(), `"revision":2`) {
 		t.Fatal("resolution failed", w.Code, w.Body.String())

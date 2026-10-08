@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"os"
@@ -11,7 +12,25 @@ import (
 	"github.com/art-shier/deployctl/control-server/internal/artifacts"
 	"github.com/art-shier/deployctl/control-server/internal/auth"
 	"github.com/art-shier/deployctl/control-server/internal/domain"
+	"github.com/art-shier/deployctl/control-server/internal/registry"
 )
+
+type ProofManifestVerifier interface {
+	CheckManifestWithToken(context.Context, string, string, string) error
+}
+
+func (s *Server) getRelease(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	slug := r.PathValue("slug")
+	if err := permitted(p, "release.read", slug, ""); err != nil {
+		return err
+	}
+	result, err := s.store.GetReleaseByVersion(r.Context(), slug, r.PathValue("version"))
+	if err != nil {
+		return err
+	}
+	reply(w, 200, result)
+	return nil
+}
 
 func (s *Server) releases(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	slug := r.PathValue("slug")
@@ -83,7 +102,20 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, p auth.Principa
 	if s.options.Verifier == nil {
 		return domain.ErrInvalid
 	}
-	if err = s.options.Verifier.CheckManifest(r.Context(), pack.Release.Image, project.ImageRepository); err != nil {
+	proof := r.Header.Get("X-Registry-Verification-Token")
+	if registry.ValidateVerificationToken(proof) != nil {
+		return domain.ErrInvalid
+	}
+	if proof != "" {
+		verifier, ok := s.options.Verifier.(ProofManifestVerifier)
+		if !ok {
+			return domain.ErrInvalid
+		}
+		err = verifier.CheckManifestWithToken(r.Context(), pack.Release.Image, project.ImageRepository, proof)
+	} else {
+		err = s.options.Verifier.CheckManifest(r.Context(), pack.Release.Image, project.ImageRepository)
+	}
+	if err != nil {
 		return err
 	}
 	if err = artifacts.PublishFile(s.options.ArtifactsDir, *pack); err != nil {

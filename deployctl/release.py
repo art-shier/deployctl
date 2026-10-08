@@ -97,7 +97,8 @@ def build_release(config, image, version, output, commit='', project_root=None):
     }
     content = {name: text.encode('utf-8') for name, text in content.items()}
     content.update(scripts)
-    with tarfile.open(package, 'w:gz') as archive:
+    # Neither the gzip timestamp nor filename may make a retry change bytes.
+    with package.open('xb') as output_file, gzip.GzipFile(filename='',mode='wb',fileobj=output_file,mtime=0) as compressed, tarfile.open(fileobj=compressed,mode='w:') as archive:
         for name, raw in content.items():
             item = tarfile.TarInfo(name)
             item.size = len(raw)

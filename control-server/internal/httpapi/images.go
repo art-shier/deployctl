@@ -13,6 +13,9 @@ import (
 type ImageLister interface {
 	ListImages(context.Context, string) ([]registry.Image, error)
 }
+type ProofImageLister interface {
+	ListImagesWithToken(context.Context, string, string) ([]registry.Image, error)
+}
 
 func (s *Server) images(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	slug := r.PathValue("slug")
@@ -27,7 +30,20 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request, p auth.Principal
 	if !ok {
 		return domain.ErrInvalid
 	}
-	images, err := inspector.ListImages(r.Context(), project.ImageRepository)
+	proof := r.Header.Get("X-Registry-Verification-Token")
+	if registry.ValidateVerificationToken(proof) != nil {
+		return domain.ErrInvalid
+	}
+	var images []registry.Image
+	if proof != "" {
+		v, ok := inspector.(ProofImageLister)
+		if !ok {
+			return domain.ErrInvalid
+		}
+		images, err = v.ListImagesWithToken(r.Context(), project.ImageRepository, proof)
+	} else {
+		images, err = inspector.ListImages(r.Context(), project.ImageRepository)
+	}
 	if err != nil {
 		return err
 	}

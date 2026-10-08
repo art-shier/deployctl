@@ -14,6 +14,23 @@ from deployctl.runtime_config import merge_runtime_values, merge_install_params
 
 
 class PlatformTests(unittest.TestCase):
+    def test_recover_release_reuses_published_bytes_and_needs_no_environment(self):
+        from deployctl.release import build_release
+        from test_release import CONFIG,IMAGE
+        import hashlib
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            package=build_release(CONFIG,IMAGE,'v1.0.0',root/'original',commit='e'*40)
+            raw=package.read_bytes()
+            record={'id':'a'*32,'project':'project-a','version':'v1.0.0','image':IMAGE,'sha256':hashlib.sha256(raw).hexdigest(),'commit':'e'*40,'status':'published'}
+            client=PlatformClient(Credentials('https://ctl.test','private-test-token'))
+            with patch.object(client,'json',return_value=record),patch.object(client,'request',return_value=raw) as fetch:
+                recovered=client.recover_release('project-a','v1.0.0',root/'recovered','e'*40)
+                self.assertEqual((root/'recovered/project-a-v1.0.0.tar.gz').read_bytes(),raw)
+                self.assertEqual(recovered['image'],IMAGE)
+                self.assertEqual(fetch.call_args.args[:2],('GET','/api/v1/projects/project-a/artifacts/'+'a'*32))
+                with self.assertRaises(ValueError):client.recover_release('project-a','v1.0.0',root/'wrong','f'*40)
+
     def test_origin_and_resolution_boundaries(self):
         for url in ['http://example.org', 'https://token@example.org', 'https://x/a', 'https://x?token=x']:
             with self.assertRaises(ValueError): validate_origin(url)
@@ -46,6 +63,10 @@ class PlatformTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'HTTP 401') as error:
                 PlatformClient(Credentials('https://ctl.test','secret-test-token')).request('GET','/api/v1/me')
             self.assertNotIn('secret-test-token', str(error.exception))
+
+    def test_platform_token_cannot_be_sent_as_external_proof(self):
+        from deployctl.platform_client import validate_registry_token
+        with self.assertRaises(ValueError):validate_registry_token('ctl_'+'e'*43)
 
     def test_remote_precedence_and_local_overrides(self):
         values, overrides = merge_runtime_values({'A':'base'}, {}, {'A':'local'}, {'B':'cli'}, [], 'v1.0.0', {'A':'remote','B':''})

@@ -68,3 +68,15 @@ def read_token_file(path):
             raise ValueError('token file requires current ownership, regular file and permissions 600')
         from .platform_client import validate_token
         return validate_token(handle.read(4097).decode('ascii').strip())
+
+
+def read_registry_token_file(path):
+    path=Path(path).absolute();reject_links(path)
+    flags=os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_NONBLOCK',0)|getattr(os,'O_BINARY',0)
+    with os.fdopen(os.open(path,flags),'rb') as handle:
+        info=os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size>12290 or (os.name!='nt' and (info.st_uid!=os.getuid() or info.st_mode&0o077)):
+            raise ValueError('registry verification file requires current ownership and permissions 600')
+        from .platform_client import validate_registry_token
+        try:return validate_registry_token(handle.read(12291).decode('ascii').strip())
+        except UnicodeError:raise ValueError('invalid external registry verification token') from None

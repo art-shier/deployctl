@@ -17,6 +17,8 @@ ctl rollback <项目> --env <环境>
 
 CI先推送托管或已登记外部镜像，取得真实digest，按现有契约package，再`ctl publish <项目> --version <版本> --package <包> --channel stable`。不提供channel不会推进stable。同版本内容不可覆盖。publisher不可读生产配置；不要把构建参数放进环境配置。
 
+公共外部Registry自动匿名认证。外部私有仓库校验使用`publish --registry-token-file <权限600的短期pull Token文件>`；服务端只验证本次登记仓库，不保存/回显/转交主机。该文件不能使用ctl平台Token或长期账号密码。安装主机沿用自己的Docker凭据。
+
 管理台runtime高于本次env-var，本次管理台安装参数高于set；pre回读后仍用同一固定修订，不能依靠hook绕过最高层。删除远端键下次升级回退到本地值，空值保留；保存管理台配置不会自动重启。每组/最终合并128键、键128字符、值4096字符、总64KiB。
 
 托管Registry使用临时指定仓库bearer，ctl拉取后hook中Docker辅助命令用`--pull never`。不要在隔离hook中重新要求平台Token。快照中`.management.json`保存非秘密来源/资源并参与完整性校验；不要手工修改文件。rollback/restart不取最新管理台配置，缓存镜像可离线回滚，缺少镜像仍需Registry可用。

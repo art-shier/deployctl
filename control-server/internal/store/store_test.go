@@ -94,6 +94,10 @@ func TestPublishIdempotencyAndResolvePinsRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	recovered, err := s.GetReleaseByVersion(ctx, "notes", "v1.0.0")
+	if err != nil || recovered.ID != first.ID {
+		t.Fatal("cannot recover immutable release", err)
+	}
 	again, err := s.PublishRelease(ctx, r, true, "ci")
 	if err != nil || first.ID != again.ID {
 		t.Fatal("not idempotent", err)

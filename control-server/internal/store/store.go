@@ -268,6 +268,10 @@ func scanRelease(row scanner) (domain.Release, error) {
 	r.Status = status
 	return r, nil
 }
+
+func (s *Store) GetReleaseByVersion(ctx context.Context, project, version string) (domain.Release, error) {
+	return scanRelease(s.pool.QueryRow(ctx, "SELECT data,status FROM ctl_releases WHERE project=$1 AND version=$2", project, version))
+}
 func (s *Store) PublishRelease(ctx context.Context, r domain.Release, stable bool, actor string) (domain.Release, error) {
 	checksum := regexp.MustCompile(`^[a-f0-9]{64}$`)
 	if domain.ValidateName(r.Project, 48) != nil || domain.ValidateVersion(r.Version) != nil || domain.ValidateImage(r.Image) != nil || !checksum.MatchString(r.SHA256) || r.Size <= 0 || r.Size > 10*1024*1024 {

@@ -450,6 +450,19 @@ code,
 .image-inventory {
   margin-top: 36px;
 }
+.registry-proof {
+  margin-bottom: 18px;
+  color: #839085;
+  font-size: 12px;
+}
+.registry-proof summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.registry-proof label {
+  max-width: 480px;
+  margin: 12px 0;
+}
 .table-wrap {
   border: 1px solid var(--line);
   border-radius: 10px;

@@ -1,6 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { draftRows, changes, editRow } from "./environmentForm";
+import { draftRows, changes, editRow, toggleRemoval } from "./environmentForm";
 describe("secret draft protocol", () => {
+  it("restores the edited operation after undoing deletion", () => {
+    let rows = draftRows([
+      { key: "TEXT", secret: false, configured: true, value: "old" },
+    ]);
+    rows = editRow(rows, 0, { value: "new", operation: "set" });
+    rows = toggleRemoval(rows, 0);
+    expect(changes(rows)).toEqual([{ key: "TEXT", operation: "remove" }]);
+    rows = toggleRemoval(rows, 0);
+    expect(changes(rows)).toEqual([
+      { key: "TEXT", operation: "set", secret: false, value: "new" },
+    ]);
+  });
   it("preserves secret without sending placeholders", () => {
     const rows = draftRows([
       { key: "PASSWORD", secret: true, configured: true },
