@@ -68,6 +68,20 @@ class PlatformTests(unittest.TestCase):
         from deployctl.platform_client import validate_registry_token
         with self.assertRaises(ValueError):validate_registry_token('ctl_'+'e'*43)
 
+    def test_receipt_retry_does_not_use_another_projects_credential(self):
+        from deployctl.cli import report_receipt
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);spool=root/'receipts';spool.mkdir()
+            other=spool/('a'*32+'.json')
+            other.write_text(json.dumps({'origin':'https://ctl.test','receipt':{'project':'other','environment':'prod'}}))
+            client=Mock(server='https://ctl.test')
+            client.json.return_value={}
+            report_receipt(client,self.resolution(),root,True)
+            self.assertTrue(other.exists(),'other project pending receipt was sent/removed with this identity')
+            self.assertEqual(client.json.call_count,1)
+            self.assertEqual(client.json.call_args.args[1],'/api/v1/projects/notes/receipts')
+
     def test_remote_precedence_and_local_overrides(self):
         values, overrides = merge_runtime_values({'A':'base'}, {}, {'A':'local'}, {'B':'cli'}, [], 'v1.0.0', {'A':'remote','B':''})
         self.assertEqual(values, {'A':'remote','B':'','APP_VERSION':'v1.0.0'})

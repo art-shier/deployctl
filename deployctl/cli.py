@@ -244,6 +244,7 @@ def report_receipt(client, resolution, config_root, success):
             entry=json.loads(item.read_text())
             if entry.get('origin')!=client.server: continue
             r=entry['receipt']
+            if r.get('project')!=resolution['project'] or r.get('environment')!=resolution['environment']:continue
             client.json('POST',f"/api/v1/projects/{r['project']}/receipts",r)
             item.unlink()
     except (ValueError,OSError,RuntimeError):
