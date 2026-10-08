@@ -116,6 +116,7 @@ func TestRealRegistryScopesAndIndex(t *testing.T) {
 		t.Helper()
 		req, _ := http.NewRequest(method, origin+path, bytes.NewReader(raw))
 		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json")
 		if media != "" {
 			req.Header.Set("Content-Type", media)
 		}
