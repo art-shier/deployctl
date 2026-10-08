@@ -52,7 +52,7 @@ func New(s *store.Store, o Options) *Server {
 	m.HandleFunc("POST /api/v1/session", server.login)
 	m.HandleFunc("GET /registry/token", server.registryToken)
 	m.HandleFunc("GET /api/v1/me", server.wrap(func(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-		reply(w, 200, map[string]any{"id": p.ID, "role": p.Role, "project": p.Project, "environments": p.Environments, "schema_version": 1, "minimum_client_version": "1.7.0"})
+		reply(w, 200, map[string]any{"id": p.ID, "role": p.Role, "project": p.Project, "environments": p.Environments, "registry_host": o.RegistryPublicHost, "schema_version": 1, "minimum_client_version": "1.7.0"})
 		return nil
 	}))
 	m.HandleFunc("DELETE /api/v1/session", server.wrap(server.logout))
