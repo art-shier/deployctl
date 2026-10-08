@@ -44,6 +44,9 @@ func main() {
 		log.Fatal("database unavailable")
 	}
 	defer pool.Close()
+	if err = waitUntil(startup, pool.Ping); err != nil {
+		log.Fatal("database did not become ready during startup")
+	}
 	db := store.New(pool, c.Cipher)
 	if err = db.Migrate(startup); err != nil {
 		log.Fatal("database migration failed")
@@ -61,4 +64,22 @@ func main() {
 	shutdown, finish := context.WithTimeout(context.Background(), 15*time.Second)
 	defer finish()
 	server.Shutdown(shutdown)
+}
+
+func waitUntil(ctx context.Context, check func(context.Context) error) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := check(ctx); err == nil {
+			return nil
+		}
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }

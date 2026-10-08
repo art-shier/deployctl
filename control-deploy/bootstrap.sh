@@ -24,5 +24,9 @@ chown 10001:10001 -- "$home/keys" "$home/keys/database.url" "$home/keys/encrypti
 chmod 700 -- "$home/keys" "$home/artifacts"
 compose=(docker compose --project-name ctl-platform --env-file "$home/compose.env" -f "$source_dir/control-deploy/compose.yaml")
 if [[ $profile == database ]];then compose+=(--profile database);fi
-"${compose[@]}" up -d --wait --wait-timeout 120
+if ! "${compose[@]}" up -d --wait --wait-timeout 120;then
+  # API logs contain only service diagnostics; no configuration values/request tokens.
+  "${compose[@]}" logs --no-color --tail 50 api >&2
+  exit 1
+fi
 printf 'ctl platform started. Configure HTTPS proxy for API and Registry. Owner credential: %s/keys/owner.token\n' "$home"
