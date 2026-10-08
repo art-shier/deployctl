@@ -87,6 +87,7 @@ def parser():
         command.add_argument('--root', default=os.environ.get('DEPLOY_ROOT', '/opt/deployments'))
         command.add_argument('--config-root', default=os.environ.get('DEPLOY_CONFIG_ROOT', '/etc/deployctl'))
         if name in ('install', 'upgrade'):
+            command.add_argument('--quiet', action='store_true', help='hide progress; preserve result and errors')
             command.add_argument('--release', help='legacy local archive or HTTPS URL')
             command.add_argument('--version', help='managed release version; default: environment target')
             command.add_argument('--with-platform-config', action='store_true', help='overlay management configuration on an explicit release')
@@ -187,6 +188,9 @@ def main(argv=None):
             if args.env: validate_name(args.env, 'environment', 32)
             manager = Manager(args.root, args.config_root)
             if args.command in ('install', 'upgrade'):
+                from .progress import Progress
+                progress = Progress(enabled=not args.quiet)
+                manager.progress = progress
                 if args.release and args.version: raise ValueError('--release conflicts with --version')
                 if args.with_platform_config and not args.release: raise ValueError('--with-platform-config requires --release')
                 if args.release and not args.env: raise ValueError('legacy --release requires --env or --prod')
@@ -199,7 +203,10 @@ def main(argv=None):
                 with tempfile.TemporaryDirectory(prefix='deployctl-download-') as cache:
                     client, resolution = None, None
                     managed = {}
-                    package = acquire_release(args.release, cache, args.sha256) if args.release else None
+                    package = None
+                    if args.release:
+                        with progress.stage('Loading release package'):
+                            package = acquire_release(args.release, cache, args.sha256, progress=progress)
                     if not args.release or args.with_platform_config:
                         from .platform_credentials import Credentials
                         from .platform_client import PlatformClient
@@ -211,9 +218,12 @@ def main(argv=None):
                             manifest = unpack_release(package, Path(cache)/'inspect')
                             if manifest['application'] != args.application: raise ValueError('release application mismatch')
                             requested_version = manifest['version']
-                        resolution = client.resolve(args.application,args.env,requested_version)
+                        with progress.stage(f'Resolving {args.application} release and configuration'):
+                            resolution = client.resolve(args.application,args.env,requested_version)
                         args.env = resolution['environment']
-                        if package is None: package = client.download_release(resolution,cache)
+                        if package is None:
+                            with progress.stage('Downloading and verifying release package'):
+                                package = client.download_release(resolution,cache,progress=progress)
                         else:
                             import hashlib
                             if manifest['image'] != resolution['release']['image'] or hashlib.sha256(package.read_bytes()).hexdigest()!=resolution['release']['sha256']:
@@ -225,7 +235,10 @@ def main(argv=None):
                                    'release_id':resolution['release']['id'],'revision_id':cfg['id']}}
                     from contextlib import nullcontext
                     registry_context = client.registry_config(resolution['release']['image']) if client else nullcontext(None)
-                    with registry_context as docker_config:
+                    from contextlib import ExitStack
+                    with ExitStack() as stack:
+                        with progress.stage('Preparing Registry authentication'):
+                            docker_config = stack.enter_context(registry_context)
                         manager.driver.docker_config = docker_config
                         try:
                             state = manager.deploy(args.application, args.env, package,
@@ -233,10 +246,14 @@ def main(argv=None):
                                            port=getattr(args, 'port', None), bind=getattr(args, 'bind', None),
                                            runtime_env=runtime_env, unset_env=unset_env, install_params=install_params, **managed)
                         except (ValueError,OSError,RuntimeError):
-                            if client: report_receipt(client,resolution,args.config_root,False)
+                            if client:
+                                with progress.stage('Submitting failure receipt (best effort)'):
+                                    report_receipt(client,resolution,args.config_root,False)
                             raise
                         finally: manager.driver.docker_config = None
-                    if client: report_receipt(client,resolution,args.config_root,True)
+                    if client:
+                        with progress.stage('Submitting deployment receipt (best effort)'):
+                            report_receipt(client,resolution,args.config_root,True)
                 print(f"OK: {args.application}/{args.env} running {state['current']['version']}")
             elif args.command == 'rollback':
                 args.env = local_environment(args.root,args.application,args.env)

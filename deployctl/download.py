@@ -31,13 +31,42 @@ class SafeRedirect(HTTPRedirectHandler):
         return redirected
 
 
-def fetch(request, limit):
+def read_response(response, limit, progress=None):
+    header = response.headers.get('Content-Length')
+    try:
+        total = int(header) if header is not None else None
+    except (ValueError, TypeError):
+        total = None
+    if total is not None and total < 0:
+        total = None
+    if total is not None and total > limit:
+        raise ValueError('download exceeds size limit')
+    if progress:
+        progress.downloaded(0, total)
+    content = bytearray()
+    read = getattr(response, 'read1', response.read)
+    while True:
+        chunk = read(min(65536, limit + 1 - len(content)))
+        if not chunk:
+            break
+        content.extend(chunk)
+        if len(content) > limit:
+            raise ValueError('download exceeds size limit')
+        if total is not None and len(content) > total:
+            raise RuntimeError('download length mismatch')
+        if progress:
+            progress.downloaded(len(content), total)
+    if total is not None and len(content) != total:
+        raise RuntimeError('download incomplete')
+    if progress and total is None:
+        progress.downloaded(len(content), total, force=True)
+    return bytes(content)
+
+
+def fetch(request, limit, progress=None):
     try:
         with build_opener(SafeRedirect()).open(request, timeout=60) as response:
-            data = response.read(limit + 1)
-            if len(data) > limit:
-                raise ValueError('download exceeds size limit')
-            return data
+            return read_response(response, limit, progress)
     except HTTPError as exc:
         raise RuntimeError(f'download HTTP {exc.code}; check asset availability and credentials') from exc
     except (URLError, TimeoutError) as exc:
@@ -76,7 +105,7 @@ def checksum(text):
     return fields[0].lower()
 
 
-def acquire_release(source, cache, expected_sha256=None):
+def acquire_release(source, cache, expected_sha256=None, progress=None):
     cache = Path(cache)
     cache.mkdir(parents=True, exist_ok=True)
     remote = '://' in source
@@ -85,7 +114,8 @@ def acquire_release(source, cache, expected_sha256=None):
         if expected_sha256 is None:
             sidecar = urlunsplit(parsed._replace(path=parsed.path + '.sha256'))
             expected_sha256 = checksum(fetch(resolve_asset(sidecar), 4096).decode('utf-8'))
-        content = fetch(resolve_asset(source), MAX_PACKAGE)
+        request = resolve_asset(source)
+        content = fetch(request, MAX_PACKAGE, progress=progress) if progress is not None else fetch(request, MAX_PACKAGE)
     else:
         path = Path(source).expanduser().resolve()
         if path.stat().st_size > MAX_PACKAGE:

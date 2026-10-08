@@ -22,6 +22,7 @@ from .deployment_state import DeploymentRef, collect_legacy_values, normalize_st
 from .hooks import HookRunner, validate_hook_values
 from .runtime_config import read_raw_env, merge_runtime_values, merge_install_params, validate_values, validate_unset
 from .runtime_snapshot import create_snapshot, load_snapshot, reject_links, verify_snapshot
+from .progress import Progress
 
 
 def project_name(app, environment):
@@ -186,11 +187,12 @@ class DockerDriver:
 
 
 class Manager:
-    def __init__(self, root='/opt/deployments', config_root='/etc/deployctl', driver=None, hook_runner=None):
+    def __init__(self, root='/opt/deployments', config_root='/etc/deployctl', driver=None, hook_runner=None, progress=None):
         self.root = Path(root).resolve()
         self.config_root = Path(config_root).resolve()
         self.driver = driver or DockerDriver()
         self.hook_runner = hook_runner or HookRunner()
+        self.progress = progress if progress is not None else Progress(enabled=False)
 
     def paths(self, app, env):
         validate_name(app)
@@ -383,34 +385,39 @@ class Manager:
                 raise ValueError('application is not installed; use install first')
             if not upgrade and state['current']:
                 raise ValueError('application is already installed; use upgrade')
-            directory, release = self.stage(home, package, app)
-            if params and not release.get('hooks'):
-                raise ValueError('installation parameters require a package declaring hooks')
-            config, secrets = self.configuration(folder)
-            old_snapshot = None
-            if state['current'] and not state['current']['legacy']:
-                _, _, old_snapshot, _ = self.reference_environment(home, folder, state['current'], app)
-            values, overrides = merge_runtime_values(config, secrets,
-                old_snapshot.overrides if old_snapshot else {}, updates, unset, release['version'], remote)
-            refresh_config = release.get('hooks', {}).get('pre_install', {}).get('refresh_config', False)
-            if not refresh_config:
-                self.required_configuration(values, release)
-            if release.get('hooks'):
-                validate_hook_values(values)
-                self.hook_runner.check()
-            default_binding = self.binding(release, port=defaults.get('host_port'), bind=defaults.get('bind_address'))
-            binding = self.binding(release, state['binding'] or default_binding, port, bind)
+            with self.progress.stage('Reading release'):
+                directory, release = self.stage(home, package, app)
+            with self.progress.stage('Validating configuration'):
+                if params and not release.get('hooks'):
+                    raise ValueError('installation parameters require a package declaring hooks')
+                config, secrets = self.configuration(folder)
+                old_snapshot = None
+                if state['current'] and not state['current']['legacy']:
+                    _, _, old_snapshot, _ = self.reference_environment(home, folder, state['current'], app)
+                values, overrides = merge_runtime_values(config, secrets,
+                    old_snapshot.overrides if old_snapshot else {}, updates, unset, release['version'], remote)
+                refresh_config = release.get('hooks', {}).get('pre_install', {}).get('refresh_config', False)
+                if not refresh_config:
+                    self.required_configuration(values, release)
+                if release.get('hooks'):
+                    validate_hook_values(values)
+                    self.hook_runner.check()
+                default_binding = self.binding(release, port=defaults.get('host_port'), bind=defaults.get('bind_address'))
+                binding = self.binding(release, state['binding'] or default_binding, port, bind)
             project = project_name(app, env)
-            self.driver.check()
-            unchanged_before = copy.deepcopy(state)
-            if state['current'] and state['current']['legacy']:
-                state['current'] = self.capture_legacy(home, folder, state['current'], app, project,
-                                                      set(config) | set(secrets))
-                _, _, old_snapshot, _ = self.reference_environment(home, folder, state['current'], app)
-            snapshot = create_snapshot(folder, app, env, release, values, overrides, params, management)
-            candidate = DeploymentRef(release['version'], snapshot.id, snapshot.sha256, binding).as_dict()
-            environment = self.docker_environment(folder, binding, snapshot)
-            self.driver.pull(directory, project, environment)
+            with self.progress.stage('Checking Docker'):
+                self.driver.check()
+            with self.progress.stage('Preparing configuration snapshot'):
+                unchanged_before = copy.deepcopy(state)
+                if state['current'] and state['current']['legacy']:
+                    state['current'] = self.capture_legacy(home, folder, state['current'], app, project,
+                                                          set(config) | set(secrets))
+                    _, _, old_snapshot, _ = self.reference_environment(home, folder, state['current'], app)
+                snapshot = create_snapshot(folder, app, env, release, values, overrides, params, management)
+                candidate = DeploymentRef(release['version'], snapshot.id, snapshot.sha256, binding).as_dict()
+                environment = self.docker_environment(folder, binding, snapshot)
+            with self.progress.stage('Pulling image (Docker command timeout: 600s)'):
+                self.driver.pull(directory, project, environment)
             before = copy.deepcopy(state)
             state['transaction'] = {'from': state['current'], 'to': candidate, 'phase': 'prepared'}
             self.save(home, state, 'deployment_started')
@@ -429,7 +436,8 @@ class Manager:
                 if 'pre_install' in release.get('hooks', {}):
                     phase = 'pre_install'
                     step(phase)
-                    self.hook_runner.run(phase, release['hooks'][phase], directory, snapshot, context)
+                    with self.progress.stage(f'Running pre-install hook (timeout: {release["hooks"][phase]["timeout_seconds"]}s)'):
+                        self.hook_runner.run(phase, release['hooks'][phase], directory, snapshot, context)
                 if refresh_config:
                     phase = 'configuration'
                     step(phase)
@@ -450,34 +458,40 @@ class Manager:
                 phase = 'start'
                 step(phase)
                 replacement_started = True
-                self.driver.up(directory, project, environment)
+                with self.progress.stage('Starting container'):
+                    self.driver.up(directory, project, environment)
                 phase = 'health-check'
                 step(phase)
-                self.driver.probe(directory, project, environment, release, binding)
+                with self.progress.stage('Checking readiness'):
+                    self.driver.probe(directory, project, environment, release, binding)
                 if 'post_install' in release.get('hooks', {}):
                     phase = 'post_install'
                     step(phase)
-                    self.hook_runner.run(phase, release['hooks'][phase], directory, snapshot, context)
+                    with self.progress.stage(f'Running post-install hook (timeout: {release["hooks"][phase]["timeout_seconds"]}s)'):
+                        self.hook_runner.run(phase, release['hooks'][phase], directory, snapshot, context)
                 phase = 'final-health-check'
                 step(phase)
-                self.driver.probe(directory, project, environment, release, binding)
+                with self.progress.stage('Final readiness check'):
+                    self.driver.probe(directory, project, environment, release, binding)
                 verify_snapshot(snapshot)
             except Exception as original:
                 reason = str(original)
                 try:
-                    self.capture_failure(home, directory, project, environment, release, phase, reason)
+                    with self.progress.stage('Collecting failure diagnostics'):
+                        self.capture_failure(home, directory, project, environment, release, phase, reason)
                 except Exception:
                     reason += ' (diagnostic snapshot could not be written)'
                 try:
-                    if replacement_started:
-                        if before['current']:
-                            old_dir, old_release, _, old_env = self.reference_environment(home, folder, before['current'], app)
-                            self.driver.up(old_dir, project, old_env)
-                            self.driver.probe(old_dir, project, old_env, old_release, before['current']['binding'])
-                        else:
-                            self.driver.down(directory, project, environment)
-                    restored = before if replacement_started else unchanged_before
-                    self.save(home, restored, 'deployment_failed_old_restored' if before['current'] else 'install_failed_candidate_stopped')
+                    with self.progress.stage('Recovering previous deployment'):
+                        if replacement_started:
+                            if before['current']:
+                                old_dir, old_release, _, old_env = self.reference_environment(home, folder, before['current'], app)
+                                self.driver.up(old_dir, project, old_env)
+                                self.driver.probe(old_dir, project, old_env, old_release, before['current']['binding'])
+                            else:
+                                self.driver.down(directory, project, environment)
+                        restored = before if replacement_started else unchanged_before
+                        self.save(home, restored, 'deployment_failed_old_restored' if before['current'] else 'install_failed_candidate_stopped')
                 except Exception as recovery:
                     # The already persisted transaction remains authoritative if writing diagnostics also fails.
                     try:
@@ -492,7 +506,8 @@ class Manager:
                              and old_snapshot.overrides == snapshot.overrides and before['binding'] == binding)
             unchanged = unchanged and old_snapshot.install_params == snapshot.install_params and old_snapshot.management == snapshot.management
             state = promote_state(before, candidate, preserve_previous=unchanged)
-            self.save(home, state, 'deployment_succeeded')
+            with self.progress.stage('Saving deployment state'):
+                self.save(home, state, 'deployment_succeeded')
             return state
 
     def rollback(self, app, env):

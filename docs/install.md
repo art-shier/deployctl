@@ -2,28 +2,28 @@
 
 当前平台仓库 `art-shier/deployctl` 为公开仓库，安装器和已发布资产支持匿名下载。CLI是内置依赖的Python zipapp，安装要求Linux/Bash、Python>=3.10，不需要服务器pip安装。安装CLI不会安装Docker、修改防火墙或启动业务服务。
 
-## 普通用户安装CLI1.8.3
+## 普通用户安装CLI1.8.4
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.8.3/install.sh \
-  | bash -s -- --user --version v1.8.3
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.8.4/install.sh \
+  | bash -s -- --user --version v1.8.4
 export PATH="$HOME/.local/bin:$PATH"
 ctl login
 ```
 
-默认登录配置为当前用户的 `~/.ctl/client.json`，目录和文件权限自动设置，无需sudo或手动chmod。用户安装更新使用 `ctl self-update --version v1.8.3`，保持原身份。登录凭据与系统部署权限独立；需要root运行部署时，以root身份登录使用root的配置。
+CLI>=1.8.3默认登录配置为当前用户的 `~/.ctl/client.json`，目录和文件权限自动设置，无需sudo或手动chmod。用户安装更新使用 `ctl self-update --version v1.8.4`，保持原身份。登录凭据与系统部署权限独立；需要root运行部署时，以root身份登录使用root的配置。
 
-## 系统安装CLI1.8.3
+## 系统安装CLI1.8.4
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.8.3/install.sh \
-  | sudo bash -s -- --version v1.8.3
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.8.4/install.sh \
+  | sudo bash -s -- --version v1.8.4
 ctl --version
 ```
 
-系统安装到/usr/local/bin；已有安装器管理的命令使用sudo ctl self-update --version v1.8.3。用户安装沿用原目录和身份。安装后可执行ctl server install --release <服务端包URL>；这与ctl login（默认https://ctl.shier.art，可用ctl config set server <管理API地址>修改）的Token登录分开。
+系统安装到/usr/local/bin；已有安装器管理的命令使用sudo ctl self-update --version v1.8.4。用户安装沿用原目录和身份。安装后可执行ctl server install --release <服务端包URL>；这与ctl login（默认https://ctl.shier.art，可用ctl config set server <管理API地址>修改）的Token登录分开。
 
 ## 已登录GitHub CLI：一键安装最新版
 
