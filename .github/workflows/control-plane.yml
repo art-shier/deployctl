@@ -34,6 +34,7 @@ jobs:
         working-directory: control-server
         env:
           CTL_TEST_DATABASE_URL: postgres://postgres:fixture-only@127.0.0.1:5432/postgres?sslmode=disable
+          CTL_TEST_REGISTRY: '1'
         run: |
           go test -race ./...
           go vet ./...

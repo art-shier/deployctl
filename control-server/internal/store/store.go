@@ -31,6 +31,7 @@ type Resolved struct {
 }
 
 func New(pool *pgxpool.Pool, cipher *secrets.Cipher) *Store { return &Store{pool, cipher} }
+func (s *Store) Ping(ctx context.Context) error             { return s.pool.Ping(ctx) }
 func (s *Store) Migrate(ctx context.Context) error          { _, err := s.pool.Exec(ctx, schema); return err }
 func mapped(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
