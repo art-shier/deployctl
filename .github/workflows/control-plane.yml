@@ -1,0 +1,39 @@
+name: Control plane verification
+on:
+  push:
+    branches: ['**']
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: control-plane-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  server:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: fixture-only
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U postgres'
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-server/go.mod
+          cache-dependency-path: control-server/go.sum
+      - name: Real PostgreSQL transactions, crypto and permissions
+        working-directory: control-server
+        env:
+          CTL_TEST_DATABASE_URL: postgres://postgres:fixture-only@127.0.0.1:5432/postgres?sslmode=disable
+        run: |
+          go test -race ./...
+          go vet ./...
