@@ -8,3 +8,8 @@ build/
 secrets.env
 *.pem
 *.key
+node_modules/
+*.tsbuildinfo
+test-results/
+playwright-report/
+control-deploy/local/

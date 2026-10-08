@@ -38,3 +38,41 @@ jobs:
         run: |
           go test -race ./...
           go vet ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: control-web/package-lock.json
+      - name: Build and test management UI
+        working-directory: control-web
+        run: |
+          npm ci
+          npm test
+          npm run build
+          npx playwright install --with-deps chromium
+      - name: Browser against real API
+        env:
+          CTL_DATABASE_URL: postgres://postgres:fixture-only@127.0.0.1:5432/postgres?sslmode=disable
+          CTL_PUBLIC_ORIGIN: http://127.0.0.1:8080
+          CTL_WEB_DIR: ${{ github.workspace }}/control-web/dist
+          CTL_KEYS_DIR: ${{ runner.temp }}/ctl-browser-keys
+          CTL_ARTIFACTS_DIR: ${{ runner.temp }}/ctl-browser-artifacts
+        run: |
+          cd control-server
+          go build -o "$RUNNER_TEMP/ctl-server" ./cmd/ctl-server
+          "$RUNNER_TEMP/ctl-server" init --keys-dir "$CTL_KEYS_DIR"
+          "$RUNNER_TEMP/ctl-server" > "$RUNNER_TEMP/ctl-server.log" 2>&1 &
+          API_PID=$!
+          trap 'kill "$API_PID" || true' EXIT
+          for i in $(seq 1 50); do
+            if curl --fail --silent http://127.0.0.1:8080/api/v1/health/ready >/dev/null; then break; fi
+            sleep .2
+          done
+          export CTL_OWNER_TOKEN="$(cat "$CTL_KEYS_DIR/owner.token")"
+          cd ../control-web
+          npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: control-web-browser-evidence
+          path: control-web/test-results/*.png
