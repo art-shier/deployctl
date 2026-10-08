@@ -28,6 +28,10 @@ team_deployctl-<version>-py3-none-any.whl + .sha256
 SHA256SUMS
 ```
 
+CLI1.7.0还发布 `ctl-platform-v1.7.0.tar.gz` 及 `.sha256`。平台发布任务同时复用真实管理服务验证，构建linux/amd64与linux/arm64 API/管理台镜像到GHCR，并以实际index digest生成服务端包。GHCR镜像须公开；新package默认可见性受GitHub设置影响，匿名pull失败时流程在创建Release前停止，管理员需将对应package设为public后重跑。
+
+服务端包包含固定四个成员及成员摘要，不包含数据库密码/实例密钥。Linux Runner从真实草稿Release下载该包，用实际已安装的ctl执行server install/upgrade、检查就绪，再公开Release。公开后清除GitHub凭据验证CLI安装、自更新及服务端包URL/相邻SHA256下载。业务install契约保持不变；server install不要求平台登录。
+
 构建产物同时作为Actions artifact保留14天。先创建草稿Release，在Linux Runner通过草稿ID读取真实私有资产，验证两个命令的版本，并测试GitHub API获取的一键安装脚本入口。全部通过后才发布正式Release，再检查正式标签下载路径。失败的草稿保留用于诊断，不会成为最新版。Release不覆盖已有版本；失败后排查草稿或发布新版本，不移动已有标签。
 
 CLI>=1.3.0的发布流程同时验证草稿中的self-update，以及正式发布后按PATH调用`ctl self-update`解析latest、更新原目录并核对两个入口版本。安装器和self-update共用deployctl/bootstrap.py；生成install.sh时嵌入同一标准库实现，不依赖服务器pip。

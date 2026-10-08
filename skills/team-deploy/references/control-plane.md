@@ -1,6 +1,6 @@
 # 管理服务模式（CLI>=1.7.0）
 
-随附1.7.0尚未发布；目标服务器先检查版本，不用不存在的版本标签安装。管理服务API和Registry单独引导，平台Compose脚本位于源码`control-deploy/bootstrap.sh`；详细运维在源码`docs/control-plane.md`。
+目标服务器先检查CLI>=1.7.0。管理服务支持 `sudo ctl server install --release <真实ctl-platform发布包URL>`，无需clone或先登录；相邻.sha256自动验证，包固定镜像digest。默认origin为https://ctl.shier.art，Registry host为ctl.shier.art。升级使用server upgrade；失败保留pending，修复后重试同包。平台数据/密钥留在/opt/ctl-platform，HTTPS由现有代理配置。引导不提供数据库自动回滚。详见平台仓库docs/control-plane.md。
 
 已注册项目与授权环境可以：
 

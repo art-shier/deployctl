@@ -1,16 +1,41 @@
 # ctl 管理服务与平台模式
 
-本分支实现 CLI **1.7.0**、管理服务 **0.1.0**，尚未创建发布标签。已发布的 ctl 1.5.0 不支持平台命令；升级到本分支构建的 CLI 后使用。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
+本版本包含 CLI **1.7.0**、管理服务 **0.1.0**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
 
 平台包含 Go API / React 管理台、Distribution Registry、标准发布包目录和 PostgreSQL。单组织自托管；网页管理配置与版本，部署由目标服务器上的 ctl 执行。安装记录是客户端上报的历史结果。
 
 ## 引导管理服务
 
-要求 Linux、root、Docker Engine、Docker Compose >=2.30、Python >=3.10、Git。先获取经过审核的源码，在仓库根目录运行：
+要求 Linux、root、Docker Engine、Docker Compose >=2.30、Python >=3.10。公开Release安装无需Git、源码或平台登录；第一次登录凭据在服务启动时生成。
+
+```bash
+set -o pipefail
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.7.0/install.sh \
+  | sudo bash -s -- --version v1.7.0
+
+RELEASE_URL='https://github.com/art-shier/deployctl/releases/download/v1.7.0/ctl-platform-v1.7.0.tar.gz'
+sudo ctl server install --release "$RELEASE_URL"
+```
+
+已由安装器管理的CLI可以用 `sudo ctl self-update --version v1.7.0` 更新原目录；用户目录安装时用原用户和原命令路径。`server install`与普通业务 `install` 独立，管理API、Registry和可选PostgreSQL由固定Compose启动。
+
+工具自动下载相邻 `.sha256` 并校验，可用 `--sha256 <独立取得的摘要>` 显式指定。包只含引导脚本、配置生成器、Compose及清单，清单固定真实镜像digest和成员SHA256；不含密码。CLI限定成员/大小、不直接tar解压、使用私有目录、拒绝路径链接和被修改的缓存。同一实例同时只允许一个安装或升级。
+
+默认API origin为 `https://ctl.shier.art`，Registry host为 `ctl.shier.art`，实例目录 `/opt/ctl-platform`。首次可传 `--origin`、`--registry-host`、`--api-port`、`--registry-port`、`--home`、`--database-url-file`；已有实例目标不会自动变更。默认启动独立PostgreSQL；外部数据库使用私有URL文件。
+
+升级管理服务先按下文备份，再执行：
+
+```bash
+sudo ctl server upgrade --release "$NEW_VERIFIED_RELEASE_URL"
+```
+
+同版本同包可重复upgrade；install拒绝已有实例，源码引导过的实例使用upgrade接入。退出失败时保留 `server-state.json` 的pending记录，修复原因后用原命令/原发布包重试，不能换包绕过pending。引导保留密钥和数据，不提供数据库/平台镜像的自动事务回滚；失败不能报告为已升级成功。
+
+仍支持从经过审核的源码构建（另需Git），在仓库根目录运行：
 
 ```bash
 sudo bash control-deploy/bootstrap.sh \
-  --origin https://ctl.shier.art --registry-host registry.shier.art
+  --origin https://ctl.shier.art --registry-host ctl.shier.art
 ```
 
 脚本构建 API/管理台镜像，初始化 `/opt/ctl-platform`，生成独立的配置加密密钥、Registry 签名私钥/验证证书、owner 凭据和数据库连接，启动 API、Registry 和独立 PostgreSQL。重复运行保留密钥、密码和数据。使用预构建镜像可加 `--image <经过验证的镜像地址>`；不会下载未发布的假定版本。
@@ -19,13 +44,15 @@ sudo bash control-deploy/bootstrap.sh \
 
 实例配置在私有 `instance.json` / `compose.env`；重复引导拒绝自动更换已记录的域名、端口或数据库目标。如需变更，停止平台、备份，明确编辑这些实例设置后重启。业务项目的域名与 ctl 的域名独立。
 
+共用 `ctl.shier.art` 时，将整个域名（包含 `/v2/`）反向代理到127.0.0.1:8080即可，额外Registry入口不必公开。DNS解析到主机，HTTPS证书由现有代理配置。发行流水线验证镜像可匿名按digest拉取后才发布服务端包。
+
 ### 使用外部 PostgreSQL
 
 预先创建专用数据库和账号，把完整连接 URL 写入 root 所有、权限600的文件（用户名、密码含特殊字符时进行 URL 编码）。然后首次引导：
 
 ```bash
 sudo bash control-deploy/bootstrap.sh --database-url-file /root/ctl-database.url \
-  --origin https://ctl.shier.art --registry-host registry.shier.art
+  --origin https://ctl.shier.art --registry-host ctl.shier.art
 ```
 
 不启动平台内置 PostgreSQL。URL复制到私有 `keys/database.url`，API通过文件读取。已有实例不会自动切换数据库。外部连接建议使用 `sslmode=verify-full` 和可信证书链；按数据库管理员提供的连接要求配置。
@@ -34,7 +61,7 @@ sudo bash control-deploy/bootstrap.sh --database-url-file /root/ctl-database.url
 
 管理员从 `/opt/ctl-platform/keys/owner.token` 获取首次登录凭据，打开自己的 ctl HTTPS 地址登录管理台。owner token 不进入浏览器存储；登录建立8小时的 HttpOnly 会话。请单独保存 owner 凭据。
 
-1. 注册项目 `notes`，默认环境 `prod`，托管镜像路径默认为 `registry.shier.art/notes`。可以填写登记的外部镜像仓库。
+1. 注册项目 `notes`，默认环境 `prod`，托管镜像路径默认为 `ctl.shier.art/notes`。可以填写登记的外部镜像仓库。
 2. 环境配置中添加业务变量（例如秘密 `DATABASE_URL`）、安装参数（例如 `ADMIN_EMAIL`）和部署默认端口/内存/CPU。
 3. 创建 `publisher` 凭据交给该项目 CI；创建仅允许 `notes/prod` 的 `deployer` 凭据交给生产安装主机。明文只展示一次。publisher 无法获取生产配置。
 4. 保存配置创建新修订；发生冲突时保留草稿，重新加载对比。秘密可保持、替换（包括空字符串）或删除。
@@ -84,7 +111,7 @@ Notes重跑发布时先用publisher读取同版本元数据并下载已登记的
 
 ## 目标服务器安装
 
-先安装本分支构建的 ctl，并确认 `ctl --version` 为1.7.0。安装器及 self-update 只获取真实已发布版本；本分支尚未发布时，不可把示例版本当成可下载 Release。
+先安装支持平台模式的ctl，并确认 `ctl --version` 为1.7.0或兼容新版。安装器及self-update只获取真实已发布版本。
 
 ```bash
 sudo ctl login --server https://ctl.shier.art

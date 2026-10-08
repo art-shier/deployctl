@@ -37,7 +37,7 @@ def prepare(home, image, origin=None, registry_host=None, api_port=None, registr
     if os.name!='nt' and (info.st_uid!=os.getuid() or info.st_mode&0o077): raise ValueError('instance directory requires current ownership and permissions 700')
     path=home/'instance.json';plain(path)
     previous=json.loads(secret_file(path)) if path.exists() else None
-    cfg=previous or {'origin':origin or 'https://ctl.shier.art','registry_host':registry_host or 'registry.shier.art',
+    cfg=previous or {'origin':origin or 'https://ctl.shier.art','registry_host':registry_host or 'ctl.shier.art',
                      'api_port':api_port or 8080,'registry_port':registry_port or 5000,'external_database':bool(database_url_file),
                      'postgres_password':secrets.token_hex(24),'registry_secret':secrets.token_hex(32)}
     for key,value in [('origin',origin),('registry_host',registry_host),('api_port',api_port),('registry_port',registry_port)]:

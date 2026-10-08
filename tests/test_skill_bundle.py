@@ -68,6 +68,13 @@ class SkillBundleTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('--version', result.stdout)
 
+    def test_skill_cli_can_install_server_without_external_dependencies(self):
+        result = subprocess.run([sys.executable, '-I', '-S', str(SKILL / 'assets/deployctl.pyz'),
+                                 'server', 'install', '--help'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--release', result.stdout)
+        self.assertIn('--registry-host', result.stdout)
+
     def test_skill_cli_keeps_failures_nonzero(self):
         result = subprocess.run([sys.executable, '-I', '-S', str(SKILL / 'assets/deployctl.pyz'),
                                  'validate', str(SKILL / 'nonexistent.yaml')],

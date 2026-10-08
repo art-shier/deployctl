@@ -4,7 +4,7 @@
 
 平台仓库：[art-shier/deployctl](https://github.com/art-shier/deployctl) · [版本与安装资产](https://github.com/art-shier/deployctl/releases) · [构建流水线](https://github.com/art-shier/deployctl/actions)
 
-本分支新增**管理服务与管理台（待发布0.1.0）及CLI1.7.0平台模式**：注册项目、托管镜像/发布包、管理环境和访问凭据；服务器登录后可直接 `ctl install notes --prod`。原 `--release` 安装方式保留。平台引导、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)。新版本尚未创建标签，当前已发布CLI不能直接使用这些新命令。
+本版本新增**管理服务与管理台0.1.0及CLI1.7.0平台模式**：注册项目、托管镜像/发布包、管理环境和访问凭据；服务器登录后可直接 `ctl install notes --prod`。管理服务支持 `ctl server install --release <服务端发布包URL>`，无需clone源码。原业务 `--release` 安装方式保留。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)。
 
 支持单个无状态 HTTP 服务、Docker Compose、私有 GitHub Release 下载、升级失败恢复、人工回滚和状态/日志查询。单机更新可能短暂中断；数据库迁移、多机滚动发布、HTTPS 入口和持久化存储需另行配置。
 
@@ -14,15 +14,15 @@
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.5.0/install.sh \
-  | bash -s -- --user --version v1.5.0
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.7.0/install.sh \
+  | bash -s -- --user --version v1.7.0
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```
 
 安装器下载 CLI、检查 SHA256 和版本，安装 `ctl` 与 `deployctl` 到 `~/.local/bin`。CLI 内置依赖，无需服务器 pip 安装。再次执行可升级本安装器管理的命令；已有其他同名工具会保留并报告冲突。
 
-安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.5.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
+安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.7.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
 
 要求 Python >=3.10；服务部署另需 Docker Engine、Docker Compose >=2.30。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
 
