@@ -31,7 +31,7 @@ def parser():
     login = sub.add_parser('login', help='save private platform credentials')
     login.add_argument('--server', help='override saved server for this login; default: saved server or https://ctl.shier.art')
     login.add_argument('--token-file', help='private file containing a scoped token; otherwise prompt')
-    login.add_argument('--client-config', default='/etc/deployctl/client.json')
+    login.add_argument('--client-config', help='private client configuration; default: ~/.ctl/client.json')
     config = sub.add_parser('config', help='view or change the default management server')
     config_commands = config.add_subparsers(dest='config_command', required=True)
     for name in ('get', 'set'):
@@ -39,16 +39,16 @@ def parser():
         setting.add_argument('key', choices=['server'])
         if name == 'set':
             setting.add_argument('value', help='HTTPS origin or hostname; hostname defaults to HTTPS')
-        setting.add_argument('--client-config', default='/etc/deployctl/client.json')
+        setting.add_argument('--client-config', help='private client configuration; default: ~/.ctl/client.json')
     for name,help_text in [('whoami','show the current platform role and project/group scope'),('projects','list projects accessible to the current login')]:
         discovery=sub.add_parser(name,help=help_text)
-        discovery.add_argument('--client-config',default='/etc/deployctl/client.json')
+        discovery.add_argument('--client-config',help='private client configuration; default: ~/.ctl/client.json')
     publish = sub.add_parser('publish', help='publish a standard package to the platform')
     publish.add_argument('application')
     publish.add_argument('--version', required=True)
     publish.add_argument('--package', required=True)
     publish.add_argument('--channel', choices=['stable'])
-    publish.add_argument('--client-config', default='/etc/deployctl/client.json')
+    publish.add_argument('--client-config', help='private client configuration; default: ~/.ctl/client.json')
     publish.add_argument('--registry-token-file', help='private short-lived pull verification token for an external private Registry')
     self_update = sub.add_parser('self-update', help='update the installed CLI itself; leaves deployed services unchanged')
     self_update.add_argument('--version', default='latest', help='tool Release tag; default: latest published version')
@@ -90,7 +90,7 @@ def parser():
             command.add_argument('--release', help='legacy local archive or HTTPS URL')
             command.add_argument('--version', help='managed release version; default: environment target')
             command.add_argument('--with-platform-config', action='store_true', help='overlay management configuration on an explicit release')
-            command.add_argument('--client-config', default='/etc/deployctl/client.json')
+            command.add_argument('--client-config', help='private client configuration; default: ~/.ctl/client.json')
             command.add_argument('--sha256', help='expected checksum; default: adjacent .sha256')
             command.add_argument('--env-var', action='append', default=[], metavar='KEY=value',
                                  help='runtime value persisted after success; repeat for each key')
