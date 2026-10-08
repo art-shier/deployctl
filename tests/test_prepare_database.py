@@ -135,4 +135,16 @@ class DatabasePreparationTests(unittest.TestCase):
             with self.assertRaises(ValueError): database.prepare(snapshot(),state,home)
             self.assertEqual(state.read_text(),'retain-state')
 
+    @unittest.skipIf(os.name == 'nt', 'Linux ancestor permissions')
+    def test_mutable_parent_created_during_output_setup_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output=Path(temp)/'new/database.url';original=Path.mkdir
+            def mkdir(path,*args,**kwargs):
+                result=original(path,*args,**kwargs)
+                if path==output.parent:path.chmod(0o777)
+                return result
+            with patch.object(Path,'mkdir',mkdir),self.assertRaises(ValueError):
+                database.prepare(snapshot(),output,Path(temp)/'platform')
+            self.assertFalse(output.exists())
+
 if __name__=='__main__': unittest.main()
