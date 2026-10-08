@@ -19,7 +19,7 @@ sudo ctl server install --release "$RELEASE_URL"
 
 已由安装器管理的CLI可以用 `sudo ctl self-update --version v1.7.0` 更新原目录；用户目录安装时用原用户和原命令路径。`server install`与普通业务 `install` 独立，管理API、Registry和可选PostgreSQL由固定Compose启动。
 
-工具自动下载相邻 `.sha256` 并校验，可用 `--sha256 <独立取得的摘要>` 显式指定。包只含引导脚本、配置生成器、Compose及清单，清单固定真实镜像digest和成员SHA256；不含密码。CLI限定成员/大小、不直接tar解压、使用私有目录、拒绝路径链接和被修改的缓存。同一实例同时只允许一个安装或升级。
+工具自动下载相邻 `.sha256` 并校验，可用 `--sha256 <独立取得的摘要>` 显式指定。包只含引导脚本、配置生成器、Compose及清单，清单固定真实镜像digest和成员SHA256；不含密码。CLI限定成员/大小、不直接tar解压、使用私有目录、检查父目录可信权限，拒绝路径链接和被修改的缓存。操作获取主机级及实例级锁；超时/中断先停止引导进程组再释放锁。固定Compose项目ctl-platform每个Docker主机只支持一个实例，--home用于指定其存储位置，发现其他home的已有实例时拒绝替换。
 
 默认API origin为 `https://ctl.shier.art`，Registry host为 `ctl.shier.art`，实例目录 `/opt/ctl-platform`。首次可传 `--origin`、`--registry-host`、`--api-port`、`--registry-port`、`--home`、`--database-url-file`；已有实例目标不会自动变更。默认启动独立PostgreSQL；外部数据库使用私有URL文件。
 

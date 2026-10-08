@@ -1,6 +1,7 @@
 """Checked release delivery for the independent, multi-service ctl platform."""
 
 import gzip
+from contextlib import contextmanager
 import hashlib
 import io
 import json
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 
 from . import __version__
 from .contract import DIGEST_IMAGE, load_yaml, version
@@ -22,6 +24,8 @@ FILES = {'server-release.json', 'control-deploy/bootstrap.sh',
          'control-deploy/bootstrap_config.py', 'control-deploy/compose.yaml'}
 MAX_EXPANDED = 512 * 1024
 MAX_MEMBER = 256 * 1024
+BOOTSTRAP_TIMEOUT = 1800
+LOCK_HOME = Path('/run/ctl-platform-cli')
 
 
 def validate_manifest(value):
@@ -87,7 +91,10 @@ def read_bundle(package):
 
 def require_runtime():
     if sys.platform != 'linux' or os.geteuid() != 0: raise ValueError('ctl server install/upgrade requires Linux root')
-    result = subprocess.run(['docker', 'compose', 'version', '--short'], capture_output=True, text=True, timeout=30)
+    try:
+        result = subprocess.run(['docker', 'compose', 'version', '--short'], capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError('Docker Compose version check timed out') from exc
     match = re.fullmatch(r'v?(\d+)\.(\d+)\.\d+(?:[-+].*)?', result.stdout.strip())
     if result.returncode or not match or tuple(map(int, match.groups())) < (2, 30):
         raise ValueError('Docker Engine and Docker Compose >=2.30 are required')
@@ -102,6 +109,55 @@ def private(path, directory=False):
     return path
 
 
+def trusted_parents(path):
+    reject_links(path)
+    for parent in Path(path).parents:
+        if not parent.exists(): continue
+        info = parent.stat()
+        sticky_root = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.geteuid())
+                or (info.st_mode & 0o022 and not sticky_root)):
+            raise ValueError('ctl server ancestors must be trusted and not writable by other users')
+
+
+@contextmanager
+def locked(path):
+    import fcntl
+    trusted_parents(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    trusted_parents(path); private(path.parent, True); reject_links(path)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        private(path)
+        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc: raise ValueError('another ctl server operation is running') from exc
+        yield
+    finally: os.close(fd)
+
+
+def inspect_docker(argv):
+    try:
+        return subprocess.run(['docker', *argv], capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError('Docker inspection timed out; check daemon availability') from exc
+
+
+def check_project(home):
+    result = inspect_docker(['ps', '-aq', '--filter', 'label=com.docker.compose.project=ctl-platform'])
+    if result.returncode: raise RuntimeError('cannot inspect the existing ctl platform')
+    expected = {'/run/ctl-keys': home/'keys', '/cert/signing.crt': home/'keys/signing.crt',
+        '/var/lib/ctl/artifacts': home/'artifacts', '/var/lib/registry': home/'registry',
+        '/var/lib/postgresql/data': home/'database'}
+    for identifier in result.stdout.split():
+        if not re.fullmatch('[a-f0-9]{12,64}', identifier): raise ValueError('invalid Docker container identifier')
+        inspected = inspect_docker(['inspect', '--format', '{{json .Mounts}}', identifier])
+        if inspected.returncode: raise RuntimeError('cannot inspect ctl platform instance mounts')
+        mounts = json.loads(inspected.stdout)
+        bindings = [mount for mount in mounts if mount.get('Destination') in expected]
+        if not bindings or any(mount.get('Source') != str(expected[mount['Destination']]) for mount in bindings):
+            raise ValueError('another ctl-platform instance uses a different home on this Docker host')
+
+
 def write_state(path, value):
     reject_links(path)
     fd, temporary = tempfile.mkstemp(prefix='.server-state-', dir=path.parent)
@@ -114,28 +170,46 @@ def write_state(path, value):
 
 
 def run_bootstrap(bundle, home, image, options):
-    argv = ['bash', str(bundle/'control-deploy/bootstrap.sh'), '--home', str(home), '--image', image]
+    check_project(home)
+    if threading.current_thread() is not threading.main_thread(): raise RuntimeError('server bootstrap requires the main thread')
+    import signal
+    from .hooks import cleanup_group
+    argv = ['/bin/bash', '--noprofile', '--norc', str(bundle/'control-deploy/bootstrap.sh'), '--home', str(home), '--image', image]
     for name, value in options.items():
         if value is not None: argv += ['--'+name.replace('_', '-'), str(value)]
+    process, terminating, cleaning = None, False, False
+    def interrupt(signum, frame):
+        nonlocal terminating
+        terminating = True
+        if process is not None and not cleaning: raise KeyboardInterrupt()
+    signals = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+    previous = {s: signal.getsignal(s) for s in signals}
+    environment = {k: v for k, v in os.environ.items() if k not in ('BASH_ENV', 'ENV', 'SHELLOPTS', 'BASHOPTS', 'GH_TOKEN', 'GITHUB_TOKEN')}
     try:
-        result = subprocess.run(argv, timeout=1800)
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError('server bootstrap timed out; inspect containers and retry the same release') from exc
-    if result.returncode:
+        for s in signals: signal.signal(s, interrupt)
+        process = subprocess.Popen(argv, env=environment, start_new_session=True)
+        if terminating: raise KeyboardInterrupt()
+        try: process.wait(timeout=BOOTSTRAP_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError('server bootstrap timed out; inspect containers and retry the same release') from exc
+    finally:
+        cleaning = True
+        try:
+            if process is not None: cleanup_group(process)
+        finally:
+            for s, handler in previous.items(): signal.signal(s, handler)
+    if terminating: raise KeyboardInterrupt()
+    if process.returncode:
         raise RuntimeError('server bootstrap failed; inspect diagnostics and retry the same release')
 
 
 def deploy_server(source, home='/opt/ctl-platform', expected_sha256=None, upgrade=False, **options):
     require_runtime()
-    import fcntl
-    home = Path(home).expanduser().absolute(); reject_links(home)
-    home.mkdir(parents=True, exist_ok=True, mode=0o700); private(home, True)
-    lock = home/'.server.lock'; reject_links(lock)
-    fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    try:
-        private(lock)
-        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc: raise ValueError('another ctl server operation is running') from exc
+    home = Path(home).expanduser().absolute(); trusted_parents(home)
+    if '..' in home.parts or any(c in str(home) for c in '\n\r$# \\'):
+        raise ValueError('instance directory must be a plain absolute path without parent traversal')
+    home.mkdir(parents=True, exist_ok=True, mode=0o700); trusted_parents(home); private(home, True)
+    with locked(LOCK_HOME/'operation.lock'), locked(home/'.server.lock'):
         with tempfile.TemporaryDirectory(prefix='ctl-server-download-') as cache:
             package = acquire_release(str(source), cache, expected_sha256)
             manifest, content = read_bundle(package)
@@ -177,4 +251,3 @@ def deploy_server(source, home='/opt/ctl-platform', expected_sha256=None, upgrad
             run_bootstrap(bundle, home, manifest['image'], options)
             state['current'] = descriptor; state['pending'] = None; write_state(state_path, state)
             return state
-    finally: os.close(fd)
