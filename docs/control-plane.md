@@ -48,6 +48,46 @@ sudo bash control-deploy/bootstrap.sh \
 
 ### 使用外部 PostgreSQL
 
+#### 从 ConfigHub 准备 ctl 专用连接
+
+可以复用 ConfigHub `shier/prod` 管理的 PostgreSQL 实例。独立库为 `ctl`，专用账号为 `ctl_app`；不使用 Notes 的账号，也不把共享管理员账号写入 ctl 配置。ConfigHub 中配置：
+
+| 键 | 用途 |
+|---|---|
+| `db_address`、`db_port` | 复用已有实例地址，无需重复配置 |
+| `ctl_db_username`、`ctl_db_password` | ctl 专用账号与密码，必填 |
+| `ctl_db_name` | 数据库名，默认 `ctl` |
+| `ctl_db_sslmode` | 默认 `require`，也支持 `verify-ca` / `verify-full` |
+| `ctl_db_address`、`ctl_db_port` | 可选，覆盖共享实例地址 |
+
+先由数据库管理员创建独立数据库/账号，授予该库建表和读写权限。服务端启动自动执行可重复的建表迁移。安装脚本不创建远程数据库、不使用共享管理员密码，也不把密码放入命令行。服务器需要安装 ConfigHub CLI；使用仅有 `shier/prod` 读取权限、root 所有且权限600的 Token 文件。
+
+从仓库中经过审核的版本获取 `control-deploy/prepare_database.py`，运行：
+
+```bash
+sudo python3 /root/prepare_database.py --project shier --env prod \
+  --token-file /root/confighub.token
+
+sudo ctl server install \
+  --release https://github.com/art-shier/deployctl/releases/download/v1.7.0/ctl-platform-v1.7.0.tar.gz \
+  --database-url-file /etc/deployctl/ctl-database.url --api-port 8084
+```
+
+脚本调用 ConfigHub CLI export，在私有文件 `/etc/deployctl/ctl-database.url` 中生成连接URL，用户名/密码中的特殊字符按URL编码，不输出配置内容。已有root身份的CLI配置时可省略 `--token-file`。独立库需要预先存在；正常服务启动读取实例内的连接文件，平台运行期间不依赖 ConfigHub 在线。
+
+如果 **首次安装因镜像下载失败**，旧实例已生成内置数据库配置，可显式执行：
+
+```bash
+sudo python3 /root/prepare_database.py --project shier --env prod \
+  --token-file /root/confighub.token --repair-initial-install
+```
+
+恢复只允许当前版本为空、存在pending记录、没有平台容器且本地数据库目录为空的首次失败安装。保留实例域名、8084等端口、密钥、镜像目录以及原发布包/pending校验值，仅更新数据库连接及外部数据库标志；随后以原Release URL重试上面的install命令。不会删除state.json，不要求改用新Release。成功安装过或本地数据库有数据时拒绝自动切换，需要先迁移数据。脚本与ctl安装共享操作锁，准备完成后再执行安装。
+
+使用外部数据库时 **不启动、不下载 `postgres` 镜像**。Registry仍使用 `registry:2.8.3` 组件镜像，Docker Hub网络问题需另行解决。
+
+#### 手动提供连接文件
+
 预先创建专用数据库和账号，把完整连接 URL 写入 root 所有、权限600的文件（用户名、密码含特殊字符时进行 URL 编码）。然后首次引导：
 
 ```bash
