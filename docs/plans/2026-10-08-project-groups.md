@@ -17,7 +17,7 @@ User intent: log in once to deploy an authorized collection of projects. All pre
 2. [x] Scoped credentials and authorization. Tests: legacy isolation, multi-project scope, empty/unknown/duplicate scopes, group membership additions/moves, forbidden environments/actions, expiry/revocation, Registry pull/push scope and API parity.
 3. [x] Groups/token management UI and CLI discovery. Tests: actual group/project/token interactions, multi-project credential usage, no secret persistence, retained existing workflows; CLI identity/project list never prints raw token.
 4. [x] Documentation and full verification: Go test/race/vet with disposable PostgreSQL, Web tests/build/browser checks, relevant Python CLI regressions. Independent review completed and findings corrected. No production migration or release is performed by this task.
-5. [ ] Commit and push the reviewed branch; create a reviewable draft PR.
+5. [x] Commit and push the reviewed branch; create a reviewable draft PR: https://github.com/art-shier/deployctl/pull/4 . Production remains unchanged.
 
 ## Decisions
 
