@@ -64,6 +64,7 @@ func New(s *store.Store, o Options) *Server {
 	m.HandleFunc("GET /api/v1/projects/{slug}/environments/{env}", server.wrap(server.environment))
 	m.HandleFunc("PUT /api/v1/projects/{slug}/environments/{env}", server.wrap(server.saveEnvironment))
 	m.HandleFunc("GET /api/v1/projects/{slug}/releases", server.wrap(server.releases))
+	m.HandleFunc("GET /api/v1/projects/{slug}/images", server.wrap(server.images))
 	m.HandleFunc("POST /api/v1/projects/{slug}/releases", server.wrap(server.publish))
 	m.HandleFunc("POST /api/v1/projects/{slug}/releases/{version}/retire", server.wrap(server.retire))
 	m.HandleFunc("POST /api/v1/projects/{slug}/resolve", server.wrap(server.resolve))

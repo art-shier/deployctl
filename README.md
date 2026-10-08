@@ -4,16 +4,18 @@
 
 平台仓库：[art-shier/deployctl](https://github.com/art-shier/deployctl) · [版本与安装资产](https://github.com/art-shier/deployctl/releases) · [构建流水线](https://github.com/art-shier/deployctl/actions)
 
+本分支新增**管理服务与管理台（待发布0.1.0）及CLI1.7.0平台模式**：注册项目、托管镜像/发布包、管理环境和访问凭据；服务器登录后可直接 `ctl install notes --prod`。原 `--release` 安装方式保留。平台引导、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)。新版本尚未创建标签，当前已发布CLI不能直接使用这些新命令。
+
 支持单个无状态 HTTP 服务、Docker Compose、私有 GitHub Release 下载、升级失败恢复、人工回滚和状态/日志查询。单机更新可能短暂中断；数据库迁移、多机滚动发布、HTTPS 入口和持久化存储需另行配置。
 
 ## 一键安装 ctl
 
-仓库目前是私有的。先通过 `gh auth login --hostname github.com` 登录有仓库读取权限的账户，然后在 Linux/Bash 中运行：
+公开仓库可直接在 Linux/Bash 中安装已发布版本：
 
 ```bash
 set -o pipefail
-gh api --hostname github.com 'repos/art-shier/deployctl/contents/install.sh?ref=v1.5.0' \
-  -H 'Accept: application/vnd.github.raw+json' | bash -s -- --user --version v1.5.0
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.5.0/install.sh \
+  | bash -s -- --user --version v1.5.0
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```

@@ -5,9 +5,11 @@ description: "Use when onboarding a repository to team-deploy's GitHub Actions a
 
 # Team Deploy
 
-使用已有 Team Deploy 工具和契约完成工作。随附CLI为待发布的v1.6.0，兼容发布包协议v1/v2；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
+使用已有 Team Deploy 工具和契约完成工作。随附CLI为待发布的v1.7.0，兼容发布包协议v1/v2并支持管理服务；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
 
 ## 选择任务
+
+- 注册到ctl管理服务、托管镜像/配置、login/publish或无`--release`安装：读取 [管理服务模式](references/control-plane.md)，先确认目标CLI>=1.7.0和真实服务地址。
 
 - 项目接入或生成发布包：读取 [项目接入](references/onboarding.md)，新接入优先使用deployctl init，已有配置按需合并。
 - 项目构建脚本需要参数、配置build.args或工作流覆盖：读取 [构建参数](references/build-args.md)。init保持基础配置，项目后续自行填写。

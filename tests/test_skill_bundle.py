@@ -10,6 +10,16 @@ SKILL = ROOT / 'skills' / 'team-deploy'
 
 
 class SkillBundleTests(unittest.TestCase):
+    def test_bundled_managed_commands_and_version(self):
+        from deployctl import __version__
+        artifact=SKILL/'assets/deployctl.pyz'
+        result=subprocess.run([sys.executable,'-I','-S',str(artifact),'--version'],capture_output=True,text=True)
+        self.assertEqual(result.stdout.strip(),__version__)
+        for action,flag in [('login','--server'),('publish','--channel'),('install','--prod'),('install','--with-platform-config'),('upgrade','--port')]:
+            result=subprocess.run([sys.executable,'-I','-S',str(artifact),action,'--help'],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn(flag,result.stdout)
+
     def test_bundled_runtime_flags_and_hook_protocol_without_site_packages(self):
         import json
         import tarfile

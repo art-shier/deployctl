@@ -159,6 +159,10 @@ func TestRealRegistryScopesAndIndex(t *testing.T) {
 		t.Fatal("index push", status)
 	}
 	verifier := registry.Verifier{InternalURL: origin, PublicHost: host, Signer: signer}
+	images, err := verifier.ListImages(ctx, host+"/notes")
+	if err != nil || len(images) != 2 {
+		t.Fatal("real registry image inventory", images, err)
+	}
 	if err = verifier.CheckManifest(ctx, host+"/notes@"+headers.Get("Docker-Content-Digest"), host+"/notes"); err != nil {
 		t.Fatal("index verification", err)
 	}

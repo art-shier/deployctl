@@ -86,3 +86,14 @@ jobs:
         run: |
           python -m pip install PyYAML==6.0.3
           python tests/control_plane_integration.py
+      - name: Build and repeat actual platform bootstrap
+        run: |
+          docker build -f control-deploy/Dockerfile -t ctl-platform-ci .
+          sudo bash control-deploy/bootstrap.sh --home /opt/ctl-ci-platform --image ctl-platform-ci \
+            --origin http://127.0.0.1:8091 --registry-host 127.0.0.1:5091 --api-port 8091 --registry-port 5091
+          KEY_SUM=$(sudo sha256sum /opt/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)
+          sudo bash control-deploy/bootstrap.sh --home /opt/ctl-ci-platform --image ctl-platform-ci
+          test "$KEY_SUM" = "$(sudo sha256sum /opt/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
+          curl --fail --silent http://127.0.0.1:8091/api/v1/health/ready >/dev/null
+          sudo docker compose --project-name ctl-platform --env-file /opt/ctl-ci-platform/compose.env \
+            -f control-deploy/compose.yaml --profile database down
