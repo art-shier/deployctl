@@ -82,7 +82,8 @@ def main():
             Credentials.save(publisher_config,origin,publisher)
             token_file=base/'deployer.token';token_file.write_text(deployer);token_file.chmod(0o600)
             cli=lambda *args,**kw:run(sys.executable,'-m','deployctl',*args,**kw)
-            cli('login','--server',origin,'--token-file',token_file,'--client-config',deployer_config)
+            cli('config','set','server',origin,'--client-config',deployer_config)
+            cli('login','--token-file',token_file,'--client-config',deployer_config)
             assert json.loads(cli('whoami','--client-config',deployer_config).stdout)['groups']==['fixture-apps']
             assert {p['slug'] for p in json.loads(cli('projects','--client-config',deployer_config).stdout)}=={app,other}
             docker_config=base/'publisher-docker';docker_config.mkdir(mode=0o700)

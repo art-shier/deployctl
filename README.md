@@ -4,11 +4,13 @@
 
 平台仓库：[art-shier/deployctl](https://github.com/art-shier/deployctl) · [版本与安装资产](https://github.com/art-shier/deployctl/releases) · [构建流水线](https://github.com/art-shier/deployctl/actions)
 
-本版本包含**管理服务与管理台0.2.1及CLI1.8.1**：注册项目、托管镜像/发布包、管理环境和访问凭据；服务器登录后可直接 `ctl install notes --prod`。管理服务支持 `ctl server install --release <服务端发布包URL>`，无需clone源码。原业务 `--release` 安装方式保留。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)。
+本版本包含**管理服务与管理台0.2.1及CLI1.8.2**：注册项目、托管镜像/发布包、管理环境和访问凭据；服务器登录后可直接 `ctl install notes --prod`。管理服务支持 `ctl server install --release <服务端发布包URL>`，无需clone源码。原业务 `--release` 安装方式保留。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)。
 
 v1.8.1完善**项目组工作台与组授权**：登录先进入项目组，点组查看项目列表，在组内注册、加入或移出项目，并直接管理该组的发布/部署凭据。新凭据只授权项目组，项目详情不再提供凭据入口。旧 Token 保留原项目权限，owner 为全局超级管理员。CLI 提供 `whoami` / `projects`。详见 [项目组和共享部署凭据](docs/control-plane.md#项目组和共享部署凭据v181)。
 
 支持单个无状态 HTTP 服务、Docker Compose、私有 GitHub Release 下载、升级失败恢复、人工回滚和状态/日志查询。单机更新可能短暂中断；数据库迁移、多机滚动发布、HTTPS 入口和持久化存储需另行配置。
+
+v1.8.2简化登录：`sudo ctl login` 默认连接 `https://ctl.shier.art`。可用 `sudo ctl config set server <地址>` 修改默认服务，`sudo ctl config get server` 查看当前地址；切换服务后重新登录。管理服务无需为此升级。
 
 ## 一键安装 ctl
 
@@ -16,15 +18,15 @@ v1.8.1完善**项目组工作台与组授权**：登录先进入项目组，点�
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.8.1/install.sh \
-  | bash -s -- --user --version v1.8.1
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.8.2/install.sh \
+  | bash -s -- --user --version v1.8.2
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```
 
 安装器下载 CLI、检查 SHA256 和版本，安装 `ctl` 与 `deployctl` 到 `~/.local/bin`。CLI 内置依赖，无需服务器 pip 安装。再次执行可升级本安装器管理的命令；已有其他同名工具会保留并报告冲突。
 
-安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.8.1`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
+安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.8.2`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
 
 要求 Python >=3.10；服务部署另需 Docker Engine、Docker Compose >=2.30。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
 
@@ -69,6 +71,8 @@ ctl rollback project-a --env production
 | 命令 | 用途 |
 |---|---|
 | `init` | 生成项目接入 YAML |
+| `config get/set server` | 查看或修改默认管理服务地址（CLI>=1.8.2） |
+| `login` | 输入Token登录默认管理服务 |
 | `self-update` | 更新当前安装的部署工具自身（CLI>=1.3.0） |
 | `validate` / `package` | 校验部署描述 / 生成标准发布包 |
 | `install` / `upgrade` / `rollback` | 首次部署 / 更新 / 回滚 |
