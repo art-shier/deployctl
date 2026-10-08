@@ -97,6 +97,8 @@ def atomic(path, raw, key=False):
 def prepare(snapshot, output, home, repair=False, project='shier', environment='prod'):
     url=database_url(snapshot,project,environment)
     output,home=trusted(output),trusted(home)
+    if output==home or home in output.parents:
+        raise ValueError('Connection output must be outside the platform instance directory')
     if output.exists(): restricted(output)
     path=trusted(home/'instance.json')
     cfg=None

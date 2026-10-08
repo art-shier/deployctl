@@ -127,4 +127,12 @@ class DatabasePreparationTests(unittest.TestCase):
             with self.assertRaises(ValueError): database.prepare(snapshot(),destination,Path(temp)/'platform')
             self.assertEqual(destination.read_text(),'retain')
 
+    @unittest.skipIf(os.name == 'nt', 'Linux instance-file protection')
+    def test_output_cannot_overwrite_instance_state_or_keys(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home=Path(temp)/'platform';home.mkdir(mode=0o700)
+            state=home/'server-state.json';state.write_text('retain-state');state.chmod(0o600)
+            with self.assertRaises(ValueError): database.prepare(snapshot(),state,home)
+            self.assertEqual(state.read_text(),'retain-state')
+
 if __name__=='__main__': unittest.main()
