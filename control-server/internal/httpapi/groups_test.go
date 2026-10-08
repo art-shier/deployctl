@@ -82,6 +82,24 @@ func TestGroupAPIAndSharedDeploymentCredential(t *testing.T) {
 	if w = call("POST", "/api/v1/groups", map[string]any{"slug": "escape", "name": "Escape"}, minted.Token); w.Code != 403 {
 		t.Fatal("group mutation allowed", w.Code)
 	}
+	for _, scope := range []map[string]any{{"project": "notes"}, {"projects": []string{"notes"}}, {"groups": []string{"apps"}, "project": "notes"}} {
+		scope["name"], scope["role"] = "removed-project-scope", "publisher"
+		if w = call("POST", "/api/v1/tokens", scope, ownerToken); w.Code != 400 {
+			t.Fatal("project credential creation accepted", w.Code)
+		}
+	}
+	if w = call("PATCH", "/api/v1/projects/notes/group", map[string]any{"expected_group": "apps", "group": "default"}, minted.Token); w.Code != 403 {
+		t.Fatal("deployer moved membership", w.Code)
+	}
+	if w = call("PATCH", "/api/v1/projects/config/group", map[string]any{"expected_group": "apps", "group": "default"}, ownerToken); w.Code != 200 {
+		t.Fatal("owner move failed", w.Code)
+	}
+	if w = call("GET", "/api/v1/projects/config", nil, minted.Token); w.Code != 403 {
+		t.Fatal("removed project still authorized", w.Code)
+	}
+	if w = call("PATCH", "/api/v1/projects/config/group", map[string]any{"expected_group": "apps", "group": "apps"}, ownerToken); w.Code != 409 {
+		t.Fatal("stale move accepted", w.Code)
+	}
 	if w = call("DELETE", "/api/v1/groups/default", nil, ownerToken); w.Code < 400 {
 		t.Fatal("default deleted")
 	}

@@ -13,7 +13,7 @@ ctl rollback <项目> --env <环境>
 
 交互或私有`--token-file`读取凭据；不要把Token传到命令行、URL、应用容器或hooks。默认`/etc/deployctl/client.json`（目录700、文件600、当前身份所有）；可用`--client-config`指定私有文件。sudo登录和部署使用同一身份。生产主机使用限定项目/项目组与环境的deployer；CI用限定项目/项目组的publisher。owner仅用于管理。
 
-服务端v1.8.0支持项目组，旧项目自动归入`default`，旧Token仍只授权原项目。一个Token可覆盖多个项目或项目组，一次login即可部署授权范围内的项目；组授权随当前成员变化，显式项目授权不随移组变化。CLI>=1.8.0提供`ctl whoami`与`ctl projects`查看身份及可访问项目，不显示Token。旧CLI1.7仍可使用共享凭据执行安装。
+服务端v1.8.1提供项目组详情与组内授权，旧项目自动归入`default`，旧Token仍只授权原项目。新Token只授权一个或多个项目组，一次login即可部署授权范围内的项目；组授权随当前成员变化，旧项目Token只保留兼容，仍不随移组变化。CLI>=1.8.0提供`ctl whoami`与`ctl projects`查看身份及可访问项目，不显示Token。旧CLI1.7仍可使用共享凭据执行安装。
 
 未指定环境时managed install/upgrade取项目默认。`--prod`是`--env prod`，不能与其他环境冲突。版本默认取环境目标，不等于latest。status/rollback等本地操作省略环境，仅在主机唯一已安装环境时允许。
 
@@ -28,3 +28,5 @@ CI先推送托管或已登记外部镜像，取得真实digest，按现有契约
 显式`--release`默认走旧方式，无需平台登录，环境必填。`--with-platform-config`需要显式包与平台登记版本一致；`--release`与`--version`冲突。不要为替换镜像改写已受检包，登记新版本。
 
 结果上报失败不代表服务安装失败，待补报结果在私有配置目录的`receipts/`。报告实际状态和事务结果，不能把安装记录当作实时在线监控。具体部署/发布授权沿用用户范围；不修改生产服务的密钥或数据库。
+
+管理台默认进入项目组，点击组查看组内项目；组授权页可固定当前组创建发布/部署凭据，项目页不提供凭据。POST /tokens 必须传 groups，拒绝 project/projects 授权。组成员调整支持 expected_group 并发检查，冲突重新加载；不要绕过管理API直接改数据库。

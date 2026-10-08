@@ -54,7 +54,7 @@ func TestProjectSecretRevisionAndPublisherBoundary(t *testing.T) {
 	if w = call("PUT", "/api/v1/projects/notes/environments/prod", patch, owner); w.Code != 409 {
 		t.Fatal("stale write accepted", w.Code)
 	}
-	w = call("POST", "/api/v1/tokens", map[string]any{"name": "ci", "role": "publisher", "project": "notes"}, owner)
+	w = call("POST", "/api/v1/tokens", map[string]any{"name": "ci", "role": "publisher", "groups": []string{"default"}}, owner)
 	var minted struct {
 		Token string `json:"token"`
 	}
