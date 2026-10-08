@@ -13,7 +13,7 @@ func TestImageDeletionSerializesWithPublicationAcrossSharedRepository(t *testing
 	s := fixture(t)
 	ctx := context.Background()
 	repository := "registry.test/shared"
-	for _, slug := range []string{"notes", "other"} {
+	for _, slug := range []string{"shared-a", "other"} {
 		if _, err := s.CreateProject(ctx, domain.Project{Slug: slug, Name: slug, ImageRepository: repository, DefaultEnvironment: "prod"}, "owner"); err != nil {
 			t.Fatal(err)
 		}
@@ -34,7 +34,7 @@ func TestImageDeletionSerializesWithPublicationAcrossSharedRepository(t *testing
 	operated := make(chan []string, 1)
 	deleted := make(chan error, 1)
 	go func() {
-		deleted <- s.ManageImages(ctx, "notes", "owner", "image.delete", func(_ domain.Project, roots []string) error { operated <- roots; return domain.ErrConflict })
+		deleted <- s.ManageImages(ctx, "shared-a", "owner", "image.delete", func(_ domain.Project, roots []string) error { operated <- roots; return domain.ErrConflict })
 	}()
 	select {
 	case <-operated:
@@ -56,7 +56,7 @@ func TestImageDeletionSerializesWithPublicationAcrossSharedRepository(t *testing
 	if err := s.RetireRelease(ctx, "other", release.Version, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ManageImages(ctx, "notes", "owner", "image.test", func(_ domain.Project, roots []string) error {
+	if err := s.ManageImages(ctx, "shared-a", "owner", "image.test", func(_ domain.Project, roots []string) error {
 		if len(roots) != 1 {
 			t.Fatal("retired rollback image lost protection")
 		}

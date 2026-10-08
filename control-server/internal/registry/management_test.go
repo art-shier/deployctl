@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -141,4 +142,18 @@ func TestDockerSaveLayerSourcesRejectsForeignURLs(t *testing.T) {
 	if _, err := ReadDockerArchive(writeArchive(t, files)); err == nil {
 		t.Fatal("foreign source can escape managed registry")
 	}
+}
+
+func TestMixedCompressedAndRawArchiveIsRejectedInsteadOfDoubleCompressing(t *testing.T) {
+ files:=archiveFiles();raw:=[]byte("first raw layer");second:=[]byte("second raw layer");var buf bytes.Buffer;zw:=gzip.NewWriter(&buf);zw.Write(second);zw.Close()
+ a:=sha256.Sum256(raw);b:=sha256.Sum256(second)
+ files["manifest.json"]=`[{"Config":"config.json","Layers":["raw.tar","compressed.tar.gz"]}]`
+ files["config.json"]=`{"architecture":"amd64","os":"linux","rootfs":{"type":"layers","diff_ids":["sha256:`+hex.EncodeToString(a[:])+`","sha256:`+hex.EncodeToString(b[:])+`"]}}`
+ files["raw.tar"]=string(raw);files["compressed.tar.gz"]=buf.String()
+ if _,err:=ReadDockerArchive(writeArchive(t,files));err==nil {t.Fatal("mixed archive would be incorrectly re-encoded by SDK")}
+ // Uniform gzip remains supported, and SDK-produced layer content must agree.
+ files=archiveFiles();files["manifest.json"]=`[{"Config":"config.json","Layers":["compressed.tar.gz"]}]`
+ files["config.json"]=`{"architecture":"amd64","os":"linux","rootfs":{"type":"layers","diff_ids":["sha256:`+hex.EncodeToString(b[:])+`"]}}`;files["compressed.tar.gz"]=buf.String()
+ image,err:=ReadDockerArchive(writeArchive(t,files));if err!=nil {t.Fatal(err)};layers,err:=image.Layers();if err!=nil {t.Fatal(err)}
+ input,err:=layers[0].Uncompressed();if err!=nil {t.Fatal(err)};decoded,err:=io.ReadAll(input);input.Close();if err!=nil || !bytes.Equal(decoded,second) {t.Fatal("SDK layer content differs from declared DiffID")}
 }
