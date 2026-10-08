@@ -78,7 +78,7 @@ ctl publish notes --version "$PROJECT_VERSION" --package "dist/notes-${PROJECT_V
 
 外部私有仓库发布时，提供仅用于这次服务端校验的短期repository/pull Bearer，例如`ctl publish ... --registry-token-file /私有路径/pull-token`。文件须当前身份所有、权限600。服务端只向项目登记的镜像仓库发送此证明，拒绝重定向，不保存、回显或转交安装主机；管理台登记/刷新镜像也可输入一次性验证Token。托管Registry无需此参数。外部Token从该仓库的认证服务获取；不能把ctl平台Token或长期用户名/密码当成验证Token。安装主机继续使用它已有的Docker凭据。
 
-Notes 流水线支持仓库变量 `CTL_SERVER_URL`、`CTL_REGISTRY_HOST` 和秘密 `CTL_PUBLISH_TOKEN`，启用后推送托管仓库并发布到ctl，同时保留 GitHub Release 包入口。未设置两个变量时保持 GHCR 原方式。项目自己的流水线负责业务测试，引用审核过的实际平台 SHA。
+Notes 流水线默认使用管理服务 `https://ctl.shier.art` 和镜像仓库 `ctl.shier.art`。仓库变量 `CTL_SERVER_URL`、`CTL_REGISTRY_HOST` 可分别覆盖，未配置或为空时各自使用默认值；秘密 `CTL_PUBLISH_TOKEN` 必填。默认推送托管仓库并发布到ctl，同时保留 GitHub Release 包入口。清空地址变量不再切换至GHCR，旧版本发布包仍可按原方式安装。地址必须与ctl实例及项目登记的镜像仓库一致；连接/鉴权失败不自动切换。项目自己的流水线负责业务测试，引用审核过的实际平台 SHA。
 
 Notes重跑发布时先用publisher读取同版本元数据并下载已登记的原始包。源码commit必须一致；已有ctl版本跳过镜像重建、重新推送和stable变更。GitHub阶段验证已有同名资产的字节，只补上传缺失资产；发现不同内容直接拒绝。包采用固定gzip时间/文件名，同输入产生相同字节，不放宽版本不可变规则。
 
