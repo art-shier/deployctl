@@ -5,7 +5,7 @@ description: "Use when onboarding a repository to team-deploy's GitHub Actions a
 
 # Team Deploy
 
-使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.8.2，兼容发布包协议v1/v2并支持管理服务与多项目/项目组凭据；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
+使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.8.3，兼容发布包协议v1/v2并支持管理服务与多项目/项目组凭据；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
 
 ## 选择任务
 

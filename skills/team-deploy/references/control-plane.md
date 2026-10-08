@@ -11,7 +11,7 @@ ctl upgrade <项目> --env <环境> --version <已发布版本> --port <主机�
 ctl rollback <项目> --env <环境>
 ```
 
-CLI>=1.8.2默认管理地址为`https://ctl.shier.art`，已有自定义配置继续沿用。`ctl config get server`查看，`ctl config set server <HTTPS地址或域名>`修改；修改到不同服务清除旧登录，随后执行`ctl login`。所有命令使用同一身份及`--client-config`；旧`login --server`仅保留兼容。交互或私有`--token-file`读取凭据；不要把Token传到命令行、URL、应用容器或hooks。默认`/etc/deployctl/client.json`（目录700、文件600、当前身份所有）；可用`--client-config`指定私有文件。sudo登录和部署使用同一身份。生产主机使用限定项目/项目组与环境的deployer；CI用限定项目/项目组的publisher。owner仅用于管理。
+CLI>=1.8.2默认管理地址为`https://ctl.shier.art`，已有自定义配置继续沿用。`ctl config get server`查看，`ctl config set server <HTTPS地址或域名>`修改；修改到不同服务清除旧登录，随后执行`ctl login`。所有命令使用同一身份及`--client-config`；旧`login --server`仅保留兼容。交互或私有`--token-file`读取凭据；不要把Token传到命令行、URL、应用容器或hooks。CLI>=1.8.3默认`~/.ctl/client.json`（目录700、文件600、当前身份所有）；可用`--client-config`指定私有文件。普通用户登录无需sudo；使用sudo时是root的独立配置。登录和部署使用同一身份。新位置缺失时只复制当前用户拥有且符合旧隐私权限的旧系统登录，保留原文件、新位置优先；不读取其他用户或不安全的旧配置。生产主机使用限定项目/项目组与环境的deployer；CI用限定项目/项目组的publisher。owner仅用于管理。
 
 服务端v1.8.1提供项目组详情与组内授权，旧项目自动归入`default`，旧Token仍只授权原项目。新Token只授权一个或多个项目组，一次login即可部署授权范围内的项目；组授权随当前成员变化，旧项目Token只保留兼容，仍不随移组变化。CLI>=1.8.0提供`ctl whoami`与`ctl projects`查看身份及可访问项目，不显示Token。旧CLI1.7仍可使用共享凭据执行安装。
 

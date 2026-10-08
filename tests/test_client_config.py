@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from deployctl.cli import main
 from deployctl.platform_credentials import Credentials
+from deployctl.cli import parser
 
 
 IDENTITY = {'schema_version': 1, 'id': 'fixture', 'role': 'deployer',
@@ -27,6 +28,88 @@ class ClientConfigTests(unittest.TestCase):
             except SystemExit as exc:
                 code = exc.code
         return code, output.getvalue(), error.getvalue()
+
+    def test_login_without_flags_saves_under_current_user_home(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder) / 'home'
+            with patch('pathlib.Path.home', return_value=home), patch('deployctl.platform_credentials.LEGACY_PATH', str(Path(folder) / 'absent/client.json'), create=True):
+                with patch('getpass.getpass', return_value=TOKEN), patch('deployctl.platform_client.PlatformClient.json', return_value=IDENTITY):
+                    code, output, error = self.invoke(['login'])
+                self.assertEqual(code, 0, error)
+                path = home / '.ctl/client.json'
+                self.assertTrue(path.is_file())
+                self.assertEqual(Credentials.load().server, 'https://ctl.shier.art')
+                self.assertEqual(Credentials.load().token, TOKEN)
+                self.assertNotIn(TOKEN, output)
+                self.assertEqual(self.invoke(['config', 'set', 'server', 'custom.test'])[0], 0)
+                self.assertEqual(json.loads(path.read_text()), {'server': 'https://custom.test'})
+                self.assertEqual(self.invoke(['config', 'get', 'server'])[1].strip(), 'https://custom.test')
+                if os.name != 'nt':
+                    self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+                    self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_private_legacy_login_is_copied_once_and_user_config_wins(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder) / 'home'
+            legacy = Path(folder) / 'legacy/client.json'
+            Credentials.save(legacy, 'https://legacy.test', TOKEN)
+            original = legacy.read_bytes()
+            with patch('pathlib.Path.home', return_value=home), patch('deployctl.platform_credentials.LEGACY_PATH', str(legacy), create=True):
+                self.assertEqual(Credentials.get_server(), 'https://legacy.test')
+                self.assertEqual(Credentials.load().token, TOKEN)
+                target = home / '.ctl/client.json'
+                self.assertEqual(json.loads(target.read_text()), {'server': 'https://legacy.test', 'token': TOKEN})
+                self.assertEqual(legacy.read_bytes(), original)
+                self.assertEqual(self.invoke(['config', 'set', 'server', 'new.test'])[0], 0)
+                with self.assertRaisesRegex(ValueError, 'ctl login'):
+                    Credentials.load()
+                self.assertEqual(Credentials.get_server(), 'https://new.test')
+                target.write_text('{}')
+                with self.assertRaises(ValueError):
+                    Credentials.get_server()
+
+    def test_explicit_config_does_not_import_legacy_or_write_to_home(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder) / 'home'
+            legacy = Path(folder) / 'legacy/client.json'
+            Credentials.save(legacy, 'https://legacy.test', TOKEN)
+            explicit = Path(folder) / 'explicit/client.json'
+            with patch('pathlib.Path.home', return_value=home), patch('deployctl.platform_credentials.LEGACY_PATH', str(legacy), create=True):
+                self.assertEqual(self.invoke(['config', 'get', 'server', '--client-config', str(explicit)])[1].strip(), 'https://ctl.shier.art')
+                self.assertFalse((home / '.ctl').exists())
+                self.assertEqual(self.invoke(['config', 'set', 'server', 'explicit.test', '--client-config', str(explicit)])[0], 0)
+                self.assertEqual(json.loads(explicit.read_text()), {'server': 'https://explicit.test'})
+
+    def test_unreadable_legacy_file_does_not_block_user_configuration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder) / 'home'
+            legacy = Path(folder) / 'legacy/client.json'
+            Credentials.save(legacy, 'https://legacy.test', TOKEN)
+            legacy.chmod(0)
+            try:
+                with patch('pathlib.Path.home', return_value=home), patch('deployctl.platform_credentials.LEGACY_PATH', str(legacy)), patch('deployctl.platform_credentials.os.open', side_effect=PermissionError('unreadable legacy file')):
+                    self.assertEqual(self.invoke(['config', 'get', 'server']), (0, 'https://ctl.shier.art\n', ''))
+                    self.assertFalse((home / '.ctl/client.json').exists())
+            finally:
+                legacy.chmod(0o600)
+
+    @unittest.skipIf(os.name == 'nt', 'Linux ownership and permissions')
+    def test_insecure_legacy_directory_does_not_block_fresh_home_login(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder) / 'home'
+            legacy = Path(folder) / 'legacy/client.json'
+            Credentials.save(legacy, 'https://legacy.test', TOKEN)
+            legacy.parent.chmod(0o755)
+            with patch('pathlib.Path.home', return_value=home), patch('deployctl.platform_credentials.LEGACY_PATH', str(legacy), create=True):
+                with patch('getpass.getpass', return_value=TOKEN), patch('deployctl.platform_client.PlatformClient.json', return_value=IDENTITY):
+                    self.assertEqual(self.invoke(['login'])[0], 0)
+                self.assertEqual(Credentials.load().server, 'https://ctl.shier.art')
+                self.assertEqual(legacy.parent.stat().st_mode & 0o777, 0o755)
+
+    def test_every_platform_command_uses_home_credentials_by_default(self):
+        for args in [['login'], ['config', 'get', 'server'], ['config', 'set', 'server', 'ctl.test'], ['whoami'], ['projects'], ['publish', 'notes', '--version', 'v1.0.0', '--package', 'fixture'], ['install', 'notes'], ['upgrade', 'notes']]:
+            with self.subTest(args=args):
+                self.assertIsNone(parser().parse_args(args).client_config)
 
     def test_fresh_login_uses_default_and_saves_validated_identity(self):
         with tempfile.TemporaryDirectory() as folder:

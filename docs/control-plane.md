@@ -1,6 +1,6 @@
 # ctl 管理服务与平台模式
 
-本版本包含 CLI **1.8.2**、管理服务 **0.2.1**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
+本版本包含 CLI **1.8.3**、管理服务 **0.2.1**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
 
 平台包含 Go API / React 管理台、Distribution Registry、标准发布包目录和 PostgreSQL。单组织自托管；网页管理配置与版本，部署由目标服务器上的 ctl 执行。安装记录是客户端上报的历史结果。
 
@@ -127,7 +127,7 @@ sudo ctl install another-app --prod
 
 ## 默认管理服务地址（CLI>=1.8.2）
 
-首次登录无需指定服务地址，默认连接 `https://ctl.shier.art`。已有私有登录配置中的地址优先保留；登录前会显示实际连接地址。地址配置与Token共用 `/etc/deployctl/client.json`，目录700、文件600，只保存到当前主机，不放进应用env或快照。
+首次登录无需指定服务地址，默认连接 `https://ctl.shier.art`。已有私有登录配置中的地址优先保留；登录前会显示实际连接地址。地址配置与Token共用 `~/.ctl/client.json`（CLI>=1.8.3），目录700、文件600，只保存到当前主机，不放进应用env或快照。
 
 ```bash
 sudo ctl config get server
@@ -142,6 +142,22 @@ sudo ctl config set server ctl.shier.art
 修改到不同地址会清除旧Token并提示重新登录；设置相同地址保留登录。后续 `whoami`、`projects`、`publish`、平台模式的 `install/upgrade` 共用该地址和登录。无登录时提示执行 `ctl login`。配置损坏或权限不正确会报错，不自动回退到默认服务。
 
 CI可先执行 `ctl config set server "$CTL_SERVER_URL" --client-config "$CLIENT_FILE"` 再登录；默认服务无需这一步。所有配置/登录/部署命令使用相同身份与 `--client-config`。旧 `login --server <地址>` 仍兼容，成功登录后保存该地址；验证失败保留原配置及凭据。
+
+## 用户配置目录（CLI>=1.8.3）
+
+CLI配置属于运行命令的用户，默认位置为 `~/.ctl/client.json`；Linux普通用户为 `/home/<用户>/.ctl/client.json`，root为 `/root/.ctl/client.json`。首次登录/修改配置自动创建 `.ctl`（700）并原子写入 `client.json`（600），无需用户修改系统目录权限。用户安装后直接使用：
+
+```bash
+ctl self-update --version v1.8.3
+ctl login
+ctl config get server
+ctl whoami
+ctl projects
+```
+
+所有平台命令默认读取同一份用户配置，`--client-config`仍可指定私有文件（包括旧系统路径）。新配置不存在时，仅自动复制属于当前用户、文件与父目录满足旧隐私要求的旧 `/etc/deployctl/client.json`；原文件保留，新配置优先且不会被旧文件或并发迁移覆盖。旧路径不可读、属于其他用户或权限不安全时不读取；需在当前用户下重新登录。有效权限下损坏的配置会明确报错，不回退到其他地址。
+
+`sudo ctl ...`属于root的配置，与普通用户的登录独立；需要root执行部署时先以root登录，或显式使用满足当前身份权限要求的配置文件。业务服务的 `/etc/deployctl/<项目>/<环境>` 运行配置、`/opt/deployments` 部署目录与Docker权限保持原契约；用户安装CLI并不授予系统部署权限。
 
 ## CI 发布到平台
 
@@ -176,7 +192,7 @@ sudo ctl status notes --prod
 sudo ctl rollback notes --prod
 ```
 
-登录交互读取 scoped token，不在命令行或 URL 传明文。默认保存到 `/etc/deployctl/client.json`（目录700、文件600、当前身份所有，拒绝链接）；`--client-config` 可指定其他私有位置。sudo登录和sudo部署使用同一个身份。
+登录交互读取 scoped token，不在命令行或 URL 传明文。默认保存到 `~/.ctl/client.json`（CLI>=1.8.3）（目录700、文件600、当前身份所有，拒绝链接）；`--client-config` 可指定其他私有位置。sudo登录和sudo部署使用同一个身份。
 
 平台模式不传环境时使用项目默认环境；`--prod` 等于 `--env prod`。首次安装不传版本时使用环境选定目标。status/restart/rollback等本地操作只在主机唯一已安装环境时可省略环境。
 
