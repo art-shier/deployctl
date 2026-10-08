@@ -56,6 +56,14 @@ test("actual API project, secret, conflict, credential and logout", async ({
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
+  const mobileRow = page.locator(".image-management tbody tr");
+  const mobileActions = mobileRow.locator(".image-row-actions");
+  const rowBounds = await mobileRow.boundingBox();
+  const actionBounds = await mobileActions.boundingBox();
+  expect(rowBounds).not.toBeNull();
+  expect(actionBounds).not.toBeNull();
+  expect(actionBounds!.x).toBeGreaterThanOrEqual(rowBounds!.x);
+  expect(actionBounds!.x + actionBounds!.width).toBeLessThanOrEqual(390);
   await page.screenshot({
     path: "test-results/images-mobile.png",
     fullPage: true,

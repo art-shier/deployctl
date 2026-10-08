@@ -489,15 +489,22 @@ code,
   color: #89988b;
 }
 .image-search {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: block;
+  position: relative;
   max-width: 480px;
   margin: 20px 0;
   color: #89988b;
 }
+.image-search svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
 .image-search input {
   margin: 0;
+  padding-left: 38px;
 }
 .image-tags {
   display: flex;
@@ -532,6 +539,45 @@ code,
   accent-color: var(--green);
 }
 @media (max-width: 600px) {
+  .image-management table,
+  .image-management tbody {
+    display: block;
+  }
+  .image-management thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .image-management tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .image-management tr:last-child {
+    border-bottom: 0;
+  }
+  .image-management td {
+    display: block;
+    min-width: 0;
+    padding: 8px 16px;
+    border-bottom: 0;
+  }
+  .image-management td:nth-child(-n + 2) {
+    grid-column: 1 / -1;
+  }
+  .image-management td:nth-child(3) {
+    align-self: center;
+    white-space: normal;
+  }
+  .image-management .truncate {
+    max-width: 100%;
+  }
+  .image-row-actions {
+    flex-wrap: nowrap;
+  }
   .image-stats {
     gap: 8px;
   }
