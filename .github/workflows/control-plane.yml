@@ -113,17 +113,17 @@ jobs:
         run: |
           docker build -f control-deploy/Dockerfile -t ctl-platform-ci .
           docker run -d --name ctl-bundle-fixture -p 127.0.0.1:5002:5000 registry:2.8.3
-          trap 'sudo docker compose --project-name ctl-platform --env-file /opt/ctl-ci-platform/compose.env -f control-deploy/compose.yaml --profile database down || true; docker rm -f -v ctl-bundle-fixture >/dev/null 2>&1 || true' EXIT
+          trap 'sudo docker compose --project-name ctl-platform --env-file /root/ctl-ci-platform/compose.env -f control-deploy/compose.yaml --profile database down || true; docker rm -f -v ctl-bundle-fixture >/dev/null 2>&1 || true' EXIT
           docker tag ctl-platform-ci 127.0.0.1:5002/ctl-server:fixture
           docker push 127.0.0.1:5002/ctl-server:fixture
           IMAGE=$(docker inspect --format '{{index .RepoDigests 0}}' 127.0.0.1:5002/ctl-server:fixture)
           python scripts/build_server_bundle.py --image "$IMAGE" --version v1.7.0
           python scripts/build_release_assets.py
-          sudo python3 dist/deployctl.pyz server install --release dist/ctl-platform-v1.7.0.tar.gz --home /opt/ctl-ci-platform \
+          sudo python3 dist/deployctl.pyz server install --release dist/ctl-platform-v1.7.0.tar.gz --home /root/ctl-ci-platform \
             --origin http://127.0.0.1:8091 --registry-host 127.0.0.1:5091 --api-port 8091 --registry-port 5091
-          KEY_SUM=$(sudo sha256sum /opt/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)
-          sudo python3 dist/deployctl.pyz server upgrade --release dist/ctl-platform-v1.7.0.tar.gz --home /opt/ctl-ci-platform
-          test "$KEY_SUM" = "$(sudo sha256sum /opt/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
+          KEY_SUM=$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)
+          sudo python3 dist/deployctl.pyz server upgrade --release dist/ctl-platform-v1.7.0.tar.gz --home /root/ctl-ci-platform
+          test "$KEY_SUM" = "$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
           curl --fail --silent http://127.0.0.1:8091/api/v1/health/ready >/dev/null
-          sudo docker compose --project-name ctl-platform --env-file /opt/ctl-ci-platform/compose.env \
+          sudo docker compose --project-name ctl-platform --env-file /root/ctl-ci-platform/compose.env \
             -f control-deploy/compose.yaml --profile database down

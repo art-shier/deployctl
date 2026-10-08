@@ -137,11 +137,11 @@ jobs:
         run: |
           mkdir "$RUNNER_TEMP/server-draft"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "ctl-platform-${TAG}.tar.gz*" --dir "$RUNNER_TEMP/server-draft"
-          trap 'sudo docker compose --project-name ctl-platform --env-file /opt/ctl-release-fixture/compose.env -f control-deploy/compose.yaml --profile database down || true' EXIT
-          sudo "$RUNNER_TEMP/installed/ctl" server install --release "$RUNNER_TEMP/server-draft/ctl-platform-${TAG}.tar.gz" --home /opt/ctl-release-fixture \
+          trap 'sudo docker compose --project-name ctl-platform --env-file /root/ctl-release-fixture/compose.env -f control-deploy/compose.yaml --profile database down || true' EXIT
+          sudo "$RUNNER_TEMP/installed/ctl" server install --release "$RUNNER_TEMP/server-draft/ctl-platform-${TAG}.tar.gz" --home /root/ctl-release-fixture \
             --origin http://127.0.0.1:8092 --registry-host 127.0.0.1:5092 --api-port 8092 --registry-port 5092
           curl --fail --silent http://127.0.0.1:8092/api/v1/health/ready >/dev/null
-          sudo "$RUNNER_TEMP/installed/ctl" server upgrade --release "$RUNNER_TEMP/server-draft/ctl-platform-${TAG}.tar.gz" --home /opt/ctl-release-fixture
+          sudo "$RUNNER_TEMP/installed/ctl" server upgrade --release "$RUNNER_TEMP/server-draft/ctl-platform-${TAG}.tar.gz" --home /root/ctl-release-fixture
       - name: Publish verified Release
         env:
           GH_TOKEN: ${{ github.token }}
