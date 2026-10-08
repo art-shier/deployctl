@@ -1,6 +1,6 @@
 # ctl 管理服务与平台模式
 
-本版本包含 CLI **1.8.1**、管理服务 **0.2.1**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
+本版本包含 CLI **1.8.2**、管理服务 **0.2.1**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
 
 平台包含 Go API / React 管理台、Distribution Registry、标准发布包目录和 PostgreSQL。单组织自托管；网页管理配置与版本，部署由目标服务器上的 ctl 执行。安装记录是客户端上报的历史结果。
 
@@ -92,10 +92,10 @@ sudo bash control-deploy/bootstrap.sh --database-url-file /root/ctl-database.url
 
 项目组凭据覆盖组内现在和以后加入的项目。项目移组后，后续 API 请求和 Registry token 申请按当前归属重新授权；已经签发的 Registry bearer 仍按现有最长5分钟到期。具体项目授权不随移组变化。普通项目说明编辑不会提交未改动的组字段，避免旧标签页撤销另一管理员的移组操作。
 
-CLI1.8 的 `whoami` 显示身份及组/项目/环境范围，`projects` 列出当前可访问项目；不显示 Token。凭据文件仍只保存服务器地址和一个 Token。旧 ctl1.7 可直接使用新共享凭据进行安装，发现命令需要CLI>=1.8：
+CLI1.8 的 `whoami` 显示身份及组/项目/环境范围，`projects` 列出当前可访问项目；不显示 Token。凭据文件仍只保存服务器地址和一个 Token。旧 ctl1.7 可直接使用新共享凭据进行安装，发现命令需要CLI>=1.8；以下省略登录地址的命令需要CLI>=1.8.2：
 
 ```bash
-sudo ctl login --server https://ctl.shier.art
+sudo ctl login
 sudo ctl whoami
 sudo ctl projects
 sudo ctl install notes --prod
@@ -125,13 +125,31 @@ sudo ctl install another-app --prod
 
 外部仓库在该仓库管理端上传/删除，管理台只读取镜像和关联版本。私有外部仓库的短期pull证明仅用于本次刷新/详情，读取后清空，不保存为长期凭据。
 
+## 默认管理服务地址（CLI>=1.8.2）
+
+首次登录无需指定服务地址，默认连接 `https://ctl.shier.art`。已有私有登录配置中的地址优先保留；登录前会显示实际连接地址。地址配置与Token共用 `/etc/deployctl/client.json`，目录700、文件600，只保存到当前主机，不放进应用env或快照。
+
+```bash
+sudo ctl config get server
+sudo ctl login
+# 修改为自己的管理服务，未写协议时默认HTTPS：
+sudo ctl config set server ctl.example.com
+sudo ctl login
+# 恢复默认服务：
+sudo ctl config set server ctl.shier.art
+```
+
+修改到不同地址会清除旧Token并提示重新登录；设置相同地址保留登录。后续 `whoami`、`projects`、`publish`、平台模式的 `install/upgrade` 共用该地址和登录。无登录时提示执行 `ctl login`。配置损坏或权限不正确会报错，不自动回退到默认服务。
+
+CI可先执行 `ctl config set server "$CTL_SERVER_URL" --client-config "$CLIENT_FILE"` 再登录；默认服务无需这一步。所有配置/登录/部署命令使用相同身份与 `--client-config`。旧 `login --server <地址>` 仍兼容，成功登录后保存该地址；验证失败保留原配置及凭据。
+
 ## CI 发布到平台
 
 CI使用普通 Docker login / build / push，推送到项目允许的仓库并获得实际 manifest/index digest。然后 `ctl package` 生成固定 digest 的标准包、`ctl publish` 上传包并提交版本。只有镜像和包都通过验证，版本才变成可安装。
 
 ```bash
 # 配置文件目录700、token文件600；TOKEN_FILE由 CI 的秘密存储生成。
-ctl login --server https://ctl.shier.art --token-file "$TOKEN_FILE" --client-config "$CLIENT_FILE"
+ctl login --token-file "$TOKEN_FILE" --client-config "$CLIENT_FILE"
 ctl package --config deploy/deployment.yaml --image "$IMAGE_WITH_REAL_DIGEST" --version "$PROJECT_VERSION"
 ctl publish notes --version "$PROJECT_VERSION" --package "dist/notes-${PROJECT_VERSION}.tar.gz" \
   --channel stable --client-config "$CLIENT_FILE"
@@ -147,10 +165,10 @@ Notes重跑发布时先用publisher读取同版本元数据并下载已登记的
 
 ## 目标服务器安装
 
-先安装支持平台模式的ctl，并确认 `ctl --version` 为1.7.0或兼容新版。安装器及self-update只获取真实已发布版本。
+先安装支持平台模式的ctl，并确认 `ctl --version` 为1.8.2或兼容新版。安装器及self-update只获取真实已发布版本。
 
 ```bash
-sudo ctl login --server https://ctl.shier.art
+sudo ctl login
 sudo ctl install notes --prod
 sudo ctl upgrade notes --prod
 sudo ctl upgrade notes --prod --version v0.3.0 --port 9000

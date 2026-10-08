@@ -29,9 +29,17 @@ def parser():
         operation.add_argument('--registry-port', type=int)
         operation.add_argument('--database-url-file', help='private file containing an external PostgreSQL URL')
     login = sub.add_parser('login', help='save private platform credentials')
-    login.add_argument('--server', required=True)
+    login.add_argument('--server', help='override saved server for this login; default: saved server or https://ctl.shier.art')
     login.add_argument('--token-file', help='private file containing a scoped token; otherwise prompt')
     login.add_argument('--client-config', default='/etc/deployctl/client.json')
+    config = sub.add_parser('config', help='view or change the default management server')
+    config_commands = config.add_subparsers(dest='config_command', required=True)
+    for name in ('get', 'set'):
+        setting = config_commands.add_parser(name)
+        setting.add_argument('key', choices=['server'])
+        if name == 'set':
+            setting.add_argument('value', help='HTTPS origin or hostname; hostname defaults to HTTPS')
+        setting.add_argument('--client-config', default='/etc/deployctl/client.json')
     for name,help_text in [('whoami','show the current platform role and project/group scope'),('projects','list projects accessible to the current login')]:
         discovery=sub.add_parser(name,help=help_text)
         discovery.add_argument('--client-config',default='/etc/deployctl/client.json')
@@ -108,17 +116,29 @@ def main(argv=None):
                 upgrade=args.server_command == 'upgrade', origin=args.origin, registry_host=args.registry_host,
                 api_port=args.api_port, registry_port=args.registry_port, database_url_file=args.database_url_file)
             print(f"OK: ctl server running {state['current']['version']}; instance: {args.home}")
+        elif args.command == 'config':
+            from .platform_credentials import Credentials
+            if args.config_command == 'get':
+                print(Credentials.get_server(args.client_config))
+            else:
+                server, logged_out = Credentials.set_server(args.client_config, args.value)
+                print(f'OK: default server set to {server}')
+                if logged_out:
+                    print('Previous login cleared; run ctl login for this server')
         elif args.command in ('login','publish','whoami','projects'):
             from .platform_credentials import Credentials, read_token_file
             from .platform_client import PlatformClient
             if args.command == 'login':
                 import getpass
+                from .platform_client import validate_origin
+                server = validate_origin(args.server) if args.server else Credentials.get_server(args.client_config)
+                print(f'Connecting to {server}')
                 token = read_token_file(args.token_file) if args.token_file else getpass.getpass('Platform token: ')
-                credentials = Credentials(args.server, token)
+                credentials = Credentials(server, token)
                 identity = PlatformClient(credentials).json('GET','/api/v1/me')
                 if identity.get('schema_version') != 1: raise ValueError('unsupported platform')
-                summary=identity_summary(identity,args.server)
-                Credentials.save(args.client_config, args.server, token)
+                summary=identity_summary(identity,server)
+                Credentials.save(args.client_config, server, token)
                 print('OK: platform credentials saved privately')
                 print(json.dumps(summary,ensure_ascii=False))
             elif args.command == 'whoami':
