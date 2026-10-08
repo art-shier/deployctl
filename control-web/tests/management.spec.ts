@@ -143,7 +143,13 @@ test("actual API project, secret, conflict, credential and logout", async ({
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
   await expect(page.getByRole("tab", { name: "访问凭据" })).toHaveCount(0);
-  await page.getByRole("link", { name: "组凭据", exact: true }).click();
+  // The conflicting draft remains unsaved; deliberately discard it before leaving.
+  const discardPrompt = page.waitForEvent("dialog");
+  const leaveDraft = page.getByRole("link", { name: "组凭据", exact: true }).click();
+  const prompt = await discardPrompt;
+  expect(prompt.message()).toContain("离开将丢弃未保存的修改");
+  await prompt.accept();
+  await leaveDraft;
   await page.getByRole("button", { name: "创建凭据", exact: true }).click();
   await page.getByLabel("名称", { exact: true }).fill("prod-host");
   await page.getByLabel("授权项目组 default").check();
