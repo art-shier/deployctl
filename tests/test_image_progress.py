@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from deployctl.progress import Progress
-from deployctl.runtime import DockerDriver
+from deployctl.runtime import DockerDriver,Manager
 
 
 class ImageProgressTests(unittest.TestCase):
@@ -190,4 +190,18 @@ class PullProcessTests(unittest.TestCase):
         self.assertTrue(marker.exists())
         with self.assertRaises(ProcessLookupError): os.kill(int(marker.read_text()),0)
         self.assertEqual(self.output.getvalue(),'')
+
+    def test_reporter_assigned_after_manager_creation_reaches_actual_pull_output(self):
+        docker=self.base/'docker'
+        docker.write_text(f'#!{sys.executable}\nimport sys,json\n'
+            'if "config" in sys.argv: sys.exit(0)\n'
+            'print(json.dumps({"id":"abc123def456","text":"Downloading","current":1,"total":2}))\n'
+            'print(json.dumps({"id":"app","text":"Pulled"}))\n')
+        docker.chmod(0o700)
+        # The CLI creates its manager before enabling install progress.
+        manager=Manager(self.base/'apps',self.base/'config')
+        manager.progress=self.progress
+        manager.driver.pull(self.base,'fixture',{**os.environ,'PATH':str(self.base)+os.pathsep+os.environ['PATH']})
+        self.assertIn('(50%)',self.output.getvalue())
+        self.assertIn('Image: Pulled',self.output.getvalue())
 

@@ -253,14 +253,22 @@ class DockerDriver:
 
 
 class Manager:
+    @property
+    def progress(self):
+        return self._progress
+
+    @progress.setter
+    def progress(self,value):
+        self._progress=value
+        if isinstance(self.driver,DockerDriver):
+            self.driver.progress=value
+
     def __init__(self, root='/opt/deployments', config_root='/etc/deployctl', driver=None, hook_runner=None, progress=None):
         self.root = Path(root).resolve()
         self.config_root = Path(config_root).resolve()
         self.driver = driver or DockerDriver()
         self.hook_runner = hook_runner or HookRunner()
         self.progress = progress if progress is not None else Progress(enabled=False)
-        if isinstance(self.driver, DockerDriver):
-            self.driver.progress = self.progress
 
     def paths(self, app, env):
         validate_name(app)
