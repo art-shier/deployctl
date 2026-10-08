@@ -20,7 +20,7 @@ from .contract import ENV_NAME, integer, read_yaml, validate_name, validate_rele
 from .release import unpack_release
 from .deployment_state import DeploymentRef, collect_legacy_values, normalize_state, promote_state
 from .hooks import HookRunner, validate_hook_values
-from .runtime_config import read_raw_env, merge_runtime_values, validate_values, validate_unset
+from .runtime_config import read_raw_env, merge_runtime_values, merge_install_params, validate_values, validate_unset
 from .runtime_snapshot import create_snapshot, load_snapshot, reject_links, verify_snapshot
 
 
@@ -98,7 +98,11 @@ def parse_env(path):
 
 
 class DockerDriver:
+    docker_config = None
+
     def _run(self, command, environment=None, timeout=600):
+        if self.docker_config:
+            environment = dict(os.environ if environment is None else environment, DOCKER_CONFIG=self.docker_config)
         try:
             result = subprocess.run(command, env=environment, capture_output=True,
                                     text=True, timeout=timeout)
@@ -131,6 +135,14 @@ class DockerDriver:
     def up(self, directory, project, environment):
         self.compose(directory, project, environment, 'up', '-d', '--no-build',
                      '--pull', 'never', '--remove-orphans', 'app')
+
+    def restore_pull(self, directory, project, environment, image):
+        try:
+            digests = json.loads(self._run(['docker','image','inspect','--format','{{json .RepoDigests}}',image], timeout=30))
+            if isinstance(digests,list) and image in digests: return
+        except RuntimeError:
+            pass
+        self.pull(directory, project, environment)
 
     def down(self, directory, project, environment):
         self.compose(directory, project, environment, 'down', '--remove-orphans')
@@ -349,11 +361,17 @@ class Manager:
         return DeploymentRef(ref['version'], snapshot.id, snapshot.sha256, ref['binding']).as_dict()
 
     def deploy(self, app, env, package, upgrade=False, port=None, bind=None,
-               runtime_env=None, unset_env=None, install_params=None):
+               runtime_env=None, unset_env=None, install_params=None, managed_runtime=None,
+               managed_params=None, management_source=None, deployment_defaults=None):
         updates = validate_values(runtime_env or {}, 'env-var')
         unset = list(unset_env or [])
         validate_unset(unset)
-        params = validate_values(install_params or {}, 'installation parameters', False)
+        remote = validate_values(managed_runtime or {}, 'managed runtime')
+        params = merge_install_params(install_params or {}, managed_params)
+        from .platform_client import validate_defaults
+        defaults = validate_defaults(deployment_defaults or {})
+        if defaults and not management_source: raise ValueError('deployment defaults require management provenance')
+        management = None if management_source is None else dict(management_source, resources={k:v for k,v in defaults.items() if k in ('cpus','memory_limit')})
         if unset and not upgrade:
             raise ValueError('unset-env is only available for upgrade')
         home, folder = self.paths(app, env)
@@ -373,14 +391,15 @@ class Manager:
             if state['current'] and not state['current']['legacy']:
                 _, _, old_snapshot, _ = self.reference_environment(home, folder, state['current'], app)
             values, overrides = merge_runtime_values(config, secrets,
-                old_snapshot.overrides if old_snapshot else {}, updates, unset, release['version'])
+                old_snapshot.overrides if old_snapshot else {}, updates, unset, release['version'], remote)
             refresh_config = release.get('hooks', {}).get('pre_install', {}).get('refresh_config', False)
             if not refresh_config:
                 self.required_configuration(values, release)
             if release.get('hooks'):
                 validate_hook_values(values)
                 self.hook_runner.check()
-            binding = self.binding(release, state['binding'], port, bind)
+            default_binding = self.binding(release, port=defaults.get('host_port'), bind=defaults.get('bind_address'))
+            binding = self.binding(release, state['binding'] or default_binding, port, bind)
             project = project_name(app, env)
             self.driver.check()
             unchanged_before = copy.deepcopy(state)
@@ -388,7 +407,7 @@ class Manager:
                 state['current'] = self.capture_legacy(home, folder, state['current'], app, project,
                                                       set(config) | set(secrets))
                 _, _, old_snapshot, _ = self.reference_environment(home, folder, state['current'], app)
-            snapshot = create_snapshot(folder, app, env, release, values, overrides, params)
+            snapshot = create_snapshot(folder, app, env, release, values, overrides, params, management)
             candidate = DeploymentRef(release['version'], snapshot.id, snapshot.sha256, binding).as_dict()
             environment = self.docker_environment(folder, binding, snapshot)
             self.driver.pull(directory, project, environment)
@@ -416,13 +435,13 @@ class Manager:
                     step(phase)
                     config, secrets = self.configuration(folder)
                     refreshed_values, refreshed_overrides = merge_runtime_values(config, secrets,
-                        old_snapshot.overrides if old_snapshot else {}, updates, unset, release['version'])
+                        old_snapshot.overrides if old_snapshot else {}, updates, unset, release['version'], remote)
                     self.required_configuration(refreshed_values, release)
                     validate_hook_values(refreshed_values)
                     if refreshed_values != snapshot.values or refreshed_overrides != snapshot.overrides:
                         # The provisional snapshot remains immutable for diagnostics and recovery.
                         snapshot = create_snapshot(folder, app, env, release, refreshed_values,
-                                                   refreshed_overrides, params)
+                                                   refreshed_overrides, params, management)
                         candidate = DeploymentRef(release['version'], snapshot.id, snapshot.sha256, binding).as_dict()
                         environment = self.docker_environment(folder, binding, snapshot)
                         state['transaction']['to'] = candidate
@@ -471,6 +490,7 @@ class Manager:
             unchanged = bool(before['current'] and before['current']['version'] == release['version']
                              and old_snapshot and old_snapshot.values == snapshot.values
                              and old_snapshot.overrides == snapshot.overrides and before['binding'] == binding)
+            unchanged = unchanged and old_snapshot.install_params == snapshot.install_params and old_snapshot.management == snapshot.management
             state = promote_state(before, candidate, preserve_previous=unchanged)
             self.save(home, state, 'deployment_succeeded')
             return state
@@ -492,7 +512,10 @@ class Manager:
                     return state
                 raise ValueError('no previous successful version to roll back to')
             directory, release, snapshot, environment = self.reference_environment(home, folder, target, app)
-            self.driver.pull(directory, project, environment)
+            if hasattr(self.driver, 'restore_pull'):
+                self.driver.restore_pull(directory, project, environment, release['image'])
+            else:
+                self.driver.pull(directory, project, environment)
             previous = state['current']
             state['transaction'] = {'from': target, 'to': target, 'phase': 'rollback'}
             self.save(home, state, 'rollback_started')

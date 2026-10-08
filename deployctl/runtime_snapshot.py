@@ -1,6 +1,7 @@
 """Integrity-checked configuration bundles and platform-only Compose mounts."""
 
 from dataclasses import dataclass
+import copy
 import hashlib
 import json
 import os
@@ -30,6 +31,7 @@ class ConfigurationSnapshot:
     overrides: dict
     install_params: dict
     sha256: str
+    management: dict | None = None
 
 
 def reject_links(path):
@@ -44,8 +46,25 @@ def validate_id(identifier):
         raise ValueError('invalid configuration snapshot ID')
 
 
-def render_runtime_compose(release, configuration_id):
+def validate_management(value):
+    from .platform_client import validate_origin, validate_defaults
+    if not isinstance(value, dict) or set(value) != {'origin','project','environment','release_id','revision_id','resources'}:
+        raise ValueError('invalid management provenance')
+    validate_origin(value['origin']); validate_name(value['project']); validate_name(value['environment'],'environment',32)
+    validate_id(value['release_id']); validate_id(value['revision_id'])
+    if not isinstance(value['resources'],dict) or set(value['resources']) - {'memory_limit','cpus'}:
+        raise ValueError('invalid management resources')
+    validate_defaults(value['resources'])
+    return copy.deepcopy(value)
+
+
+def render_runtime_compose(release, configuration_id, management=None):
     validate_id(configuration_id)
+    if management is not None:
+        management = validate_management(management)
+        if management['project'] != release['application']: raise ValueError('management project mismatch')
+        release = copy.deepcopy(release)
+        release['deployment']['resources'].update(management['resources'])
     compose = render_compose(release)
     app = compose['services']['app']
     app['env_file'] = [{'path': '${DEPLOYCTL_EFFECTIVE_ENV_FILE}', 'format': 'raw'}]
@@ -59,10 +78,11 @@ def render_runtime_compose(release, configuration_id):
 
 def bundle(directory):
     reject_links(directory)
-    if not directory.is_dir() or {p.name for p in directory.iterdir()} != MEMBERS:
-        raise ValueError('configuration snapshot must contain exactly the five managed files')
+    names = {p.name for p in directory.iterdir()} if directory.is_dir() else set()
+    if names not in (MEMBERS, MEMBERS | {'.management.json'}):
+        raise ValueError('configuration snapshot contains unexpected managed files')
     result = {}
-    for name in sorted(MEMBERS):
+    for name in sorted(names):
         path = directory / name
         reject_links(path)
         flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NONBLOCK', 0)
@@ -94,7 +114,7 @@ def sync_directory(path):
             os.close(fd)
 
 
-def create_snapshot(folder, app, env, release, values, overrides, install_params):
+def create_snapshot(folder, app, env, release, values, overrides, install_params, management=None):
     validate_name(app)
     validate_name(env, 'environment', 32)
     if release['application'] != app or values.get('APP_VERSION') != release['version']:
@@ -104,6 +124,9 @@ def create_snapshot(folder, app, env, release, values, overrides, install_params
     validate_values(business)
     overrides = validate_values(overrides, 'persisted overrides')
     install_params = validate_values(install_params, 'installation parameters', reserve_platform=False)
+    if management is not None:
+        management = validate_management(management)
+        if management['project'] != app or management['environment'] != env: raise ValueError('management provenance mismatch')
     folder = Path(folder).absolute()
     reject_links(folder)
     runtime = folder / 'runtime'
@@ -116,7 +139,8 @@ def create_snapshot(folder, app, env, release, values, overrides, install_params
     directory.mkdir(mode=0o700)
     content = {'.env.json': render_json(values), 'effective.env': render_raw_env(values),
                'overrides.json': render_json(overrides), '.install-params.json': render_json(install_params),
-               'compose.yaml': yaml.safe_dump(render_runtime_compose(release, identifier), sort_keys=False)}
+               'compose.yaml': yaml.safe_dump(render_runtime_compose(release, identifier, management), sort_keys=False)}
+    if management is not None: content['.management.json'] = render_json(management)
     try:
         for name, value in content.items():
             raw = value.encode('utf-8')
@@ -132,7 +156,7 @@ def create_snapshot(folder, app, env, release, values, overrides, install_params
         sync_directory(directory)
         sync_directory(runtime)
         return ConfigurationSnapshot(identifier, directory, dict(values), overrides, install_params,
-                                     bundle_hash(bundle(directory)))
+                                     bundle_hash(bundle(directory)), management)
     except BaseException:
         reject_links(directory)
         if directory.parent != runtime or not directory.resolve().is_relative_to(runtime.resolve()):
@@ -160,12 +184,15 @@ def load_snapshot(folder, ref, release):
     values = json.loads(content['.env.json'])
     overrides = validate_values(json.loads(content['overrides.json']), 'persisted overrides')
     params = validate_values(json.loads(content['.install-params.json']), 'installation parameters', False)
+    management = validate_management(json.loads(content['.management.json'])) if '.management.json' in content else None
+    if management and (management['project'] != release['application'] or management['environment'] != Path(folder).name):
+        raise ValueError('management provenance mismatch')
     if not isinstance(values, dict) or values.get('APP_VERSION') != release['version'] or ref['version'] != release['version']:
         raise ValueError('configuration snapshot version mismatch')
     business = dict(values)
     business.pop('APP_VERSION')
     validate_values(business)
     if (content['effective.env'] != render_raw_env(values).encode('utf-8')
-            or load_yaml(content['compose.yaml'].decode('utf-8')) != render_runtime_compose(release, identifier)):
+            or load_yaml(content['compose.yaml'].decode('utf-8')) != render_runtime_compose(release, identifier, management)):
         raise ValueError('runtime Compose/environment does not match the platform template')
-    return ConfigurationSnapshot(identifier, directory, values, overrides, params, digest)
+    return ConfigurationSnapshot(identifier, directory, values, overrides, params, digest, management)
