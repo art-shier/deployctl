@@ -29,9 +29,6 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, p auth.Prin
 	if token.ExpiresAt.IsZero() {
 		token.ExpiresAt = time.Now().Add(90 * 24 * time.Hour)
 	}
-	if _, err := s.store.GetProject(r.Context(), token.Project); err != nil {
-		return err
-	}
 	raw, err := auth.NewToken()
 	if err != nil {
 		return err

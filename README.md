@@ -6,6 +6,8 @@
 
 本版本新增**管理服务与管理台0.1.0及CLI1.7.0平台模式**：注册项目、托管镜像/发布包、管理环境和访问凭据；服务器登录后可直接 `ctl install notes --prod`。管理服务支持 `ctl server install --release <服务端发布包URL>`，无需clone源码。原业务 `--release` 安装方式保留。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)。
 
+下一版本增加**项目组与共享部署凭据**：升级服务端后，已有项目自动归入 `default`；一个 Token 可授权多个项目或项目组，一次登录即可安装范围内的服务。旧 Token 保留原项目权限，owner 为全局超级管理员。管理台支持组管理与项目移组，新 CLI 提供 `whoami` / `projects`。此功能尚未发布，详见 [项目组和共享部署凭据](docs/control-plane.md#项目组和共享部署凭据下一版本)。
+
 支持单个无状态 HTTP 服务、Docker Compose、私有 GitHub Release 下载、升级失败恢复、人工回滚和状态/日志查询。单机更新可能短暂中断；数据库迁移、多机滚动发布、HTTPS 入口和持久化存储需另行配置。
 
 ## 一键安装 ctl

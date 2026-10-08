@@ -32,6 +32,9 @@ def parser():
     login.add_argument('--server', required=True)
     login.add_argument('--token-file', help='private file containing a scoped token; otherwise prompt')
     login.add_argument('--client-config', default='/etc/deployctl/client.json')
+    for name,help_text in [('whoami','show the current platform role and project/group scope'),('projects','list projects accessible to the current login')]:
+        discovery=sub.add_parser(name,help=help_text)
+        discovery.add_argument('--client-config',default='/etc/deployctl/client.json')
     publish = sub.add_parser('publish', help='publish a standard package to the platform')
     publish.add_argument('application')
     publish.add_argument('--version', required=True)
@@ -105,7 +108,7 @@ def main(argv=None):
                 upgrade=args.server_command == 'upgrade', origin=args.origin, registry_host=args.registry_host,
                 api_port=args.api_port, registry_port=args.registry_port, database_url_file=args.database_url_file)
             print(f"OK: ctl server running {state['current']['version']}; instance: {args.home}")
-        elif args.command in ('login','publish'):
+        elif args.command in ('login','publish','whoami','projects'):
             from .platform_credentials import Credentials, read_token_file
             from .platform_client import PlatformClient
             if args.command == 'login':
@@ -114,8 +117,19 @@ def main(argv=None):
                 credentials = Credentials(args.server, token)
                 identity = PlatformClient(credentials).json('GET','/api/v1/me')
                 if identity.get('schema_version') != 1: raise ValueError('unsupported platform')
+                summary=identity_summary(identity,args.server)
                 Credentials.save(args.client_config, args.server, token)
                 print('OK: platform credentials saved privately')
+                print(json.dumps(summary,ensure_ascii=False))
+            elif args.command == 'whoami':
+                credentials=Credentials.load(args.client_config)
+                identity=PlatformClient(credentials).json('GET','/api/v1/me')
+                print(json.dumps(identity_summary(identity,credentials.server),ensure_ascii=False,indent=2))
+            elif args.command == 'projects':
+                credentials=Credentials.load(args.client_config)
+                projects=PlatformClient(credentials).json('GET','/api/v1/projects')
+                if not isinstance(projects,list) or any(not isinstance(p,dict) for p in projects): raise ValueError('invalid project listing')
+                print(json.dumps([{key:p.get(key,'default' if key=='group' else '') for key in ('slug','name','group','default_environment')} for p in projects],ensure_ascii=False,indent=2))
             else:
                 from .platform_credentials import read_registry_token_file
                 proof=read_registry_token_file(args.registry_token_file) if args.registry_token_file else None
@@ -221,6 +235,15 @@ def main(argv=None):
     except KeyboardInterrupt:
         print('Interrupted; inspect status and use rollback if a transaction is pending', file=sys.stderr)
         return 130
+
+
+def identity_summary(identity, server):
+    if not isinstance(identity,dict) or identity.get('schema_version') != 1 or identity.get('role') not in ('owner','publisher','deployer'):
+        raise ValueError('unsupported platform identity')
+    result={'server':server,'all_projects':identity['role']=='owner',**{key:identity.get(key,'') for key in ('id','role','project')}}
+    result.update({key:identity.get(key) or [] for key in ('projects','groups','environments')})
+    if result['project'] and result['project'] not in result['projects']: result['projects']=[result['project'],*result['projects']]
+    return result
 
 
 def local_environment(root, app, env):

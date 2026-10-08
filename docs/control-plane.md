@@ -68,6 +68,28 @@ sudo bash control-deploy/bootstrap.sh --database-url-file /root/ctl-database.url
 
 项目默认环境自动创建空修订1并指向 `stable`。环境名称与版本独立；发布完整版本并显式设置 stable 后才可安装。可以将环境固定到某个可安装版本。停用版本禁止新安装，保留回滚所需制品。首版不自动清理 Registry / 发布包。
 
+## 项目组和共享部署凭据（下一版本）
+
+项目组扩展需要升级服务端。首次启动自动创建 `default`，将已有项目归入该组；迁移保留环境修订、秘密配置、发布版本、stable 指针和现有 Token。未指定组的新项目也属于 `default`。组标识创建后不可改，支持修改显示名称和说明；本次不提供组删除。
+
+管理台「项目组」创建组，「项目设置」调整项目归属，项目列表支持按组筛选。「访问凭据」提供全局管理入口；创建时可选择多个具体项目，或多个项目组，并为 deployer 指定允许的环境。
+
+`owner` 是全局超级管理员。`publisher` 保持发布/镜像推送权限，不能读取环境配置；`deployer` 保持部署与镜像拉取权限，不能推送或管理项目。旧凭据仍只允许原项目，不会因为项目加入 `default` 而自动扩大范围。API 的 legacy `project`、新 `projects` 和 `groups` 授权取并集，空、重复或不存在的范围会被拒绝。
+
+项目组凭据覆盖组内现在和以后加入的项目。项目移组后，后续 API 请求和 Registry token 申请按当前归属重新授权；已经签发的 Registry bearer 仍按现有最长5分钟到期。具体项目授权不随移组变化。普通项目说明编辑不会提交未改动的组字段，避免旧标签页撤销另一管理员的移组操作。
+
+新 CLI 的 `whoami` 显示身份及组/项目/环境范围，`projects` 列出当前可访问项目；不显示 Token。凭据文件仍只保存服务器地址和一个 Token。旧 ctl1.7 可直接使用新共享凭据进行安装，新发现命令随 CLI 后续版本发行：
+
+```bash
+sudo ctl login --server https://ctl.shier.art
+sudo ctl whoami
+sudo ctl projects
+sudo ctl install notes --prod
+sudo ctl install another-app --prod
+```
+
+`another-app` 是示例项目，需先登记并授权。一个 Token 可授权两个项目，两个 install 共用一次登录。新组管理 API 为 `GET/POST /api/v1/groups`、`PATCH /api/v1/groups/{slug}`；项目使用 `group` 字段，Token 使用 `projects`/`groups` 数组。管理组和调整授权仍仅允许 owner。
+
 ## 镜像管理
 
 项目详情的独立“镜像管理”页显示镜像数、标签数、未关联版本数，支持搜索和每页20个镜像的分页。同一个 Digest 的多个标签合并为一条镜像；数量统计的是当前带标签的 manifest/index，不包含无标签的历史内容和独立镜像层，也不将列表第一页当成仓库总数。服务端逐页读取 Registry，最多读取10000个标签，超限或读取失败时明确报错，不返回不完整统计。详情读取架构、完整镜像地址及去重压缩内容大小；该大小不等于磁盘实际占用空间。

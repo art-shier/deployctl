@@ -50,7 +50,7 @@ def main():
         raise SystemExit('disposable Linux CI database fixture required')
     api_port=port();app_port=port();origin=f'http://127.0.0.1:{api_port}'
     suffix=uuid.uuid4().hex[:10];registry='ctl-platform-'+suffix
-    app='notes-fixture';server=None
+    app='notes-fixture-'+suffix;other='config-fixture-'+suffix;server=None
     with tempfile.TemporaryDirectory(prefix='ctl-platform-e2e-') as tmp:
         base=Path(tmp);keys=base/'keys';keys.mkdir(mode=0o700)
         try:
@@ -72,15 +72,19 @@ def main():
                 try:urlopen('http://'+host+'/v2/',timeout=2)
                 except HTTPError as e:return e.code==401
             wait(registry_ready)
-            owner.json('POST','/api/v1/projects',{'slug':app,'name':'Notes fixture','default_environment':'prod','image_repository':host+'/'+app})
-            publisher=owner.json('POST','/api/v1/tokens',{'name':'ci','role':'publisher','project':app})['token']
-            deployer_entry=owner.json('POST','/api/v1/tokens',{'name':'host','role':'deployer','project':app,'environments':['prod']})
+            owner.json('POST','/api/v1/groups',{'slug':'fixture-apps','name':'Fixture applications'})
+            for project in (app,other):
+                owner.json('POST','/api/v1/projects',{'slug':project,'group':'fixture-apps','name':project,'default_environment':'prod','image_repository':host+'/'+project})
+            publisher=owner.json('POST','/api/v1/tokens',{'name':'ci','role':'publisher','groups':['fixture-apps']})['token']
+            deployer_entry=owner.json('POST','/api/v1/tokens',{'name':'host','role':'deployer','groups':['fixture-apps'],'environments':['prod']})
             deployer=deployer_entry['token']
             publisher_config=base/'publisher/client.json';deployer_config=base/'deployer/client.json'
             Credentials.save(publisher_config,origin,publisher)
             token_file=base/'deployer.token';token_file.write_text(deployer);token_file.chmod(0o600)
             cli=lambda *args,**kw:run(sys.executable,'-m','deployctl',*args,**kw)
             cli('login','--server',origin,'--token-file',token_file,'--client-config',deployer_config)
+            assert json.loads(cli('whoami','--client-config',deployer_config).stdout)['groups']==['fixture-apps']
+            assert {p['slug'] for p in json.loads(cli('projects','--client-config',deployer_config).stdout)}=={app,other}
             docker_config=base/'publisher-docker';docker_config.mkdir(mode=0o700)
             env={**os.environ,'DOCKER_CONFIG':str(docker_config)}
             run('docker','login','--username','ctl','--password-stdin',host,input=publisher+'\n',env=env)
@@ -88,6 +92,11 @@ def main():
             run('docker','build','-t',image_tag,ROOT/'examples/project-a',env=env)
             run('docker','push',image_tag,env=env)
             image=run('docker','image','inspect',image_tag,'--format','{{index .RepoDigests 0}}').stdout.strip()
+            other_tag=host+'/'+other+':fixture'
+            run('docker','tag',image_tag,other_tag)
+            run('docker','push',other_tag,env=env)
+            other_image=run('docker','image','inspect',other_tag,'--format','{{index .RepoDigests 0}}').stdout.strip()
+            run('docker','image','rm',other_tag)
             # Remove local tag/digest before installing; managed CLI must authenticate its pull.
             run('docker','image','rm',image_tag)
             source=base/'source';source.mkdir()
@@ -163,6 +172,17 @@ set -Eeuo pipefail
             restored=json.loads(state_path.read_text());assert restored['current']==third['current'] and restored['transaction'] is None
             receipts=owner.json('GET',f'/api/v1/projects/{app}/receipts')
             assert sum(r['success'] for r in receipts)==3 and any(not r['success'] for r in receipts)
+            # The same saved login installs an independent project/repository.
+            other_cfg=copy.deepcopy(cfg);other_cfg['application']=other;other_cfg.pop('hooks')
+            other_package=build_release(other_cfg,other_image,'v1.0.0',base/'packages',project_root=source)
+            cli('publish',other,'--version','v1.0.0','--package',other_package,'--channel','stable','--client-config',publisher_config)
+            cli('install',other,'--prod','--port',port(),*flags)
+            other_state_path=root/other/'prod/state.json';other_state=json.loads(other_state_path.read_text())
+            assert other_state['current']['version']=='v1.0.0' and other_state['transaction'] is None
+            moved=owner.json('GET',f'/api/v1/projects/{other}')
+            moved['group']='default';owner.json('PATCH',f'/api/v1/projects/{other}',moved)
+            assert cli('upgrade',other,'--prod',*flags,check=False).returncode==1
+            assert json.loads(other_state_path.read_text())==other_state
             credential_id=deployer_entry['credential']['id']
             owner.json('DELETE','/api/v1/tokens/'+credential_id)
             assert cli('upgrade',app,'--prod',*flags,check=False).returncode==1
@@ -180,14 +200,15 @@ set -Eeuo pipefail
             cli('rollback',app,'--prod','--root',root,'--config-root',config_root)
             rolled=json.loads(state_path.read_text())
             assert rolled['current']==second['current']
-            print('PASS: authenticated push/publish/login/install, immutable revision, managed precedence/deletion, resources, failed post restoration, receipts, revocation, legacy install and cached offline rollback')
+            print('PASS: one group login installs two independent projects, moving a project denies upgrade without altering state; authenticated push/publish, immutable revision, precedence, resources, failed post restoration, receipts, revocation, legacy install and cached offline rollback')
         finally:
             if server:server.terminate();server.wait(timeout=15)
-            for environment in ('prod','legacy'):
-                project=project_name(app,environment)
-                ids=run('docker','ps','-aq','--filter','label=com.docker.compose.project='+project,check=False).stdout.split()
-                if ids:run('docker','rm','-f',*ids,check=False)
-                run('docker','network','rm',project+'_default',check=False)
+            for application in (app,other):
+                for environment in ('prod','legacy'):
+                    project=project_name(application,environment)
+                    ids=run('docker','ps','-aq','--filter','label=com.docker.compose.project='+project,check=False).stdout.split()
+                    if ids:run('docker','rm','-f',*ids,check=False)
+                    run('docker','network','rm',project+'_default',check=False)
             run('docker','rm','-f','-v',registry,check=False)
 
 if __name__=='__main__':main()

@@ -38,3 +38,19 @@ func TestOpaqueTokenHash(t *testing.T) {
 		t.Fatal("reused token")
 	}
 }
+
+func TestMultipleProjectScopeKeepsRoleAndEnvironmentLimits(t *testing.T) {
+	p := Principal{Role: "deployer", Projects: []string{"notes", "config"}, Environments: []string{"prod"}}
+	for _, project := range p.Projects {
+		if !p.Can("resolve", project, "prod") || !p.Can("registry.pull", project, "") || p.Can("resolve", project, "test") || p.Can("registry.push", project, "") {
+			t.Fatal("scope mismatch", project)
+		}
+	}
+	if p.Can("resolve", "other", "prod") || p.Can("resolve", "", "prod") {
+		t.Fatal("cross-scope access")
+	}
+	p.Role = "publisher"
+	if !p.Can("release.publish", "config", "") || p.Can("configuration.read", "config", "prod") {
+		t.Fatal("publisher role escaped")
+	}
+}

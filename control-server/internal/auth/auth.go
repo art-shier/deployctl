@@ -13,13 +13,15 @@ type Principal struct {
 	Role         string
 	Project      string
 	Environments []string
+	Projects     []string
+	Groups       []string
 }
 
 func (p Principal) Can(action, project, environment string) bool {
 	if p.Role == "owner" {
 		return true
 	}
-	if project == "" || p.Project != project {
+	if project == "" || (p.Project != project && !slices.Contains(p.Projects, project)) {
 		return false
 	}
 	switch p.Role {

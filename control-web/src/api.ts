@@ -40,11 +40,18 @@ export const send = (method: string, body: unknown): RequestInit => ({
 });
 export interface Project {
   slug: string;
+  group: string;
   name: string;
   description: string;
   repository: string;
   image_repository: string;
   default_environment: string;
+  created_at: string;
+}
+export interface Group {
+  slug: string;
+  name: string;
+  description: string;
   created_at: string;
 }
 export interface Release {
@@ -86,6 +93,8 @@ export interface Token {
   role: string;
   project: string;
   environments: string[];
+  projects?: string[];
+  groups?: string[];
   expires_at: string;
   revoked: boolean;
   created_at: string;
