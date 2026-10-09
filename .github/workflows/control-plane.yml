@@ -125,5 +125,17 @@ jobs:
           sudo python3 dist/deployctl.pyz server upgrade --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform
           test "$KEY_SUM" = "$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
           curl --fail --silent http://127.0.0.1:8091/api/v1/health/ready >/dev/null
+          sudo docker exec ctl-platform-database-1 psql -U ctl -d ctl -c 'CREATE TABLE ctl_lifecycle_fixture(value integer); INSERT INTO ctl_lifecycle_fixture VALUES (42)' >/dev/null
+          sudo sh -c 'printf lifecycle > /root/ctl-ci-platform/registry/.lifecycle-fixture'
+          sudo python3 dist/deployctl.pyz server-status --home /root/ctl-ci-platform
+          sudo python3 dist/deployctl.pyz server-restart --home /root/ctl-ci-platform
+          sudo python3 dist/deployctl.pyz server-stop --home /root/ctl-ci-platform
+          test "$(sudo docker inspect --format '{{.State.Running}}' ctl-platform-api-1)" = false
+          sudo python3 dist/deployctl.pyz server-start --home /root/ctl-ci-platform
+          curl --fail --silent http://127.0.0.1:8091/api/v1/health/ready >/dev/null
+          sudo python3 dist/deployctl.pyz server-logs --home /root/ctl-ci-platform --tail 5 > "$RUNNER_TEMP/server-lifecycle.log"
+          test "$KEY_SUM" = "$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
+          test "$(sudo docker exec ctl-platform-database-1 psql -U ctl -d ctl -Atc 'SELECT value FROM ctl_lifecycle_fixture')" = 42
+          test "$(sudo cat /root/ctl-ci-platform/registry/.lifecycle-fixture)" = lifecycle
           sudo docker compose --project-name ctl-platform --env-file /root/ctl-ci-platform/compose.env \
             -f control-deploy/compose.yaml --profile database down

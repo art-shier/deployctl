@@ -1,6 +1,6 @@
 # ctl 管理服务与平台模式
 
-本版本包含 CLI **1.9.0**、管理服务 **0.3.0**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
+本版本包含 CLI **1.10.0**、管理服务 **0.3.0**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
 
 平台包含 Go API / React 管理台、Distribution Registry、标准发布包目录和 PostgreSQL。单组织自托管；网页管理配置与版本，部署由目标服务器上的 ctl 执行。安装记录是客户端上报的历史结果。
 
@@ -10,14 +10,20 @@
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.9.0/install.sh \
-  | sudo bash -s -- --version v1.9.0
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.10.0/install.sh \
+  | sudo bash -s -- --version v1.10.0
 
-RELEASE_URL='https://github.com/art-shier/deployctl/releases/download/v1.9.0/ctl-platform-v1.9.0.tar.gz'
-sudo ctl server install --release "$RELEASE_URL"
+sudo ctl server-install
+# 首次指定管理服务端口：
+sudo ctl server-install --api-port 8084
+# 固定版本或沿用原URL方式（二选一）：
+sudo ctl server-install --version v1.10.0
+sudo ctl server install --release https://github.com/art-shier/deployctl/releases/download/v1.10.0/ctl-platform-v1.10.0.tar.gz
 ```
 
-已由安装器管理的CLI可以用 `sudo ctl self-update --version v1.9.0` 更新原目录；用户目录安装时用原用户和原命令路径。`server install`与普通业务 `install` 独立，管理API、Registry和可选PostgreSQL由固定Compose启动。
+已由安装器管理的CLI可以用 `sudo ctl self-update --version v1.10.0` 更新原目录；用户目录安装时用原用户更新，并用 `sudo "$(command -v ctl)" server-install` 执行需要root的服务操作。`server install`与普通业务 `install` 独立，管理API、Registry和可选PostgreSQL由固定Compose启动。
+
+CLI>=1.10.0不传--release时读取官方art-shier/deployctl的最新正式GitHub Release，解析为固定版本包并验证相邻SHA256；不跟随Docker latest，也不需要ctl login。--version可指定版本，不能与--release同时使用。网络、资产缺失或校验失败会报错。
 
 工具自动下载相邻 `.sha256` 并校验，可用 `--sha256 <独立取得的摘要>` 显式指定。包只含引导脚本、配置生成器、Compose及清单，清单固定真实镜像digest和成员SHA256；不含密码。CLI限定成员/大小、不直接tar解压、使用私有目录、检查父目录可信权限，拒绝路径链接和被修改的缓存。操作获取主机级及实例级锁；超时/中断先停止引导进程组再释放锁。固定Compose项目ctl-platform每个Docker主机只支持一个实例，--home用于指定其存储位置，发现其他home的已有实例时拒绝替换。
 
@@ -26,10 +32,25 @@ sudo ctl server install --release "$RELEASE_URL"
 升级管理服务先按下文备份，再执行：
 
 ```bash
-sudo ctl server upgrade --release "$NEW_VERIFIED_RELEASE_URL"
+sudo ctl server-upgrade
+# 或固定版本：sudo ctl server-upgrade --version v1.10.0
 ```
 
 同版本同包可重复upgrade；install拒绝已有实例，源码引导过的实例使用upgrade接入。退出失败时保留 `server-state.json` 的pending记录，修复原因后用原命令/原发布包重试，不能换包绕过pending。引导保留密钥和数据，不提供数据库/平台镜像的自动事务回滚；失败不能报告为已升级成功。
+
+### 管理服务日常操作（CLI>=1.10.0）
+
+```bash
+sudo ctl server-status
+sudo ctl server-logs --tail 100
+sudo ctl server-restart
+sudo ctl server-stop
+sudo ctl server-start
+```
+
+全部支持`--home`，默认/opt/ctl-platform。`ctl server restart/start/stop/status/logs`为等价写法。操作使用当前已校验缓存包和实例配置，不下载新版本、不生成密钥、不删除数据库或Registry数据。restart等待API就绪；start使用本地镜像启动并等待健康检查。status显示已记录版本/pending及实际容器状态和端口；logs显示最近日志。pending非空时只允许status/logs，修复后用`server-install`或`server-upgrade --version <pending版本>`重试原包，再继续日常操作。
+
+CLI>=1.10.0同时保留原始已校验发布包，并用已记录SHA256校验缓存及其展开文件。旧CLI只保存了展开文件，第一次日常操作会下载该精确旧版本包，用原记录SHA256验证后补充缓存，以后可以离线操作。自定义旧包无法从官方取回时，先用原--release执行一次同版本server-upgrade，不会重新生成数据或密钥。
 
 ### 从v1.7/v1.8升级到v1.9.0
 
