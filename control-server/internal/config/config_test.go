@@ -31,7 +31,13 @@ func TestInitializePreservesKeysAndLoadFailsClosed(t *testing.T) {
 		t.Fatal("insecure public origin accepted")
 	}
 	t.Setenv("CTL_PUBLIC_ORIGIN", "http://127.0.0.1:8080")
-	if _, err := Load(); err != nil {
+	t.Setenv("CTL_AGENT_DIR", "")
+	if c, err := Load(); err != nil || c.API.AgentDir != "/app/agent" {
+		t.Fatal("default Agent directory missing", err)
+	}
+	// A missing public resource directory is reported by Agent endpoints, not startup.
+	t.Setenv("CTL_AGENT_DIR", filepath.Join(t.TempDir(), "missing-agent"))
+	if c, err := Load(); err != nil || c.API.AgentDir != os.Getenv("CTL_AGENT_DIR") {
 		t.Fatal(err)
 	}
 	t.Setenv("CTL_DATABASE_URL", "")

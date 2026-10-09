@@ -30,6 +30,7 @@ type Options struct {
 	RegistryPublicHost string
 	ArtifactsDir       string
 	WebDir             string
+	AgentDir           string
 	Verifier           ManifestVerifier
 	Signer             *auth.RegistrySigner
 }
@@ -58,6 +59,7 @@ func New(s *store.Store, o Options) *Server {
 		return nil
 	}))
 	m.HandleFunc("DELETE /api/v1/session", server.wrap(server.logout))
+	m.HandleFunc("GET /api/v1/agent-access", server.wrap(server.agentAccess))
 	m.HandleFunc("GET /api/v1/groups", server.wrap(server.groups))
 	m.HandleFunc("POST /api/v1/groups", server.wrap(server.createGroup))
 	m.HandleFunc("PATCH /api/v1/groups/{slug}", server.wrap(server.updateGroup))
@@ -101,6 +103,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+	// Handle raw Agent paths before ServeMux can clean or redirect traversal.
+	if r.URL.Path == "/agent" || strings.HasPrefix(r.URL.Path, "/agent/") {
+		s.agentResource(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/registry/token" {
 		w.Header().Set("Cache-Control", "no-store")
 	}
@@ -208,6 +215,8 @@ func reply(w http.ResponseWriter, status int, value any) {
 func failure(w http.ResponseWriter, err error) {
 	status, code, message := 500, "internal_error", "服务暂时不可用"
 	switch {
+	case errors.Is(err, errAgentUnavailable):
+		status, code, message = 503, "agent_resources_unavailable", "Agent 接入资源暂时不可用，请稍后重试"
 	case errors.Is(err, registry.ErrMixedLayers):
 		status, code, message = 400, "unsupported_layer_encoding", "归档包含不兼容的镜像层压缩格式，请使用 docker push 上传此镜像"
 	case errors.Is(err, registry.ErrReferenced):

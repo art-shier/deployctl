@@ -5,11 +5,11 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from deployctl import __version__
+from scripts.build_agent_assets import build_archive
 
 
 def checksum(path):
@@ -31,15 +31,7 @@ def main():
     shutil.copyfile(ROOT / 'install.sh', dist / 'install.sh')
     checksum(dist / 'install.sh')
     archive = dist / f'team-deploy-skill-v{__version__}.zip'
-    with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as package:
-        for path in sorted(skill.rglob('*')):
-            relative = path.relative_to(skill)
-            if not path.is_file() or '__pycache__' in relative.parts:
-                continue
-            item = zipfile.ZipInfo((Path('team-deploy') / relative).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
-            item.compress_type = zipfile.ZIP_DEFLATED
-            item.external_attr = 0o644 << 16
-            package.writestr(item, path.read_bytes())
+    build_archive(skill, archive)
     checksum(archive)
     for wheel in dist.glob(f'team_deployctl-{__version__}-*.whl'):
         checksum(wheel)

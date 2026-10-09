@@ -65,7 +65,9 @@ jobs:
           CTL_ARTIFACTS_DIR: ${{ runner.temp }}/ctl-browser-artifacts
           CTL_REGISTRY_HOST: 127.0.0.1:8080
           CTL_REGISTRY_INTERNAL_URL: http://127.0.0.1:5000
+          CTL_AGENT_DIR: ${{ runner.temp }}/ctl-agent-assets
         run: |
+          python3 scripts/build_agent_assets.py --output "$CTL_AGENT_DIR"
           cd control-server
           go build -o "$RUNNER_TEMP/ctl-server" ./cmd/ctl-server
           "$RUNNER_TEMP/ctl-server" init --keys-dir "$CTL_KEYS_DIR"
@@ -106,6 +108,7 @@ jobs:
         env:
           CTL_FIXTURE_DATABASE_URL: postgres://postgres:fixture-only@127.0.0.1:5432/postgres?sslmode=disable
           CTL_SERVER_BINARY: ${{ runner.temp }}/ctl-server
+          CTL_AGENT_DIR: ${{ runner.temp }}/ctl-agent-assets
         run: |
           python -m pip install PyYAML==6.0.3
           python tests/control_plane_integration.py

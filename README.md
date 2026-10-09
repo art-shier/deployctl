@@ -4,7 +4,7 @@
 
 平台仓库：[art-shier/deployctl](https://github.com/art-shier/deployctl) · [版本与安装资产](https://github.com/art-shier/deployctl/releases) · [构建流水线](https://github.com/art-shier/deployctl/actions)
 
-本版本包含**管理服务与管理台0.4.0及CLI1.11.0**：按权限管理项目/项目组、读写配置、托管镜像/发布包和访问凭据；服务器登录后可直接 `ctl install notes --prod`。管理服务支持 `ctl server-install` 自动获取官方最新正式Release，或 `ctl server install` 等价写法；仍可指定 `--version` 或 `--release`。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)，项目与配置命令见[项目管理说明](docs/project-management.md)。
+本版本包含**管理服务与管理台0.5.0及CLI1.12.0**：按权限管理项目/项目组、读写配置、托管镜像/发布包和访问凭据；服务器登录后可直接 `ctl install notes --prod`。侧栏新增「Agent 接入」，从当前服务下载完整skill及CLI、查看接入说明和权限，见[Agent接入说明](docs/agent-access.md)。管理服务支持 `ctl server-install` 自动获取官方最新正式Release，或 `ctl server install` 等价写法；仍可指定 `--version` 或 `--release`。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)，项目与配置命令见[项目管理说明](docs/project-management.md)。
 
 v1.8.1完善**项目组工作台与组授权**：登录先进入项目组，点组查看项目列表，在组内注册、加入或移出项目，并直接管理该组的发布/部署凭据。新凭据只授权项目组，项目详情不再提供凭据入口。旧 Token 保留原项目权限，owner 为全局超级管理员。CLI 提供 `whoami` / `projects`。详见 [项目组和共享部署凭据](docs/control-plane.md#项目组和共享部署凭据v181)。
 
@@ -22,15 +22,15 @@ v1.9.0支持项目组按环境配置启动变量与安装参数，项目同名�
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.11.0/install.sh \
-  | bash -s -- --user --version v1.11.0
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.12.0/install.sh \
+  | bash -s -- --user --version v1.12.0
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```
 
 安装器下载 CLI、检查 SHA256 和版本，安装 `ctl` 与 `deployctl` 到 `~/.local/bin`。CLI 内置依赖，无需服务器 pip 安装。再次执行可升级本安装器管理的命令；已有其他同名工具会保留并报告冲突。
 
-安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.11.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
+安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.12.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
 
 要求 Python >=3.10；服务部署另需 Docker Engine、Docker Compose >=2.30。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
 

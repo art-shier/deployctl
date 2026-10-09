@@ -45,6 +45,7 @@ import { CredentialForm } from "./CredentialForm";
 import { RemoveResource } from "./RemoveResource";
 import { ImagesView } from "./ImagesView";
 import { GroupsView } from "./ProjectGroups";
+import { AgentAccess } from "./AgentAccessPage";
 import { tokenScopeLabel } from "./tokenScope";
 import { projectFormPayload } from "./projectForm";
 import "./styles.css";
@@ -349,6 +350,10 @@ function App() {
             <Clock size={18} />
             审计
           </a>
+          <a href="#agent" className={page === "agent" ? "active" : ""}>
+            <Terminal size={18} />
+            Agent 接入
+          </a>
         </nav>
         <div className="sidebar-account">
           <ShieldCheck size={17} />
@@ -385,6 +390,8 @@ function App() {
             <TokensView />
           ) : page === "audit" ? (
             <AuditView />
+          ) : page === "agent" ? (
+            <AgentAccess />
           ) : selected ? (
             <ProjectView slug={selected} navigate={navigate} />
           ) : (

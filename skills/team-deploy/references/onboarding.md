@@ -28,7 +28,7 @@ dry-run返回包含文件路径及完整YAML的JSON，不创建目录。正常�
 
 必需配置变量用重复的--required-config NAME，仅列真实必需项；默认空列表。--test-command接入真实项目测试。--directory指定业务目录，--dockerfile/--context沿用实际构建路径；输出路径可通过--deployment-file/--workflow-file指定。仅用户要求自动部署时添加--with-deploy-workflow，默认不创建服务器部署入口。
 
-实际平台art-shier/deployctl为私有仓库，使用CLI>=1.2的--private-platform生成PLATFORM_READ_TOKEN映射，并由用户在业务仓库Secrets配置只读平台Token。平台仓库还需允许相应范围的reusable workflow访问。该Token不写入YAML实际值。
+实际平台art-shier/deployctl为公开仓库，无需--private-platform或PLATFORM_READ_TOKEN。用户另指定私有平台时才使用--private-platform生成只读Token映射，并核对该私有平台的reusable workflow访问规则；Token实际值不写入YAML。
 
 最小合法描述示例（端口和健康路径必须改为项目实际值）：
 

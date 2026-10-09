@@ -1,13 +1,15 @@
 ---
 name: team-deploy
-description: "Use when onboarding a repository to team-deploy's GitHub Actions and Docker Compose delivery, installing or updating its ctl/deployctl CLI, or operating its managed services. 适用于项目接入、ctl命令缺失或工具升级、标准发布包和服务运维；不用于通用 K8s 或其他平台部署。"
+description: "Use when connecting an agent to ctl, managing authorized projects and configuration, onboarding GitHub Actions delivery, installing/updating ctl, or operating its managed services. 适用于Agent接入、项目与配置管理、标准发布和部署；不用于通用K8s或其他平台部署。"
 ---
 
 # Team Deploy
 
-使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.11.0，兼容发布包协议v1/v2并支持管理服务自动Release安装及快捷运维命令、项目/项目组管理、发布凭据配置读写、项目组配置继承、可编辑凭据与真实镜像层下载进度；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
+使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.12.0，兼容发布包协议v1/v2并支持管理服务自动Release安装及快捷运维命令、项目/项目组管理、发布凭据配置读写、项目组配置继承、可编辑凭据与真实镜像层下载进度；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
 
 ## 选择任务
+
+- 从管理台接入Agent、下载/更新skill或使用随附CLI访问服务：读取 [Agent接入](references/agent-access.md)。管理台侧栏提供当前服务的skill、CLI及接入说明，不需要MCP。
 
 - 读写项目/组配置或管理项目：读取 [管理服务模式](references/control-plane.md)。CLI>=1.11.0支持project/group及project-config/group-config；发布凭据只管理授权项目，组管理和删除需要owner。
 - 安装或升级ctl服务端：读取 [管理服务模式](references/control-plane.md)。CLI>=1.10.0支持server-install/server-upgrade默认获取官方最新正式Release，或指定--version/--release；旧server install/upgrade写法兼容。服务端首次安装不需要平台登录，业务安装仍需要scoped Token。
@@ -27,7 +29,7 @@ description: "Use when onboarding a repository to team-deploy's GitHub Actions a
 
 将当前 `SKILL.md` 所在目录记为 `SKILL_DIR`。选择可执行的 Python >=3.10 解释器，运行随附的自包含 CLI，无需 pip：
 
-先检查目标环境中的 `ctl` 或 `deployctl` 以及 `--version`。命令缺失时按 [CLI安装与升级](references/cli-lifecycle.md) 区分PATH问题与未安装；仅本地init/validate/package可以直接使用下面的随附CLI，不必为此安装系统命令。
+先检查目标环境中的 `ctl` 或 `deployctl` 以及 `--version`。命令缺失时按 [CLI安装与升级](references/cli-lifecycle.md) 区分PATH问题与未安装；本地接入及远端项目/配置管理可直接使用下面的随附CLI，不必为此安装系统命令。
 
 ```bash
 python "$SKILL_DIR/assets/deployctl.pyz" --version
@@ -35,7 +37,7 @@ python "$SKILL_DIR/assets/deployctl.pyz" init --help
 python "$SKILL_DIR/assets/deployctl.pyz" validate deploy/deployment.yaml
 ```
 
-本地init/validate/package可在Windows执行；服务运行命令只能在目标Linux服务器执行。服务器已安装CLI时先检查版本和--help；版本/契约不一致时查对应说明。v1.0.0没有init，使用随附v1.5.0初始化；远程平台引用沿用用户指定的真实版本。
+本地init/validate/package及远端项目/配置管理可在Windows执行；服务运行命令只能在目标Linux服务器执行。服务器已安装CLI时先检查版本和--help；版本/契约不一致时查对应说明。v1.0.0没有init，可使用随附CLI初始化；远程平台引用沿用用户指定的真实版本。
 
 `ctl self-update` 更新部署工具本身（CLI>=1.3.0且由安装器管理），`ctl upgrade <application> --env ... --release ...` 更新业务服务。旧CLI、源码/直接运行pyz或缺少安装记录时，通过安装器准备受管理的命令，不猜测其支持self-update。
 
