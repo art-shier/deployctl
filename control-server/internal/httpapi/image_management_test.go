@@ -30,10 +30,7 @@ func (m *imageManagerFixture) ImportDockerArchive(_ context.Context, _, _, file 
 	m.imported = true
 	return registry.Image{Tag: "manual", Digest: "sha256:" + strings.Repeat("a", 64)}, nil
 }
-func (m *imageManagerFixture) DeleteManifest(_ context.Context, _, digest string, roots []string) error {
-	if len(roots) != 0 {
-		return registry.ErrReferenced
-	}
+func (m *imageManagerFixture) DeleteManifest(_ context.Context, _, digest string) error {
 	m.deleted = true
 	return nil
 }
@@ -63,7 +60,7 @@ func TestOversizedArchiveIsRejectedBeforeAllocationOrDatabase(t *testing.T) {
 	}
 }
 
-func TestImageUploadCleanupAndReferencedDeletion(t *testing.T) {
+func TestImageUploadCleanupAndReferencedDeletionAllowed(t *testing.T) {
 	db := testutil.Store(t)
 	owner, _ := auth.NewToken()
 	manager := &imageManagerFixture{}
@@ -104,7 +101,11 @@ func TestImageUploadCleanupAndReferencedDeletion(t *testing.T) {
 	if _, err = db.PublishRelease(context.Background(), release, false, "ci"); err != nil {
 		t.Fatal(err)
 	}
-	if w := call("DELETE", "/api/v1/projects/notes/images/"+digest, ""); w.Code != 409 || manager.deleted {
+	if w := call("DELETE", "/api/v1/projects/notes/images/"+digest, ""); w.Code != 200 || !manager.deleted {
 		t.Fatal("referenced deletion", w.Code, w.Body.String())
+	}
+	releases, err := db.ListReleases(context.Background(), "notes")
+	if err != nil || len(releases) != 1 || releases[0].Image != release.Image {
+		t.Fatal("image deletion changed release history", releases, err)
 	}
 }

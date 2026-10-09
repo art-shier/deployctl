@@ -219,8 +219,6 @@ func failure(w http.ResponseWriter, err error) {
 		status, code, message = 503, "agent_resources_unavailable", "Agent 接入资源暂时不可用，请稍后重试"
 	case errors.Is(err, registry.ErrMixedLayers):
 		status, code, message = 400, "unsupported_layer_encoding", "归档包含不兼容的镜像层压缩格式，请使用 docker push 上传此镜像"
-	case errors.Is(err, registry.ErrReferenced):
-		status, code, message = 409, "image_referenced", "该镜像被发布版本、回滚版本或多架构镜像引用，不能删除"
 	case errors.Is(err, registry.ErrExternal):
 		status, code, message = 400, "external_registry", "上传和删除仅支持托管镜像仓库；外部仓库请在其管理端操作"
 	case errors.Is(err, registry.ErrTagExists):

@@ -171,41 +171,13 @@ func (v Verifier) InspectManifest(ctx context.Context, allowed, digest, proof st
 	slices.Sort(out.Platforms)
 	return out, nil
 }
-func (v Verifier) DeleteManifest(ctx context.Context, allowed, digest string, protected []string) error {
+func (v Verifier) DeleteManifest(ctx context.Context, allowed, digest string) error {
 	s, err := v.managedSession(allowed, "pull", "delete")
 	if err != nil {
 		return err
 	}
 	if domain.ValidateImage(allowed+"@"+digest) != nil {
 		return domain.ErrInvalid
-	}
-	for _, root := range protected {
-		if root == allowed+"@"+digest {
-			return ErrReferenced
-		}
-	}
-	images, err := v.ListImages(ctx, allowed)
-	if err != nil {
-		return err
-	}
-	// Protect children of tagged indexes, including images not yet registered as releases.
-	for _, image := range images {
-		if image.Digest != digest && (strings.Contains(image.MediaType, "index") || strings.Contains(image.MediaType, "manifest.list")) {
-			protected = append(protected, allowed+"@"+image.Digest)
-		}
-	}
-	g := manifestGraph{s, allowed, map[string]manifest{}, map[string]int64{}}
-	for _, root := range protected {
-		repo, hash, ok := strings.Cut(root, "@")
-		if !ok || repo != allowed {
-			return domain.ErrInvalid
-		}
-		if err = g.read(ctx, hash, 0); err != nil {
-			return err
-		}
-		if _, ok := g.nodes[digest]; ok {
-			return ErrReferenced
-		}
 	}
 	res, err := s.request(ctx, "DELETE", "/v2/"+s.repository+"/manifests/"+digest)
 	if err != nil {

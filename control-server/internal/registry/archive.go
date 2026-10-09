@@ -22,7 +22,6 @@ const MaxImageArchive int64 = 2 * 1024 * 1024 * 1024
 const MaxExpandedArchive int64 = 8 * 1024 * 1024 * 1024
 
 var ErrArchive = errors.New("invalid single image Docker archive")
-var ErrReferenced = errors.New("image is referenced")
 var ErrExternal = errors.New("operation requires managed registry")
 var ErrTagExists = errors.New("image tag already exists")
 var ErrMixedLayers = errors.New("unsupported mixed layer encoding")

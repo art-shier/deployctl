@@ -20,7 +20,7 @@ var errImageBusy = errors.New("image upload already in progress")
 var errImageTooLarge = errors.New("image archive too large")
 
 type imageManager interface {
-	DeleteManifest(context.Context, string, string, []string) error
+	DeleteManifest(context.Context, string, string) error
 	ImportDockerArchive(context.Context, string, string, string) (registry.Image, error)
 	InspectManifest(context.Context, string, string, string) (registry.ManifestDetails, error)
 }
@@ -68,11 +68,11 @@ func (s *Server) deleteImage(w http.ResponseWriter, r *http.Request, p auth.Prin
 	if !ok {
 		return domain.ErrInvalid
 	}
-	err := s.store.ManageImages(r.Context(), r.PathValue("slug"), p.ID, "image.delete:"+digest, func(project domain.Project, roots []string) error {
+	err := s.store.ManageImages(r.Context(), r.PathValue("slug"), p.ID, "image.delete:"+digest, func(project domain.Project) error {
 		if strings.Split(project.ImageRepository, "/")[0] != s.options.RegistryPublicHost {
 			return registry.ErrExternal
 		}
-		return manager.DeleteManifest(r.Context(), project.ImageRepository, digest, roots)
+		return manager.DeleteManifest(r.Context(), project.ImageRepository, digest)
 	})
 	if err != nil {
 		return err
@@ -153,7 +153,7 @@ func (s *Server) uploadImage(w http.ResponseWriter, r *http.Request, p auth.Prin
 		return err
 	}
 	var image registry.Image
-	err = s.store.ManageImages(r.Context(), project.Slug, p.ID, "image.upload:"+tag, func(current domain.Project, _ []string) error {
+	err = s.store.ManageImages(r.Context(), project.Slug, p.ID, "image.upload:"+tag, func(current domain.Project) error {
 		if current.ImageRepository != project.ImageRepository {
 			return domain.ErrConflict
 		}

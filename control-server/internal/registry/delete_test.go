@@ -16,7 +16,7 @@ import (
 	"github.com/art-shier/deployctl/control-server/internal/auth"
 )
 
-func TestDeleteProtectsPublishedAndTaggedIndexChildrenAndRejectsExternal(t *testing.T) {
+func TestDeleteAllowsPublishedAndTaggedIndexChildrenAndRejectsExternal(t *testing.T) {
 	child := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[],"config":{"digest":"sha256:` + strings.Repeat("c", 64) + `","size":42}}`)
 	hash := sha256.Sum256(child)
 	digest := "sha256:" + hex.EncodeToString(hash[:])
@@ -60,21 +60,21 @@ func TestDeleteProtectsPublishedAndTaggedIndexChildrenAndRejectsExternal(t *test
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	v := Verifier{InternalURL: server.URL, PublicHost: "registry.test", Signer: &auth.RegistrySigner{Key: key, Issuer: "test", Service: "test"}}
 	ctx := context.Background()
-	if err := v.DeleteManifest(ctx, "registry.test/notes", digest, []string{"registry.test/notes@" + index}); !errors.Is(err, ErrReferenced) {
-		t.Fatal("release index child not protected", err)
+	if err := v.DeleteManifest(ctx, "registry.test/notes", digest); err != nil || deleted != 1 {
+		t.Fatal("published index child deletion rejected", deleted, err)
 	}
 	tagged = true
-	if err := v.DeleteManifest(ctx, "registry.test/notes", digest, nil); !errors.Is(err, ErrReferenced) {
-		t.Fatal("tagged index child not protected", err)
+	if err := v.DeleteManifest(ctx, "registry.test/notes", digest); err != nil || deleted != 2 {
+		t.Fatal("tagged index child deletion rejected", deleted, err)
 	}
 	tagged = false
-	if err := v.DeleteManifest(ctx, "registry.test/notes", digest, nil); err != nil || deleted != 1 {
+	if err := v.DeleteManifest(ctx, "registry.test/notes", digest); err != nil || deleted != 3 {
 		t.Fatal("unused image deletion", deleted, err)
 	}
-	if err := v.DeleteManifest(ctx, "external.test/notes", digest, nil); !errors.Is(err, ErrExternal) {
+	if err := v.DeleteManifest(ctx, "external.test/notes", digest); !errors.Is(err, ErrExternal) {
 		t.Fatal("external deletion accepted", err)
 	}
-	if deleted != 1 {
+	if deleted != 3 {
 		t.Fatal("forbidden deletion reached registry")
 	}
 }

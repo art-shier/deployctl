@@ -5,7 +5,7 @@ description: "Use when connecting an agent to ctl, managing authorized projects 
 
 # Team Deploy
 
-使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.12.0，兼容发布包协议v1/v2并支持管理服务自动Release安装及快捷运维命令、项目/项目组管理、发布凭据配置读写、项目组配置继承、可编辑凭据与真实镜像层下载进度；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
+使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.12.1，兼容发布包协议v1/v2并支持管理服务自动Release安装及快捷运维命令、项目/项目组管理、发布凭据配置读写、项目组配置继承、可编辑凭据与真实镜像层下载进度；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
 
 ## 选择任务
 

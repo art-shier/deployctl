@@ -194,18 +194,40 @@ func TestRealRegistryScopesAndIndex(t *testing.T) {
 		}
 		return res.StatusCode, raw
 	}
-	if status, _ = apiCall("DELETE", "images/"+manifestDigest, owner, nil); status != 409 {
-		t.Fatal("tagged multiarch child not protected", status)
+	if status, _ = apiCall("DELETE", "images/"+manifestDigest, owner, nil); status != 200 {
+		t.Fatal("tagged multiarch child deletion rejected", status)
+	}
+	if status, _ = call("HEAD", "/v2/notes/manifests/"+manifestDigest, push, "", nil); status != 404 {
+		t.Fatal("deleted child still available", status)
+	}
+	// Restore fixture content for the independent publication and upload checks.
+	if status, _ = call("PUT", "/v2/notes/manifests/fixture", push, "application/vnd.oci.image.manifest.v1+json", manifest); status != 201 {
+		t.Fatal("restore child fixture", status)
 	}
 	release := domain.Release{Project: "notes", Version: "v0.0.0", Image: host + "/notes@" + indexDigest, SHA256: strings.Repeat("a", 64), Size: 100}
 	if _, err = db.PublishRelease(ctx, release, false, "ci"); err != nil {
 		t.Fatal(err)
 	}
+	if status, _ = apiCall("DELETE", "images/"+indexDigest, owner, nil); status != 200 {
+		t.Fatal("published release image deletion rejected", status)
+	}
+	if status, _ = call("HEAD", "/v2/notes/manifests/"+indexDigest, push, "", nil); status != 404 {
+		t.Fatal("deleted published index still available", status)
+	}
+	if status, _ = call("PUT", "/v2/notes/manifests/multi", push, "application/vnd.oci.image.index.v1+json", index); status != 201 {
+		t.Fatal("restore published index fixture", status)
+	}
 	if err = db.RetireRelease(ctx, "notes", release.Version, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if status, _ = apiCall("DELETE", "images/"+indexDigest, owner, nil); status != 409 {
-		t.Fatal("retired release lost image protection", status)
+	if status, _ = apiCall("DELETE", "images/"+indexDigest, owner, nil); status != 200 {
+		t.Fatal("retired release image deletion rejected", status)
+	}
+	if status, _ = call("HEAD", "/v2/notes/manifests/"+indexDigest, push, "", nil); status != 404 {
+		t.Fatal("deleted index still available", status)
+	}
+	if status, _ = call("PUT", "/v2/notes/manifests/multi", push, "application/vnd.oci.image.index.v1+json", index); status != 201 {
+		t.Fatal("restore index fixture", status)
 	}
 	if status, _ = apiCall("DELETE", "images/"+indexDigest, publisher, nil); status != 403 {
 		t.Fatal("publisher allowed delete", status)
@@ -337,7 +359,7 @@ func TestRealRegistryScopesAndIndex(t *testing.T) {
 		t.Fatal("all aliases must be removed", images, err)
 	}
 	if err = verifier.CheckManifest(ctx, host+"/notes@"+manifestDigest, host+"/notes"); err != nil {
-		t.Fatal("protected index child damaged", err)
+		t.Fatal("unrelated index child damaged", err)
 	}
 	files, _ := os.ReadDir(filepath.Join(api.options.ArtifactsDir, ".uploads"))
 	if len(files) != 0 {

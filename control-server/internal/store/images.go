@@ -23,7 +23,7 @@ func (s *Store) WithRepositoryLock(ctx context.Context, repository string, opera
 	return tx.Commit(ctx)
 }
 
-func (s *Store) ManageImages(ctx context.Context, slug, actor, action string, operate func(domain.Project, []string) error) error {
+func (s *Store) ManageImages(ctx context.Context, slug, actor, action string, operate func(domain.Project) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -36,25 +36,7 @@ func (s *Store) ManageImages(ctx context.Context, slug, actor, action string, op
 	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", "ctl-images:"+project.ImageRepository); err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, "SELECT DISTINCT data->>'image' FROM ctl_releases WHERE split_part(data->>'image','@',1)=$1", project.ImageRepository)
-	if err != nil {
-		return err
-	}
-	roots := []string{}
-	for rows.Next() {
-		var image string
-		if err = rows.Scan(&image); err != nil {
-			rows.Close()
-			return err
-		}
-		roots = append(roots, image)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	if err = operate(project, roots); err != nil {
+	if err = operate(project); err != nil {
 		return err
 	}
 	if err = audit(ctx, tx, actor, action, slug, "", nil); err != nil {
