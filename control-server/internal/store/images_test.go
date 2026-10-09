@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"github.com/art-shier/deployctl/control-server/internal/domain"
 	"strings"
 	"testing"
@@ -31,10 +30,10 @@ func TestImageDeletionSerializesWithPublicationAcrossSharedRepository(t *testing
 	case <-time.After(5 * time.Second):
 		t.Fatal("publication never entered verification")
 	}
-	operated := make(chan []string, 1)
+	operated := make(chan domain.Project, 1)
 	deleted := make(chan error, 1)
 	go func() {
-		deleted <- s.ManageImages(ctx, "shared-a", "owner", "image.delete", func(_ domain.Project, roots []string) error { operated <- roots; return domain.ErrConflict })
+		deleted <- s.ManageImages(ctx, "shared-a", "owner", "image.delete", func(project domain.Project) error { operated <- project; return nil })
 	}()
 	select {
 	case <-operated:
@@ -46,20 +45,17 @@ func TestImageDeletionSerializesWithPublicationAcrossSharedRepository(t *testing
 	if err := <-published; err != nil {
 		t.Fatal(err)
 	}
-	roots := <-operated
-	if len(roots) != 1 || roots[0] != release.Image {
-		t.Fatal("other project's release was not protected", roots)
+	project := <-operated
+	if project.ImageRepository != repository {
+		t.Fatal("wrong repository under deletion lock", project.ImageRepository)
 	}
-	if err := <-deleted; !errors.Is(err, domain.ErrConflict) {
+	if err := <-deleted; err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RetireRelease(ctx, "other", release.Version, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ManageImages(ctx, "shared-a", "owner", "image.test", func(_ domain.Project, roots []string) error {
-		if len(roots) != 1 {
-			t.Fatal("retired rollback image lost protection")
-		}
+	if err := s.ManageImages(ctx, "shared-a", "owner", "image.test", func(_ domain.Project) error {
 		return nil
 	}); err != nil {
 		t.Fatal(err)

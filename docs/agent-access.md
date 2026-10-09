@@ -43,6 +43,6 @@ publisher可管理授权项目资料、配置并在显式授权组内新建项�
 服务器升级后，页面与公开下载资源同时切换到新镜像对应版本；已下载的skill不会自动更新，需单独重新下载安装。`ctl self-update`只更新安装器管理的CLI，不覆盖skill目录。管理服务升级沿用现有数据、密钥和端口：
 
 ```bash
-ctl self-update --version v1.12.0
-sudo "$(command -v ctl)" server-upgrade --version v1.12.0
+ctl self-update --version v1.12.1
+sudo "$(command -v ctl)" server-upgrade --version v1.12.1
 ```

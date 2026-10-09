@@ -37,7 +37,7 @@ func TestNativeManifestPushWaitsForRepositoryOperation(t *testing.T) {
 	var once sync.Once
 	defer once.Do(func() { close(resume) })
 	go func() {
-		finished <- db.ManageImages(ctx, "notes", "owner", "image.test", func(domain.Project, []string) error { close(entered); <-resume; return nil })
+		finished <- db.ManageImages(ctx, "notes", "owner", "image.test", func(domain.Project) error { close(entered); <-resume; return nil })
 	}()
 	select {
 	case <-entered:

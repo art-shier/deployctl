@@ -301,12 +301,7 @@ export function ImagesView({
                           <button
                             className="icon-button danger"
                             aria-label={`删除镜像 ${image.tags.join(", ")}`}
-                            title={
-                              image.versions.length
-                                ? "发布及回滚版本引用的镜像受到保护"
-                                : "删除镜像"
-                            }
-                            disabled={!!image.versions.length}
+                            title="删除镜像"
                             onClick={() => setRemoving(image)}
                           >
                             <Trash2 size={16} />
@@ -354,7 +349,7 @@ export function ImagesView({
         </div>
       )}
       <p className="muted small">
-        发布和回滚引用的镜像受到保护。删除按 Digest
+        所有托管镜像均可删除，包括已关联发布版本的镜像。删除按 Digest
         执行，所有关联标签会一起删除；磁盘空间需要维护回收后释放。
       </p>
       {removing && (
@@ -375,14 +370,16 @@ export function ImagesView({
             </div>
             <code className="code-block">{removing.digest}</code>
             <p className="muted small">
-              服务端会再次检查所有项目的版本引用及多架构镜像依赖。
+              {removing.versions.length > 0 &&
+                `关联发布版本：${removing.versions.join("、")}。`}
+              删除后，依赖此镜像的版本在没有本地缓存时无法安装或回滚；引用它的多架构镜像也可能无法拉取。
             </p>
             <button
               className="danger"
               disabled={deleting}
               onClick={() => void remove()}
             >
-              {deleting ? "正在检查并删除…" : "确认删除镜像"}
+              {deleting ? "正在删除…" : "确认删除镜像"}
             </button>
           </div>
         </Dialog>
