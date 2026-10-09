@@ -1,4 +1,5 @@
-FROM node:22-alpine AS web
+# Browser assets are architecture-independent; avoid npm/esbuild under QEMU.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /src/control-web
 COPY control-web/package*.json ./
 RUN npm ci
