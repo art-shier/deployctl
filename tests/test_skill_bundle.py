@@ -75,6 +75,21 @@ class SkillBundleTests(unittest.TestCase):
         self.assertIn('--release', result.stdout)
         self.assertIn('--registry-host', result.stdout)
 
+    def test_skill_cli_includes_project_and_configuration_management(self):
+        for arguments, expected in [
+            (['project','create','--help'],'--group'),
+            (['project','delete','--help'],'--confirm'),
+            (['group','delete','--help'],'--confirm'),
+            (['project-config','get','--help'],'--reveal'),
+            (['project-config','set','--help'],'--value-file'),
+            (['project-config','apply','--help'],'--expected-revision'),
+            (['group-config','set','--help'],'--kind'),
+        ]:
+            result=subprocess.run([sys.executable,'-I','-S',str(SKILL/'assets/deployctl.pyz'),*arguments],
+                                  capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn(expected,result.stdout)
+
     def test_skill_cli_keeps_failures_nonzero(self):
         result = subprocess.run([sys.executable, '-I', '-S', str(SKILL / 'assets/deployctl.pyz'),
                                  'validate', str(SKILL / 'nonexistent.yaml')],

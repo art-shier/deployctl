@@ -2,12 +2,17 @@ package auth
 
 import "testing"
 
-func TestPublisherCannotReadProduction(t *testing.T) {
+func TestPublisherCanManageConfigurationWithoutDeploymentOrAdministration(t *testing.T) {
 	p := Principal{Role: "publisher", Project: "notes"}
 	if !p.Can("release.publish", "notes", "") || !p.Can("registry.push", "notes", "") {
 		t.Fatal("publisher denied")
 	}
-	for _, action := range []string{"resolve", "configuration.read", "token.create", "unknown"} {
+	for _, action := range []string{"configuration.read", "configuration.write", "configuration.reveal", "project.update"} {
+		if !p.Can(action, "notes", "prod") {
+			t.Fatal("publisher management denied", action)
+		}
+	}
+	for _, action := range []string{"resolve", "token.create", "unknown"} {
 		if p.Can(action, "notes", "prod") {
 			t.Fatal("publisher overprivileged", action)
 		}
@@ -50,7 +55,7 @@ func TestMultipleProjectScopeKeepsRoleAndEnvironmentLimits(t *testing.T) {
 		t.Fatal("cross-scope access")
 	}
 	p.Role = "publisher"
-	if !p.Can("release.publish", "config", "") || p.Can("configuration.read", "config", "prod") {
+	if !p.Can("release.publish", "config", "") || !p.Can("configuration.read", "config", "prod") || p.Can("configuration.write", "config", "stage") || p.Can("resolve", "config", "prod") {
 		t.Fatal("publisher role escaped")
 	}
 }

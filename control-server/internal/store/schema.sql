@@ -2,10 +2,12 @@ CREATE TABLE IF NOT EXISTS ctl_groups (
  slug text PRIMARY KEY, data jsonb NOT NULL
 );
 INSERT INTO ctl_groups(slug,data) VALUES('default',jsonb_build_object('slug','default','name','default','description','默认项目组','created_at',now())) ON CONFLICT DO NOTHING;
+ALTER TABLE ctl_groups ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 CREATE TABLE IF NOT EXISTS ctl_projects (
  slug text PRIMARY KEY, data jsonb NOT NULL, stable_version text NOT NULL DEFAULT ''
 );
 ALTER TABLE ctl_projects ADD COLUMN IF NOT EXISTS group_slug text NOT NULL DEFAULT 'default' REFERENCES ctl_groups(slug);
+ALTER TABLE ctl_projects ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 UPDATE ctl_projects SET data=jsonb_set(data,'{group}',to_jsonb(group_slug),true) WHERE data->>'group' IS DISTINCT FROM group_slug;
 CREATE INDEX IF NOT EXISTS ctl_projects_group ON ctl_projects(group_slug);
 CREATE TABLE IF NOT EXISTS ctl_environments (

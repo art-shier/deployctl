@@ -4,17 +4,32 @@ import (
 	"github.com/art-shier/deployctl/control-server/internal/auth"
 	"github.com/art-shier/deployctl/control-server/internal/domain"
 	"net/http"
+	"slices"
 )
 
 func (s *Server) groups(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	if err := owner(p); err != nil {
-		return err
+	if p.Role != "owner" && p.Role != "publisher" {
+		return errForbidden
 	}
 	groups, err := s.store.ListGroups(r.Context())
 	if err != nil {
 		return err
 	}
+	if p.Role != "owner" {
+		groups = slices.DeleteFunc(groups, func(g domain.Group) bool { return !slices.Contains(p.Groups, g.Slug) })
+	}
 	reply(w, 200, groups)
+	return nil
+}
+
+func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	if err := owner(p); err != nil {
+		return err
+	}
+	if err := s.store.DeleteGroup(r.Context(), r.PathValue("slug"), p.ID); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 func (s *Server) createGroup(w http.ResponseWriter, r *http.Request, p auth.Principal) error {

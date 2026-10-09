@@ -22,7 +22,7 @@ func scanGroup(row scanner) (domain.Group, error) {
 	return g, json.Unmarshal(b, &g)
 }
 func (s *Store) ListGroups(ctx context.Context) ([]domain.Group, error) {
-	rows, err := s.pool.Query(ctx, "SELECT data FROM ctl_groups ORDER BY slug")
+	rows, err := s.pool.Query(ctx, "SELECT data FROM ctl_groups WHERE deleted_at IS NULL ORDER BY slug")
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (s *Store) UpdateGroup(ctx context.Context, g domain.Group, actor string) (
 		return g, err
 	}
 	defer tx.Rollback(ctx)
-	old, err := scanGroup(tx.QueryRow(ctx, "SELECT data FROM ctl_groups WHERE slug=$1 FOR UPDATE", g.Slug))
+	old, err := scanGroup(tx.QueryRow(ctx, "SELECT data FROM ctl_groups WHERE slug=$1 AND deleted_at IS NULL FOR UPDATE", g.Slug))
 	if err != nil {
 		return g, err
 	}
@@ -91,12 +91,21 @@ func (s *Store) MoveProjectGroup(ctx context.Context, slug, expected, target, ac
 		return p, err
 	}
 	defer tx.Rollback(ctx)
-	p, err = scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 FOR UPDATE", slug))
+	p, err = scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL FOR UPDATE", slug))
 	if err != nil {
 		return p, err
 	}
 	if p.Group != expected {
 		return p, domain.ErrConflict
+	}
+	if err = s.lockGroup(ctx, tx, target); err != nil {
+		if err == domain.ErrNotFound {
+			err = domain.ErrInvalid
+		}
+		return p, err
+	}
+	if err = lockRepositories(ctx, tx, p.ImageRepository); err != nil {
+		return p, err
 	}
 	p.Group = target
 	b, _ := json.Marshal(p)

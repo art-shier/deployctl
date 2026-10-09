@@ -16,6 +16,7 @@ var (
 	ErrConflict     = errors.New("revision or version conflict")
 	ErrNotFound     = errors.New("not found")
 	ErrUnauthorized = errors.New("unauthorized")
+	ErrForbidden    = errors.New("forbidden")
 	names           = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 	keys            = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 	versions        = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$`)
@@ -43,6 +44,13 @@ type Configuration struct {
 	RuntimeEnv         map[string]Variable `json:"runtime_env"`
 	InstallParams      map[string]Variable `json:"install_params"`
 	DeploymentDefaults DeploymentDefaults  `json:"deployment_defaults"`
+}
+type ConfigurationPatch struct {
+	ExpectedRevision   int64               `json:"expected_revision"`
+	RuntimeEnv         []Change            `json:"runtime_env"`
+	InstallParams      []Change            `json:"install_params"`
+	DeploymentDefaults *DeploymentDefaults `json:"deployment_defaults"`
+	TargetVersion      *string             `json:"target_version"`
 }
 type Project struct {
 	Slug               string    `json:"slug"`

@@ -29,7 +29,7 @@ func (s *Store) ManageImages(ctx context.Context, slug, actor, action string, op
 		return err
 	}
 	defer tx.Rollback(ctx)
-	project, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 FOR NO KEY UPDATE", slug))
+	project, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL FOR NO KEY UPDATE", slug))
 	if err != nil {
 		return err
 	}

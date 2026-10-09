@@ -106,6 +106,9 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, p auth.Principa
 		return domain.ErrInvalid
 	}
 	check := func(project domain.Project) error {
+		if !p.CanInGroup("release.publish", project.Slug, project.Group, "") {
+			return errForbidden
+		}
 		var err error
 		if proof != "" {
 			verifier, ok := s.options.Verifier.(ProofManifestVerifier)
@@ -223,6 +226,9 @@ func (s *Server) registryToken(w http.ResponseWriter, r *http.Request) {
 	for _, line := range scopes {
 		for _, scope := range strings.Fields(line) {
 			for _, project := range projects {
+				if !p.CanInGroup("project.read", project.Slug, project.Group, "") {
+					continue
+				}
 				host, repository, _ := strings.Cut(project.ImageRepository, "/")
 				if host == s.options.RegistryPublicHost {
 					access = append(access, auth.ScopedAccess(p, scope, project.Slug, repository)...)

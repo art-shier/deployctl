@@ -62,8 +62,8 @@ func TestProjectSecretRevisionAndPublisherBoundary(t *testing.T) {
 	if w.Code != 201 || minted.Token == "" {
 		t.Fatal("token create failed", w.Code, w.Body.String())
 	}
-	if w = call("GET", "/api/v1/projects/notes/environments/prod", nil, minted.Token); w.Code != 403 {
-		t.Fatal("publisher read config", w.Code)
+	if w = call("GET", "/api/v1/projects/notes/environments/prod", nil, minted.Token); w.Code != 200 || strings.Contains(w.Body.String(), "private-sentinel") {
+		t.Fatal("publisher masked config read", w.Code)
 	}
 	if w = call("POST", "/api/v1/projects/notes/resolve", map[string]any{}, minted.Token); w.Code != 403 {
 		t.Fatal("publisher resolved production", w.Code)

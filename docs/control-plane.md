@@ -1,6 +1,6 @@
 # ctl 管理服务与平台模式
 
-本版本包含 CLI **1.10.0**、管理服务 **0.3.0**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
+本版本包含 CLI **1.11.0**、管理服务 **0.4.0**，统一通过ctl工具版本的Release分发。旧ctl1.5.0不支持平台命令，需先升级。管理服务与业务服务各自部署，管理服务故障不影响已有容器。
 
 平台包含 Go API / React 管理台、Distribution Registry、标准发布包目录和 PostgreSQL。单组织自托管；网页管理配置与版本，部署由目标服务器上的 ctl 执行。安装记录是客户端上报的历史结果。
 
@@ -10,18 +10,18 @@
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.10.0/install.sh \
-  | sudo bash -s -- --version v1.10.0
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.11.0/install.sh \
+  | sudo bash -s -- --version v1.11.0
 
 sudo ctl server-install
 # 首次指定管理服务端口：
 sudo ctl server-install --api-port 8084
 # 固定版本或沿用原URL方式（二选一）：
-sudo ctl server-install --version v1.10.0
-sudo ctl server install --release https://github.com/art-shier/deployctl/releases/download/v1.10.0/ctl-platform-v1.10.0.tar.gz
+sudo ctl server-install --version v1.11.0
+sudo ctl server install --release https://github.com/art-shier/deployctl/releases/download/v1.11.0/ctl-platform-v1.11.0.tar.gz
 ```
 
-已由安装器管理的CLI可以用 `sudo ctl self-update --version v1.10.0` 更新原目录；用户目录安装时用原用户更新，并用 `sudo "$(command -v ctl)" server-install` 执行需要root的服务操作。`server install`与普通业务 `install` 独立，管理API、Registry和可选PostgreSQL由固定Compose启动。
+已由安装器管理的CLI可以用 `sudo ctl self-update --version v1.11.0` 更新原目录；用户目录安装时用原用户更新，并用 `sudo "$(command -v ctl)" server-install` 执行需要root的服务操作。`server install`与普通业务 `install` 独立，管理API、Registry和可选PostgreSQL由固定Compose启动。
 
 CLI>=1.10.0不传--release时读取官方art-shier/deployctl的最新正式GitHub Release，解析为固定版本包并验证相邻SHA256；不跟随Docker latest，也不需要ctl login。--version可指定版本，不能与--release同时使用。网络、资产缺失或校验失败会报错。
 
@@ -33,7 +33,7 @@ CLI>=1.10.0不传--release时读取官方art-shier/deployctl的最新正式GitHu
 
 ```bash
 sudo ctl server-upgrade
-# 或固定版本：sudo ctl server-upgrade --version v1.10.0
+# 或固定版本：sudo ctl server-upgrade --version v1.11.0
 ```
 
 同版本同包可重复upgrade；install拒绝已有实例，源码引导过的实例使用upgrade接入。退出失败时保留 `server-state.json` 的pending记录，修复原因后用原命令/原发布包重试，不能换包绕过pending。引导保留密钥和数据，不提供数据库/平台镜像的自动事务回滚；失败不能报告为已升级成功。
@@ -96,22 +96,24 @@ sudo bash control-deploy/bootstrap.sh --database-url-file /root/ctl-database.url
 
 1. 注册项目 `notes`，默认环境 `prod`，托管镜像路径默认为 `ctl.shier.art/notes`。可以填写登记的外部镜像仓库。
 2. 环境配置中添加业务变量（例如秘密 `DATABASE_URL`）、安装参数（例如 `ADMIN_EMAIL`）和部署默认端口/内存/CPU。
-3. 创建 `publisher` 凭据交给该项目 CI；创建仅允许 `notes/prod` 的 `deployer` 凭据交给生产安装主机。明文只展示一次。publisher 无法获取生产配置。
+3. 创建 `publisher` 凭据交给该项目 CI；创建仅允许 `notes/prod` 的 `deployer` 凭据交给生产安装主机。完整Token可由owner再次查看。publisher可读写授权项目配置；需要隔离环境时显式限定其环境范围。
 4. 保存配置创建新修订；发生冲突时保留草稿，重新加载对比。秘密可保持、替换（包括空字符串）或删除。
 
 项目默认环境自动创建空修订1并指向 `stable`。环境名称与版本独立；发布完整版本并显式设置 stable 后才可安装。可以将环境固定到某个可安装版本。停用版本禁止新安装，保留回滚所需制品。首版不自动清理 Registry / 发布包。
 
 ## 项目组和共享部署凭据（v1.9.0）
 
-项目组扩展需要升级服务端。首次启动自动创建 `default`，将已有项目归入该组；迁移保留环境修订、秘密配置、发布版本、stable 指针和现有 Token。未指定组的新项目也属于 `default`。组标识创建后不可改，支持修改显示名称和说明；本次不提供组删除。
+CLI/管理服务v1.11.0新增发布凭据配置读写、项目管理和超管删除项目/项目组。命令、权限矩阵与数据保留规则见[项目管理说明](project-management.md)。
+
+项目组扩展需要升级服务端。首次启动自动创建 `default`，将已有项目归入该组；迁移保留环境修订、秘密配置、发布版本、stable 指针和现有 Token。未指定组的新项目也属于 `default`。组标识创建后不可改，支持修改显示名称和说明；超管可以删除空组，default保留；删除行为及数据保留规则见下文。
 
 登录管理台后默认进入「项目组」。点击项目组进入详情，默认显示「组内项目」列表；可在组内注册新项目、加入已有项目，或将成员移出到 default。每个项目只属于一个组；移组操作会改变组凭据的访问范围，提交前需确认。项目名称进入项目详情，返回按钮回到所属组。
 
 组详情的「组授权」页集中查看、创建、编辑和撤销凭据。可授权多个项目组、额外项目以及排除指定项目；以后加入授权组的项目自动获得授权，排除项始终优先。侧栏「组凭据」汇总当前未撤销的凭据。项目详情不提供凭据页签，统一在此管理授权。
 
-`owner` 是全局超级管理员。`publisher` 保持发布/镜像推送权限，不能读取环境配置；`deployer` 保持部署与镜像拉取权限，不能推送或管理项目。新凭据至少授权一个组或项目；使用 `groups` / `projects` 数组和可选 `excluded_projects` 排除项。重复或不存在的范围会被拒绝。旧项目级凭据保留原权限，编辑后可转换为当前授权方式，不因归入 `default` 自动扩大权限。
+`owner` 是全局超级管理员。`publisher` 保持发布/镜像推送权限，并可管理授权项目资料、读写项目环境配置、在显式授权组内新建项目；`deployer` 保持部署与镜像拉取权限，不能推送或管理项目。新凭据至少授权一个组或项目；使用 `groups` / `projects` 数组和可选 `excluded_projects` 排除项。重复或不存在的范围会被拒绝。旧项目级凭据保留原权限，编辑后可转换为当前授权方式，不因归入 `default` 自动扩大权限。
 
-凭据可修改名称、角色、授权范围、部署环境及到期时间，Token保持不变；保存后后续API请求立即使用新权限。点击「查看Token」可再次查看完整内容；新Token使用平台配置加密密钥加密保存，仅owner可读取，响应不缓存，查看操作记入审计，列表不会包含明文。旧凭据仅有哈希，无法恢复原文，可确认「重新生成Token」保留授权范围和凭据ID；需要更新使用方的登录或流水线凭据。撤销后凭据从列表移除且不能编辑、查看或恢复，审计历史保留。
+凭据可修改名称、角色、授权范围、环境范围及到期时间，Token保持不变；保存后后续API请求立即使用新权限。点击「查看Token」可再次查看完整内容；新Token使用平台配置加密密钥加密保存，仅owner可读取，响应不缓存，查看操作记入审计，列表不会包含明文。旧凭据仅有哈希，无法恢复原文，可确认「重新生成Token」保留授权范围和凭据ID；需要更新使用方的登录或流水线凭据。撤销后凭据从列表移除且不能编辑、查看或恢复，审计历史保留。
 
 ### 项目组环境配置
 
@@ -135,7 +137,7 @@ sudo ctl install notes --prod
 sudo ctl install another-app --prod
 ```
 
-`another-app` 是示例项目，需先登记到授权组。一个 Token 授权项目组，两个 install 共用一次登录。组管理 API 为 `GET/POST /api/v1/groups`、`PATCH /api/v1/groups/{slug}`；成员调整使用 `PATCH /api/v1/projects/{slug}/group`，提交 `{ "expected_group": "原组", "group": "目标组" }`。原组已变化返回409，移组只修改归属并保留其他项目元数据。新 Token 只使用 `groups` 数组。管理组、移组及调整授权仍仅允许 owner。
+`another-app` 是示例项目，需先登记到授权组。一个 Token 授权项目组，两个 install 共用一次登录。组管理 API 为 `GET/POST /api/v1/groups`、`PATCH/DELETE /api/v1/groups/{slug}`；成员调整使用 `PATCH /api/v1/projects/{slug}/group`，提交 `{ "expected_group": "原组", "group": "目标组" }`。原组已变化返回409，移组只修改归属并保留其他项目元数据。新 Token 只使用 `groups` 数组。管理组、移组及调整授权仍仅允许 owner。
 
 ## 镜像管理
 

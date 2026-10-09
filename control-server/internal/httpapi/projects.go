@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"errors"
 	"net/http"
 	"slices"
 
@@ -16,7 +15,7 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request, p auth.Princip
 	}
 	out := []domain.Project{}
 	for _, item := range projects {
-		if p.Can("project.read", item.Slug, "") {
+		if p.CanInGroup("project.read", item.Slug, item.Group, "") {
 			out = append(out, item)
 		}
 	}
@@ -24,8 +23,8 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request, p auth.Princip
 	return nil
 }
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	if err := owner(p); err != nil {
-		return err
+	if p.Role != "owner" && p.Role != "publisher" {
+		return errForbidden
 	}
 	var project domain.Project
 	if err := decode(w, r, &project); err != nil {
@@ -34,7 +33,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, p auth.Pr
 	if project.ImageRepository == "" {
 		project.ImageRepository = s.options.RegistryPublicHost + "/" + project.Slug
 	}
-	result, err := s.store.CreateProject(r.Context(), project, p.ID)
+	if p.Role == "publisher" && project.ImageRepository != s.options.RegistryPublicHost+"/"+project.Slug {
+		return errForbidden
+	}
+	result, err := s.store.CreateProjectAuthorized(r.Context(), project, p)
 	if err != nil {
 		return err
 	}
@@ -43,10 +45,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, p auth.Pr
 }
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	slug := r.PathValue("slug")
-	if err := permitted(p, "project.read", slug, ""); err != nil {
-		return err
-	}
-	project, err := s.store.GetProject(r.Context(), slug)
+	project, err := s.store.GetProjectAuthorized(r.Context(), slug, p)
 	if err != nil {
 		return err
 	}
@@ -54,8 +53,8 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request, p auth.Princ
 	return nil
 }
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	if err := owner(p); err != nil {
-		return err
+	if p.Role != "owner" && p.Role != "publisher" {
+		return errForbidden
 	}
 	var project domain.Project
 	if err := decode(w, r, &project); err != nil {
@@ -64,7 +63,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request, p auth.Pr
 	if project.Slug != r.PathValue("slug") {
 		return domain.ErrInvalid
 	}
-	result, err := s.store.UpdateProject(r.Context(), project, p.ID)
+	result, err := s.store.UpdateProjectAuthorized(r.Context(), project, p)
 	if err != nil {
 		return err
 	}
@@ -72,10 +71,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request, p auth.Pr
 	return nil
 }
 func (s *Server) environments(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	if err := owner(p); err != nil {
-		return err
-	}
-	items, err := s.store.ListEnvironments(r.Context(), r.PathValue("slug"))
+	items, err := s.store.ListEnvironmentsAuthorized(r.Context(), r.PathValue("slug"), p)
 	if err != nil {
 		return err
 	}
@@ -90,7 +86,7 @@ type maskedVariable struct {
 	Value      *string `json:"value,omitempty"`
 }
 
-func masked(vars map[string]domain.Variable) []maskedVariable {
+func masked(vars map[string]domain.Variable, reveal ...bool) []maskedVariable {
 	keys := []string{}
 	for key := range vars {
 		keys = append(keys, key)
@@ -100,7 +96,7 @@ func masked(vars map[string]domain.Variable) []maskedVariable {
 	for _, key := range keys {
 		v := vars[key]
 		item := maskedVariable{Key: key, Secret: v.Secret, Configured: true}
-		if !v.Secret {
+		if !v.Secret || (len(reveal) > 0 && reveal[0]) {
 			value := v.Value
 			item.Value = &value
 		}
@@ -108,72 +104,40 @@ func masked(vars map[string]domain.Variable) []maskedVariable {
 	}
 	return out
 }
-func environmentReply(w http.ResponseWriter, rev domain.Revision) {
-	reply(w, 200, map[string]any{"id": rev.ID, "environment": rev.Environment, "revision": rev.Revision, "target_version": rev.TargetVersion, "runtime_env": masked(rev.Configuration.RuntimeEnv), "install_params": masked(rev.Configuration.InstallParams), "deployment_defaults": rev.Configuration.DeploymentDefaults, "created_at": rev.CreatedAt, "inherited_runtime_env": masked(rev.InheritedConfiguration.RuntimeEnv), "inherited_install_params": masked(rev.InheritedConfiguration.InstallParams), "group_source": rev.GroupSource})
+func environmentReply(w http.ResponseWriter, rev domain.Revision, reveal ...bool) {
+	reply(w, 200, map[string]any{"id": rev.ID, "environment": rev.Environment, "revision": rev.Revision, "target_version": rev.TargetVersion, "runtime_env": masked(rev.Configuration.RuntimeEnv, reveal...), "install_params": masked(rev.Configuration.InstallParams, reveal...), "deployment_defaults": rev.Configuration.DeploymentDefaults, "created_at": rev.CreatedAt, "inherited_runtime_env": masked(rev.InheritedConfiguration.RuntimeEnv, reveal...), "inherited_install_params": masked(rev.InheritedConfiguration.InstallParams, reveal...), "group_source": rev.GroupSource})
 }
 func (s *Server) environment(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	if err := owner(p); err != nil {
-		return err
-	}
-	rev, err := s.store.GetRevision(r.Context(), r.PathValue("slug"), r.PathValue("env"))
+	reveal := r.URL.Query().Get("reveal") == "true"
+	rev, err := s.store.GetRevisionAuthorized(r.Context(), r.PathValue("slug"), r.PathValue("env"), p, reveal)
 	if err != nil {
 		return err
 	}
-	environmentReply(w, rev)
+	environmentReply(w, rev, reveal)
 	return nil
 }
 func (s *Server) saveEnvironment(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	if err := owner(p); err != nil {
-		return err
+	if p.Role != "owner" && p.Role != "publisher" {
+		return errForbidden
 	}
-	var body struct {
-		ExpectedRevision   int64                      `json:"expected_revision"`
-		RuntimeEnv         []domain.Change            `json:"runtime_env"`
-		InstallParams      []domain.Change            `json:"install_params"`
-		DeploymentDefaults *domain.DeploymentDefaults `json:"deployment_defaults"`
-		TargetVersion      *string                    `json:"target_version"`
-	}
+	var body domain.ConfigurationPatch
 	if err := decode(w, r, &body); err != nil {
 		return err
 	}
-	slug, env := r.PathValue("slug"), r.PathValue("env")
-	if _, err := s.store.GetProject(r.Context(), slug); err != nil {
-		return err
-	}
-	previous, err := s.store.GetRevision(r.Context(), slug, env)
-	if err != nil && !errors.Is(err, domain.ErrNotFound) {
-		return err
-	}
-	if errors.Is(err, domain.ErrNotFound) {
-		previous = domain.Revision{TargetVersion: "stable"}
-	}
-	if previous.Revision != body.ExpectedRevision {
-		return domain.ErrConflict
-	}
-	cfg := previous.Configuration
-	cfg.RuntimeEnv, err = domain.ApplyChanges(cfg.RuntimeEnv, body.RuntimeEnv, true)
-	if err != nil {
-		return err
-	}
-	cfg.InstallParams, err = domain.ApplyChanges(cfg.InstallParams, body.InstallParams, false)
-	if err != nil {
-		return err
-	}
-	if body.DeploymentDefaults != nil {
-		cfg.DeploymentDefaults = *body.DeploymentDefaults
-	}
-	target := previous.TargetVersion
-	if body.TargetVersion != nil {
-		target = *body.TargetVersion
-	}
-	_, err = s.store.SaveRevision(r.Context(), slug, env, body.ExpectedRevision, cfg, target, p.ID)
-	if err != nil {
-		return err
-	}
-	next, err := s.store.GetRevision(r.Context(), slug, env)
+	next, err := s.store.SaveConfigurationAuthorized(r.Context(), r.PathValue("slug"), r.PathValue("env"), body, p)
 	if err != nil {
 		return err
 	}
 	environmentReply(w, next)
+	return nil
+}
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	if err := owner(p); err != nil {
+		return err
+	}
+	if err := s.store.DeleteProject(r.Context(), r.PathValue("slug"), p.ID); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

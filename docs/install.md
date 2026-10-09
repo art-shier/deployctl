@@ -23,7 +23,7 @@ curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/de
 ctl --version
 ```
 
-系统安装到/usr/local/bin；已有安装器管理的命令使用sudo ctl self-update --version v1.10.0。用户安装沿用原目录和身份。CLI>=1.10.0可直接执行ctl server-install/server-upgrade，默认获取官方最新正式Release，也可使用--version或原server install --release <服务端包URL>。用户目录安装执行需要root的服务命令时使用sudo "$(command -v ctl)" server-install。这与ctl login（默认https://ctl.shier.art，可用ctl config set server <管理API地址>修改）的Token登录分开。
+系统安装到/usr/local/bin；已有安装器管理的命令使用sudo ctl self-update --version v1.11.0。用户安装沿用原目录和身份。CLI>=1.10.0可直接执行ctl server-install/server-upgrade，默认获取官方最新正式Release，也可使用--version或原server install --release <服务端包URL>。用户目录安装执行需要root的服务命令时使用sudo "$(command -v ctl)" server-install。这与ctl login（默认https://ctl.shier.art，可用ctl config set server <管理API地址>修改）的Token登录分开。
 
 ## 已登录GitHub CLI：一键安装最新版
 

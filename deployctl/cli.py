@@ -16,6 +16,8 @@ def parser():
     result = argparse.ArgumentParser(prog='deployctl')
     result.add_argument('--version', action='version', version=__version__)
     sub = result.add_subparsers(dest='command', required=True)
+    from .platform_management import add_commands
+    add_commands(sub)
     server = sub.add_parser('server', help='install, upgrade or operate the independent ctl platform')
     operations = server.add_subparsers(dest='server_command', required=True)
     for name in ('install', 'upgrade', 'restart', 'start', 'stop', 'status', 'logs'):
@@ -130,6 +132,9 @@ def main(argv=None):
                 state = operate_server(args.server_command, home=args.home, tail=getattr(args, 'tail', 100))
                 if args.server_command == 'status': print(json.dumps(state, indent=2))
                 elif args.server_command != 'logs': print(f'OK: ctl server {args.server_command}; instance: {args.home}')
+        elif args.command in ('project','group','project-config','group-config'):
+            from .platform_management import handle
+            print(json.dumps(handle(args),ensure_ascii=False,indent=2))
         elif args.command == 'config':
             from .platform_credentials import Credentials
             if args.config_command == 'get':
