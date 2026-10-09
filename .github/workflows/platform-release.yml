@@ -84,11 +84,20 @@ jobs:
           docker --config "$RUNNER_TEMP/anonymous-docker" pull --platform linux/amd64 "$IMAGE"
           python scripts/build_server_bundle.py --image "$IMAGE" --version "$TAG"
       - name: Build wheel and release assets
+        env:
+          IMAGE: ${{ steps.server-repository.outputs.image }}@${{ steps.server-image.outputs.digest }}
+          TAG: ${{ inputs.version || github.ref_name }}
         run: |
           python -m build --wheel
           python scripts/build_release_assets.py
           python -I -S dist/deployctl.pyz --version
           bash scripts/installer_smoke.sh
+          AGENT_ASSET_CONTAINER=$(docker create "$IMAGE")
+          trap 'docker rm "$AGENT_ASSET_CONTAINER" >/dev/null 2>&1 || true' EXIT
+          docker cp "$AGENT_ASSET_CONTAINER:/app/agent/team-deploy-skill.zip" "$RUNNER_TEMP/image-skill.zip"
+          docker cp "$AGENT_ASSET_CONTAINER:/app/agent/assets/deployctl.pyz" "$RUNNER_TEMP/image-cli.pyz"
+          cmp "$RUNNER_TEMP/image-skill.zip" "dist/team-deploy-skill-${TAG}.zip"
+          cmp "$RUNNER_TEMP/image-cli.pyz" dist/deployctl.pyz
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: deployctl-${{ inputs.version || github.ref_name }}

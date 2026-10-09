@@ -3,6 +3,7 @@
 Only run in disposable Linux CI. Never uses production configuration.
 """
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,8 @@ import time
 from urllib.error import HTTPError
 from urllib.request import urlopen
 import uuid
+import zipfile
+import io
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
@@ -23,6 +26,7 @@ from deployctl.platform_credentials import Credentials
 from deployctl.release import build_release
 from deployctl.contract import read_yaml
 from deployctl.runtime import project_name
+from deployctl import __version__
 from platform_management_integration import verify_management
 
 
@@ -69,6 +73,19 @@ def main():
             server=subprocess.Popen([binary],env=server_env,stdout=log,stderr=subprocess.STDOUT)
             owner=PlatformClient(Credentials(origin,(keys/'owner.token').read_text().strip()))
             wait(lambda:owner.json('GET','/api/v1/me').get('role')=='owner')
+            agent=owner.json('GET','/api/v1/agent-access')
+            assert agent['version']==__version__ and agent['server_url']==origin
+            for kind in ('skill','cli'):
+                with urlopen(origin+agent[kind+'_url'],timeout=30) as resource: data=resource.read(5*1024*1024)
+                assert hashlib.sha256(data).hexdigest()==agent[kind+'_sha256']
+                if kind=='skill':
+                    with zipfile.ZipFile(io.BytesIO(data)) as skill:
+                        assert 'team-deploy/SKILL.md' in skill.namelist()
+                        assert 'team-deploy/references/agent-access.md' in skill.namelist()
+                        assert 'team-deploy/assets/deployctl.pyz' in skill.namelist()
+            with urlopen(origin+agent['entry_url'],timeout=30) as resource:
+                assert ('v'+__version__).encode() in resource.read()
+            print('PASS: authenticated agent metadata and anonymous self-hosted skill/CLI/Markdown, checksums and bundled version')
             def registry_ready():
                 try:urlopen('http://'+host+'/v2/',timeout=2)
                 except HTTPError as e:return e.code==401

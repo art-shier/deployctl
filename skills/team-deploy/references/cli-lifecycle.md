@@ -29,7 +29,7 @@ CLI安装要求Linux/Bash、Python>=3.10。工具自身安装与更新不需要D
 
 ## 在线首次安装与旧版更新
 
-真实平台`art-shier/deployctl`为私有仓库。使用已有的GH_TOKEN/GITHUB_TOKEN或已登录github.com且有平台读取权限的gh。需要登录时说明`gh auth login --hostname github.com`；不输出Token，不将其放进URL。
+真实平台`art-shier/deployctl`为公开仓库，公开Release下载无需GitHub Token或登录。用户另指定私有平台时才使用其已有GH_TOKEN/GITHUB_TOKEN或有读取权限的gh；不输出Token，不将其放进URL。
 
 用户已要求准备/更新工具时，可以在其指定目录完成安装和验证，不额外安装系统依赖或自动提升权限。普通用户安装到用户目录：
 
@@ -83,7 +83,7 @@ ctl self-update --version v1.3.0
 
 执行失败就是工具更新失败；根据具体错误处理网络、凭证、写权限或安装记录，不改用业务`upgrade`。下载和校验失败保留旧命令；文件写入失败恢复已替换的命令。更新后用实际入口再次检查版本，不能只凭安装器打印的信息报告成功。
 
-运行时env-var/set/unset及协议v2 hooks要求CLI>=1.5.0。现有受管理1.4.0先`ctl self-update --version v1.5.0`并检查实际版本/help；CLI升级不会更新业务仓库workflow，构建和可选deploy调用的@引用与platform-ref也要同步至同一支持版本。直接运行随附pyz只能用于本地接入，不能据此认为服务器已升级。
+运行时env-var/set/unset及协议v2 hooks要求CLI>=1.5.0。现有受管理旧版本通过self-update升级到用户选择的已发布版本，并检查实际版本/help；CLI升级不会更新业务仓库workflow，构建和可选deploy调用的@引用与platform-ref也要同步至同一支持版本。随附pyz可用于本地接入或远端管理，不能据此认为服务器已升级。skill更新需单独替换其目录，见[Agent接入](agent-access.md)。
 
 ## 离线安装或指定版本回退
 

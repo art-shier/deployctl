@@ -210,6 +210,6 @@ func Load() (Config, error) {
 		return c, errors.New("invalid listen address")
 	}
 	signer := &auth.RegistrySigner{Key: key, Issuer: "ctl", Service: "ctl-registry"}
-	c.API = httpapi.Options{OwnerHash: auth.HashToken(token), PublicOrigin: origin, CookieSecure: u.Scheme == "https", RegistryPublicHost: host, ArtifactsDir: env("CTL_ARTIFACTS_DIR", "/var/lib/ctl/artifacts"), WebDir: env("CTL_WEB_DIR", "/app/web"), Signer: signer, Verifier: registry.Verifier{InternalURL: env("CTL_REGISTRY_INTERNAL_URL", "http://registry:5000"), PublicHost: host, Signer: signer}}
+	c.API = httpapi.Options{OwnerHash: auth.HashToken(token), PublicOrigin: origin, CookieSecure: u.Scheme == "https", RegistryPublicHost: host, ArtifactsDir: env("CTL_ARTIFACTS_DIR", "/var/lib/ctl/artifacts"), WebDir: env("CTL_WEB_DIR", "/app/web"), AgentDir: env("CTL_AGENT_DIR", "/app/agent"), Signer: signer, Verifier: registry.Verifier{InternalURL: env("CTL_REGISTRY_INTERNAL_URL", "http://registry:5000"), PublicHost: host, Signer: signer}}
 	return c, nil
 }
