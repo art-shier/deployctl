@@ -2,6 +2,12 @@
 
 目标服务器先检查CLI>=1.7.0。管理服务支持 `sudo ctl server install --release <真实ctl-platform发布包URL>`，无需clone或先登录；相邻.sha256自动验证，包固定镜像digest。默认origin为https://ctl.shier.art，Registry host为ctl.shier.art。升级使用server upgrade；失败保留pending，修复后重试同包。平台数据/密钥留在/opt/ctl-platform，HTTPS由现有代理配置。引导不提供数据库自动回滚。详见平台仓库docs/control-plane.md。
 
+CLI>=1.10.0可直接`sudo ctl server-install`或`sudo ctl server-upgrade`，默认解析官方最新正式Release为固定版本并校验SHA256；--version固定版本，--release沿用审核URL/本地包，二者不能同时传。旧`ctl server install/upgrade`等价。用户目录安装用原用户self-update，需要root时使用`sudo "$(command -v ctl)" ...`。不自动升级CLI以绕过包的最低版本要求。
+
+`server-status`、`server-logs --tail 100`、`server-restart`、`server-stop`、`server-start`（或`server status/logs/restart/stop/start`）使用已安装缓存包和现有实例配置，默认--home /opt/ctl-platform；不重建密钥、不清理数据、不拉取新镜像。重启/启动等待就绪；pending非空只允许查看状态/日志，修复后精确重试其版本包。用户未授权运维时不要因为提供了快捷命令而操作生产服务。
+
+新CLI把原始发布包保留到缓存，用state记录的SHA256验证包及展开文件。旧缓存第一次操作需要取回原精确版本包并用原SHA验证，之后离线可用；自定义旧包无法从官方取回时，用原--release同版本upgrade建立已验证缓存，不手工改缓存或state。
+
 已注册项目与授权环境可以：
 
 ```bash

@@ -16,18 +16,24 @@ def parser():
     result = argparse.ArgumentParser(prog='deployctl')
     result.add_argument('--version', action='version', version=__version__)
     sub = result.add_subparsers(dest='command', required=True)
-    server = sub.add_parser('server', help='install or upgrade the independent ctl platform from a release bundle')
+    server = sub.add_parser('server', help='install, upgrade or operate the independent ctl platform')
     operations = server.add_subparsers(dest='server_command', required=True)
-    for name in ('install', 'upgrade'):
-        operation = operations.add_parser(name)
-        operation.add_argument('--release', required=True, help='server bundle HTTPS URL or local archive')
-        operation.add_argument('--sha256', help='expected checksum; default: adjacent .sha256')
-        operation.add_argument('--home', default='/opt/ctl-platform')
-        operation.add_argument('--origin', help='initial public API origin; default: https://ctl.shier.art')
-        operation.add_argument('--registry-host', help='initial Registry host; default: ctl.shier.art')
-        operation.add_argument('--api-port', type=int)
-        operation.add_argument('--registry-port', type=int)
-        operation.add_argument('--database-url-file', help='private file containing an external PostgreSQL URL')
+    for name in ('install', 'upgrade', 'restart', 'start', 'stop', 'status', 'logs'):
+        for operation in (operations.add_parser(name), sub.add_parser('server-' + name, help='alias for server ' + name)):
+            operation.set_defaults(command='server', server_command=name)
+            operation.add_argument('--home', default='/opt/ctl-platform')
+            if name in ('install', 'upgrade'):
+                source = operation.add_mutually_exclusive_group()
+                source.add_argument('--release', help='server bundle HTTPS URL or local archive')
+                source.add_argument('--version', dest='server_version', help='official Release tag; default: latest stable Release')
+                operation.add_argument('--quiet', action='store_true', help='hide release acquisition progress')
+                operation.add_argument('--sha256', help='expected checksum; default: adjacent .sha256')
+                operation.add_argument('--origin', help='initial public API origin; default: https://ctl.shier.art')
+                operation.add_argument('--registry-host', help='initial Registry host; default: ctl.shier.art')
+                operation.add_argument('--api-port', type=int)
+                operation.add_argument('--registry-port', type=int)
+                operation.add_argument('--database-url-file', help='private file containing an external PostgreSQL URL')
+            if name == 'logs': operation.add_argument('--tail', type=int, default=100)
     login = sub.add_parser('login', help='save private platform credentials')
     login.add_argument('--server', help='override saved server for this login; default: saved server or https://ctl.shier.art')
     login.add_argument('--token-file', help='private file containing a scoped token; otherwise prompt')
@@ -112,11 +118,18 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         if args.command == 'server':
-            from .server_bundle import deploy_server
-            state = deploy_server(args.release, home=args.home, expected_sha256=args.sha256,
-                upgrade=args.server_command == 'upgrade', origin=args.origin, registry_host=args.registry_host,
-                api_port=args.api_port, registry_port=args.registry_port, database_url_file=args.database_url_file)
-            print(f"OK: ctl server running {state['current']['version']}; instance: {args.home}")
+            from .server_bundle import deploy_server, operate_server
+            if args.server_command in ('install', 'upgrade'):
+                from .progress import Progress
+                state = deploy_server(args.release, home=args.home, expected_sha256=args.sha256,
+                    release_version=args.server_version, progress=Progress(enabled=not args.quiet),
+                    upgrade=args.server_command == 'upgrade', origin=args.origin, registry_host=args.registry_host,
+                    api_port=args.api_port, registry_port=args.registry_port, database_url_file=args.database_url_file)
+                print(f"OK: ctl server running {state['current']['version']}; instance: {args.home}")
+            else:
+                state = operate_server(args.server_command, home=args.home, tail=getattr(args, 'tail', 100))
+                if args.server_command == 'status': print(json.dumps(state, indent=2))
+                elif args.server_command != 'logs': print(f'OK: ctl server {args.server_command}; instance: {args.home}')
         elif args.command == 'config':
             from .platform_credentials import Credentials
             if args.config_command == 'get':
@@ -270,7 +283,9 @@ def main(argv=None):
         print(f'ERROR: {exc}', file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print('Interrupted; inspect status and use rollback if a transaction is pending', file=sys.stderr)
+        message = ('Interrupted; inspect server-status and retry the exact pending server Release'
+                   if args.command == 'server' else 'Interrupted; inspect status and use rollback if a transaction is pending')
+        print(message, file=sys.stderr)
         return 130
 
 

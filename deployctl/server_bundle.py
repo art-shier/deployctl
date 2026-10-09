@@ -14,10 +14,14 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
+from urllib.parse import quote
+from urllib.request import Request, ProxyHandler, HTTPRedirectHandler, build_opener
+from urllib.error import URLError
 
 from . import __version__
 from .contract import DIGEST_IMAGE, load_yaml, version
-from .download import acquire_release
+from .download import acquire_release, fetch
 from .runtime_snapshot import reject_links
 
 FILES = {'server-release.json', 'control-deploy/bootstrap.sh',
@@ -26,6 +30,31 @@ MAX_EXPANDED = 512 * 1024
 MAX_MEMBER = 256 * 1024
 BOOTSTRAP_TIMEOUT = 1800
 LOCK_HOME = Path('/run/ctl-platform-cli')
+
+
+def resolve_server_release(requested='latest'):
+    if requested != 'latest':
+        requested = requested if requested.startswith('v') else 'v' + requested
+        version(requested)
+    route = 'latest' if requested == 'latest' else 'tags/' + quote(requested, safe='')
+    headers = {'User-Agent': 'team-deployctl', 'Accept': 'application/vnd.github+json'}
+    token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+    if token: headers['Authorization'] = 'Bearer ' + token
+    release = json.loads(fetch(Request('https://api.github.com/repos/art-shier/deployctl/releases/' + route,
+                                      headers=headers), 1024 * 1024))
+    if not isinstance(release, dict): raise ValueError('invalid official server release metadata')
+    tag = release.get('tag_name'); version(tag)
+    if requested != 'latest' and tag != requested: raise ValueError('server release version does not match requested version')
+    if release.get('draft') is not False or (requested == 'latest' and release.get('prerelease') is not False):
+        raise ValueError('server release is not a published stable version')
+    assets = release.get('assets')
+    if not isinstance(assets, list) or any(not isinstance(item, dict) for item in assets):
+        raise ValueError('invalid official server release assets')
+    name = 'ctl-platform-' + tag + '.tar.gz'
+    for expected in (name, name + '.sha256'):
+        if sum(item.get('name') == expected for item in assets) != 1:
+            raise ValueError('official Release must contain exactly one ' + expected)
+    return f'https://github.com/art-shier/deployctl/releases/download/{quote(tag, safe="")}/{name}', tag
 
 
 def validate_manifest(value):
@@ -90,7 +119,7 @@ def read_bundle(package):
 
 
 def require_runtime():
-    if sys.platform != 'linux' or os.geteuid() != 0: raise ValueError('ctl server install/upgrade requires Linux root')
+    if sys.platform != 'linux' or os.geteuid() != 0: raise ValueError('ctl server commands require Linux root')
     try:
         result = subprocess.run(['docker', 'compose', 'version', '--short'], capture_output=True, text=True, timeout=30)
     except subprocess.TimeoutExpired as exc:
@@ -169,14 +198,34 @@ def write_state(path, value):
         if os.path.exists(temporary): os.unlink(temporary)
 
 
+def read_state(path):
+    private(path)
+    if path.stat().st_size > 65536: raise ValueError('invalid server state')
+    state = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(state, dict) or set(state) != {'schema_version', 'current', 'pending'} or type(state['schema_version']) is not int or state['schema_version'] != 1:
+        raise ValueError('invalid server state')
+    for entry in (state['current'], state['pending']):
+        if entry is None: continue
+        if not isinstance(entry, dict) or set(entry) != {'sha256', 'image', 'version'} or not re.fullmatch('[a-f0-9]{64}', str(entry['sha256'])):
+            raise ValueError('invalid server state')
+        version(entry['version'])
+        if not isinstance(entry['image'], str) or not DIGEST_IMAGE.fullmatch(entry['image']): raise ValueError('invalid server state')
+    return state
+
+
 def run_bootstrap(bundle, home, image, options):
     check_project(home)
-    if threading.current_thread() is not threading.main_thread(): raise RuntimeError('server bootstrap requires the main thread')
-    import signal
-    from .hooks import cleanup_group
     argv = ['/bin/bash', '--noprofile', '--norc', str(bundle/'control-deploy/bootstrap.sh'), '--home', str(home), '--image', image]
     for name, value in options.items():
         if value is not None: argv += ['--'+name.replace('_', '-'), str(value)]
+    run_server_command(argv, BOOTSTRAP_TIMEOUT, 'server bootstrap')
+    wait_ready(read_instance(home)['api_port'])
+
+
+def run_server_command(argv, timeout, label):
+    if threading.current_thread() is not threading.main_thread(): raise RuntimeError('server commands require the main thread')
+    import signal
+    from .hooks import cleanup_group
     process, terminating, cleaning = None, False, False
     def interrupt(signum, frame):
         nonlocal terminating
@@ -184,14 +233,16 @@ def run_bootstrap(bundle, home, image, options):
         if process is not None and not cleaning: raise KeyboardInterrupt()
     signals = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
     previous = {s: signal.getsignal(s) for s in signals}
-    environment = {k: v for k, v in os.environ.items() if k not in ('BASH_ENV', 'ENV', 'SHELLOPTS', 'BASHOPTS', 'GH_TOKEN', 'GITHUB_TOKEN')}
+    environment = {k: v for k, v in os.environ.items()
+                   if k not in ('BASH_ENV', 'ENV', 'SHELLOPTS', 'BASHOPTS', 'GH_TOKEN', 'GITHUB_TOKEN')
+                   and not k.startswith(('COMPOSE_', 'CTL_'))}
     try:
         for s in signals: signal.signal(s, interrupt)
         process = subprocess.Popen(argv, env=environment, start_new_session=True)
         if terminating: raise KeyboardInterrupt()
-        try: process.wait(timeout=BOOTSTRAP_TIMEOUT)
+        try: process.wait(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError('server bootstrap timed out; inspect containers and retry the same release') from exc
+            raise RuntimeError(label + ' timed out; inspect containers and retry the same release') from exc
     finally:
         cleaning = True
         try:
@@ -200,10 +251,14 @@ def run_bootstrap(bundle, home, image, options):
             for s, handler in previous.items(): signal.signal(s, handler)
     if terminating: raise KeyboardInterrupt()
     if process.returncode:
-        raise RuntimeError('server bootstrap failed; inspect diagnostics and retry the same release')
+        raise RuntimeError(label + ' failed; inspect diagnostics and retry the same release')
 
 
-def deploy_server(source, home='/opt/ctl-platform', expected_sha256=None, upgrade=False, **options):
+def deploy_server(source=None, home='/opt/ctl-platform', expected_sha256=None, upgrade=False,
+                  release_version=None, progress=None, **options):
+    if source and release_version: raise ValueError('--release conflicts with --version')
+    from .progress import Progress
+    progress = progress or Progress(enabled=False)
     require_runtime()
     home = Path(home).expanduser().absolute(); trusted_parents(home)
     if '..' in home.parts or any(c in str(home) for c in '\n\r$# \\'):
@@ -211,20 +266,20 @@ def deploy_server(source, home='/opt/ctl-platform', expected_sha256=None, upgrad
     home.mkdir(parents=True, exist_ok=True, mode=0o700); trusted_parents(home); private(home, True)
     with locked(LOCK_HOME/'operation.lock'), locked(home/'.server.lock'):
         with tempfile.TemporaryDirectory(prefix='ctl-server-download-') as cache:
-            package = acquire_release(str(source), cache, expected_sha256)
+            selected_version = None
+            if source is None:
+                with progress.stage('Resolving official ctl server Release'):
+                    source, selected_version = resolve_server_release(release_version or 'latest')
+            with progress.stage('Downloading and verifying ctl server bundle'):
+                package = acquire_release(str(source), cache, expected_sha256, progress=progress)
             manifest, content = read_bundle(package)
+            if selected_version and manifest['version'] != selected_version:
+                raise ValueError('server bundle version does not match selected Release')
             digest = hashlib.sha256(package.read_bytes()).hexdigest()
             state_path = home/'server-state.json'; reject_links(state_path)
             state = {'schema_version': 1, 'current': None, 'pending': None}
             if state_path.exists():
-                private(state_path)
-                if state_path.stat().st_size > 65536: raise ValueError('invalid server state')
-                state = json.loads(state_path.read_text(encoding='utf-8'))
-                if not isinstance(state, dict) or set(state) != {'schema_version', 'current', 'pending'} or state['schema_version'] != 1:
-                    raise ValueError('invalid server state')
-                for entry in (state['current'], state['pending']):
-                    if entry is not None and (not isinstance(entry, dict) or set(entry) != {'sha256','image','version'}
-                            or not re.fullmatch('[a-f0-9]{64}', str(entry['sha256']))): raise ValueError('invalid server state')
+                state = read_state(state_path)
             if state['pending'] and state['pending']['sha256'] != digest:
                 raise ValueError('pending server operation: retry its exact release before changing versions')
             instance = home/'instance.json'; reject_links(instance)
@@ -246,8 +301,116 @@ def deploy_server(source, home='/opt/ctl-platform', expected_sha256=None, upgrad
             for name, raw in content.items():
                 path = private(bundle/name)
                 if path.stat().st_size != len(raw) or path.read_bytes() != raw: raise ValueError('cached server bundle was modified')
+            preserve_archive(bundle, package, digest)
             descriptor = {'version': manifest['version'], 'image': manifest['image'], 'sha256': digest}
             state['pending'] = descriptor; write_state(state_path, state)
-            run_bootstrap(bundle, home, manifest['image'], options)
+            with progress.stage('Starting ctl server and checking readiness'):
+                run_bootstrap(bundle, home, manifest['image'], options)
             state['current'] = descriptor; state['pending'] = None; write_state(state_path, state)
             return state
+
+
+def preserve_archive(bundle, package, expected):
+    path = bundle/'.verified-release.tar.gz'; reject_links(path)
+    if path.exists():
+        private(path)
+        if path.stat().st_size > MAX_EXPANDED or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise ValueError('cached verified server archive was modified')
+    else:
+        from .bootstrap import atomic_write
+        raw = package.read_bytes()
+        if len(raw) > MAX_EXPANDED or hashlib.sha256(raw).hexdigest() != expected: raise ValueError('server archive checksum mismatch')
+        atomic_write(path, raw, 0o600)
+    return path
+
+
+def installed_content(bundle, active):
+    archive = bundle/'.verified-release.tar.gz'; reject_links(archive)
+    if not archive.exists():
+        # Older CLI versions cached only expanded files. Verify the exact recorded
+        # archive once; custom bundles can be anchored by upgrading their original URL.
+        tag = active['version']
+        source = f'https://github.com/art-shier/deployctl/releases/download/{quote(tag, safe="")}/ctl-platform-{tag}.tar.gz'
+        from .progress import Progress
+        progress = Progress()
+        with progress.stage('Verifying legacy ctl server cache against its recorded SHA256'):
+            with tempfile.TemporaryDirectory(prefix='ctl-server-legacy-') as cache:
+                package = acquire_release(source, cache, expected_sha256=active['sha256'], progress=progress)
+                _, original = read_bundle(package)
+                for name, raw in original.items():
+                    path = private(bundle/name)
+                    if path.stat().st_size != len(raw) or path.read_bytes() != raw: raise ValueError('cached server bundle was modified')
+                preserve_archive(bundle, package, active['sha256'])
+    private(archive)
+    if archive.stat().st_size > MAX_EXPANDED or hashlib.sha256(archive.read_bytes()).hexdigest() != active['sha256']:
+        raise ValueError('cached verified server archive was modified')
+    manifest, content = read_bundle(archive)
+    for name, raw in content.items():
+        path = private(bundle/name)
+        if path.stat().st_size != len(raw) or path.read_bytes() != raw: raise ValueError('cached server bundle was modified')
+    return manifest
+
+
+def read_instance(home):
+    path = private(home/'instance.json')
+    if path.stat().st_size > 16384: raise ValueError('invalid instance configuration')
+    cfg = json.loads(path.read_text())
+    if not isinstance(cfg, dict) or type(cfg.get('external_database')) is not bool or type(cfg.get('api_port')) is not int or not 1 <= cfg['api_port'] <= 65535:
+        raise ValueError('invalid instance configuration')
+    return cfg
+
+
+def wait_ready(port, timeout=120):
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl): return None
+    opener = build_opener(ProxyHandler({}), NoRedirect())
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with opener.open(f'http://127.0.0.1:{port}/api/v1/health/ready', timeout=min(5, max(.1, deadline-time.monotonic()))) as response:
+                body = response.read(1025)
+                if response.status == 200 and len(body) <= 1024 and json.loads(body) == {'status': 'ready'}: return
+        except (URLError, TimeoutError, OSError, ValueError): pass
+        time.sleep(min(1, max(0, deadline-time.monotonic())))
+    raise RuntimeError('ctl server readiness timed out; inspect server-status and server-logs')
+
+
+def operate_server(action, home='/opt/ctl-platform', tail=100):
+    if action not in ('restart', 'start', 'stop', 'status', 'logs'): raise ValueError('unsupported server operation')
+    if action == 'logs' and (type(tail) is not int or not 1 <= tail <= 10000): raise ValueError('--tail must be 1..10000')
+    require_runtime()
+    home = Path(home).expanduser().absolute(); trusted_parents(home)
+    private(home, True)
+    with locked(LOCK_HOME/'operation.lock'), locked(home/'.server.lock'):
+        state = read_state(home/'server-state.json')
+        if state.get('pending') and action not in ('status', 'logs'):
+            raise ValueError('pending server operation: retry its exact release before operating the server')
+        active = state.get('current') or state.get('pending')
+        if not isinstance(active, dict) or not re.fullmatch('[a-f0-9]{64}', str(active.get('sha256'))):
+            raise ValueError('ctl server is not installed; use server-install')
+        bundle = private(home/'server-releases'/active['sha256'], True)
+        manifest = installed_content(bundle, active)
+        if manifest['version'] != active.get('version') or manifest['image'] != active.get('image'):
+            raise ValueError('cached server manifest differs from installed state')
+        cfg = read_instance(home)
+        env_path = private(home/'compose.env')
+        if action not in ('status', 'logs'):
+            if env_path.stat().st_size > 65536: raise ValueError('invalid Compose environment')
+            fields = {}
+            for line in env_path.read_text().splitlines():
+                if not line or line.startswith('#'): continue
+                key, separator, value = line.partition('=')
+                if not separator or key in fields: raise ValueError('invalid Compose environment')
+                fields[key] = value
+            if fields.get('CTL_IMAGE') != manifest['image'] or fields.get('CTL_HOME') != str(home):
+                raise ValueError('Compose environment differs from installed server; retry its exact release')
+        check_project(home)
+        argv = ['docker', 'compose', '--project-name', 'ctl-platform', '--env-file', str(env_path),
+                '-f', str(bundle/'control-deploy/compose.yaml')]
+        if not cfg['external_database']: argv += ['--profile', 'database']
+        commands = {'restart': ['restart', '--timeout', '30'], 'stop': ['stop', '--timeout', '30'],
+                    'start': ['up', '-d', '--wait', '--wait-timeout', '120', '--pull', 'never'],
+                    'status': ['ps', '--all'], 'logs': ['logs', '--no-color', '--tail', str(tail)]}
+        run_server_command(argv + commands[action], 180, 'server ' + action)
+        if action in ('restart', 'start'): wait_ready(cfg['api_port'])
+        return state
