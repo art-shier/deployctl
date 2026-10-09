@@ -31,7 +31,10 @@ func (p Principal) Can(action, project, environment string) bool {
 	}
 	switch p.Role {
 	case "publisher":
-		return slices.Contains([]string{"project.read", "release.read", "release.publish", "artifact.read", "registry.pull", "registry.push"}, action)
+		if slices.Contains([]string{"configuration.read", "configuration.write", "configuration.reveal"}, action) {
+			return len(p.Environments) == 0 || slices.Contains(p.Environments, environment)
+		}
+		return slices.Contains([]string{"project.read", "project.update", "release.read", "release.publish", "artifact.read", "registry.pull", "registry.push"}, action)
 	case "deployer":
 		if len(p.Environments) == 0 {
 			return false
@@ -42,6 +45,10 @@ func (p Principal) Can(action, project, environment string) bool {
 		return slices.Contains([]string{"project.read", "release.read", "artifact.read", "registry.pull"}, action)
 	}
 	return false
+}
+
+func (p Principal) CanCreateProject(project, group, environment string) bool {
+	return p.Role == "owner" || (p.Role == "publisher" && !slices.Contains(p.ExcludedProjects, project) && slices.Contains(p.Groups, group) && (len(p.Environments) == 0 || slices.Contains(p.Environments, environment)))
 }
 
 // CanInGroup authorizes the membership read by the resolution transaction,

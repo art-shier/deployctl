@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/art-shier/deployctl/control-server/internal/auth"
 	"github.com/art-shier/deployctl/control-server/internal/domain"
 	"github.com/art-shier/deployctl/control-server/internal/secrets"
 	"github.com/jackc/pgx/v5"
@@ -79,6 +80,10 @@ func audit(ctx context.Context, tx pgx.Tx, actor, action, project, environment s
 	return err
 }
 func (s *Store) CreateProject(ctx context.Context, p domain.Project, actor string) (domain.Project, error) {
+	return s.CreateProjectAuthorized(ctx, p, auth.Principal{ID: actor, Role: "owner"})
+}
+func (s *Store) CreateProjectAuthorized(ctx context.Context, p domain.Project, principal auth.Principal) (domain.Project, error) {
+	actor := principal.ID
 	if p.Group == "" {
 		p.Group = "default"
 	}
@@ -95,6 +100,36 @@ func (s *Store) CreateProject(ctx context.Context, p domain.Project, actor strin
 		return p, err
 	}
 	defer tx.Rollback(ctx)
+	if !principal.CanCreateProject(p.Slug, p.Group, p.DefaultEnvironment) {
+		return p, domain.ErrForbidden
+	}
+	if err = s.lockGroup(ctx, tx, p.Group); err != nil {
+		return p, err
+	}
+	if err = lockRepositories(ctx, tx, p.ImageRepository); err != nil {
+		return p, err
+	}
+	if principal.Role != "owner" {
+		rows, err := tx.Query(ctx, "SELECT slug,group_slug,deleted_at IS NOT NULL FROM ctl_projects WHERE data->>'image_repository'=$1", p.ImageRepository)
+		if err != nil {
+			return p, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var slug, group string
+			var archived bool
+			if err = rows.Scan(&slug, &group, &archived); err != nil {
+				return p, err
+			}
+			if archived || !principal.CanInGroup("registry.push", slug, group, "") {
+				return p, domain.ErrForbidden
+			}
+		}
+		if err = rows.Err(); err != nil {
+			return p, err
+		}
+		rows.Close()
+	}
 	if _, err = tx.Exec(ctx, "INSERT INTO ctl_projects(slug,group_slug,data) VALUES($1,$2,$3)", p.Slug, p.Group, b); err != nil {
 		return p, mapped(err)
 	}
@@ -120,10 +155,10 @@ func scanProject(row scanner) (domain.Project, error) {
 	return p, err
 }
 func (s *Store) GetProject(ctx context.Context, slug string) (domain.Project, error) {
-	return scanProject(s.pool.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1", slug))
+	return scanProject(s.pool.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL", slug))
 }
 func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
-	rows, err := s.pool.Query(ctx, "SELECT data FROM ctl_projects ORDER BY slug")
+	rows, err := s.pool.Query(ctx, "SELECT data FROM ctl_projects WHERE deleted_at IS NULL ORDER BY slug")
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +174,10 @@ func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
 	return out, rows.Err()
 }
 func (s *Store) UpdateProject(ctx context.Context, p domain.Project, actor string) (domain.Project, error) {
+	return s.UpdateProjectAuthorized(ctx, p, auth.Principal{ID: actor, Role: "owner"})
+}
+func (s *Store) UpdateProjectAuthorized(ctx context.Context, p domain.Project, principal auth.Principal) (domain.Project, error) {
+	actor := principal.ID
 	if err := validProject(p); err != nil {
 		return p, err
 	}
@@ -147,13 +186,28 @@ func (s *Store) UpdateProject(ctx context.Context, p domain.Project, actor strin
 		return p, err
 	}
 	defer tx.Rollback(ctx)
-	old, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 FOR UPDATE", p.Slug))
+	old, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL FOR UPDATE", p.Slug))
 	if err != nil {
 		return p, err
+	}
+	if !principal.CanInGroup("project.update", old.Slug, old.Group, "") {
+		return p, domain.ErrForbidden
+	}
+	if principal.Role != "owner" && p.ImageRepository != old.ImageRepository {
+		return p, domain.ErrForbidden
+	}
+	if principal.Role != "owner" && ((p.Group != "" && p.Group != old.Group) || (p.DefaultEnvironment != old.DefaultEnvironment && !principal.CanInGroup("configuration.write", old.Slug, old.Group, p.DefaultEnvironment))) {
+		return p, domain.ErrForbidden
 	}
 	p.CreatedAt = old.CreatedAt
 	if p.Group == "" {
 		p.Group = old.Group
+	}
+	if err = s.lockGroup(ctx, tx, p.Group); err != nil {
+		return p, err
+	}
+	if err = lockRepositories(ctx, tx, old.ImageRepository, p.ImageRepository); err != nil {
+		return p, err
 	}
 	// Existing environment identities and immutable releases remain intact.
 	var exists bool
@@ -197,7 +251,7 @@ func (s *Store) GetRevision(ctx context.Context, project, env string) (domain.Re
 		return domain.Revision{}, err
 	}
 	defer tx.Rollback(ctx)
-	p, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1", project))
+	p, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL", project))
 	if err != nil {
 		return domain.Revision{}, err
 	}
@@ -208,7 +262,10 @@ func (s *Store) GetRevision(ctx context.Context, project, env string) (domain.Re
 	return r, tx.Commit(ctx)
 }
 func (s *Store) ListEnvironments(ctx context.Context, project string) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT name FROM ctl_environments WHERE project=$1 UNION SELECT e.name FROM ctl_group_environments e JOIN ctl_projects p ON p.group_slug=e.group_slug WHERE p.slug=$1 ORDER BY name`, project)
+	if _, err := s.GetProject(ctx, project); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, environmentNames, project)
 	if err != nil {
 		return nil, err
 	}
@@ -276,6 +333,9 @@ func (s *Store) SaveRevision(ctx context.Context, project, env string, expected 
 		return domain.Revision{}, err
 	}
 	defer tx.Rollback(ctx)
+	if _, err = scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL FOR UPDATE", project)); err != nil {
+		return domain.Revision{}, err
+	}
 	r, err := s.saveRevision(ctx, tx, project, env, expected, cfg, target)
 	if err != nil {
 		return r, err
@@ -308,7 +368,7 @@ func scanRelease(row scanner) (domain.Release, error) {
 }
 
 func (s *Store) GetReleaseByVersion(ctx context.Context, project, version string) (domain.Release, error) {
-	return scanRelease(s.pool.QueryRow(ctx, "SELECT data,status FROM ctl_releases WHERE project=$1 AND version=$2", project, version))
+	return scanRelease(s.pool.QueryRow(ctx, "SELECT data,status FROM ctl_releases WHERE project=$1 AND version=$2 AND EXISTS(SELECT 1 FROM ctl_projects p WHERE p.slug=$1 AND p.deleted_at IS NULL)", project, version))
 }
 func (s *Store) PublishRelease(ctx context.Context, r domain.Release, stable bool, actor string) (domain.Release, error) {
 	return s.PublishReleaseChecked(ctx, r, stable, actor, nil)
@@ -326,7 +386,7 @@ func (s *Store) PublishReleaseChecked(ctx context.Context, r domain.Release, sta
 		return r, err
 	}
 	defer tx.Rollback(ctx)
-	p, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 FOR NO KEY UPDATE", r.Project))
+	p, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL FOR NO KEY UPDATE", r.Project))
 	if err != nil {
 		return r, err
 	}
@@ -369,6 +429,9 @@ func (s *Store) PublishReleaseChecked(ctx context.Context, r domain.Release, sta
 	return r, tx.Commit(ctx)
 }
 func (s *Store) ListReleases(ctx context.Context, project string) ([]domain.Release, error) {
+	if _, err := s.GetProject(ctx, project); err != nil {
+		return nil, err
+	}
 	rows, err := s.pool.Query(ctx, "SELECT data,status FROM ctl_releases WHERE project=$1 ORDER BY data->>'created_at' DESC", project)
 	if err != nil {
 		return nil, err
@@ -385,7 +448,7 @@ func (s *Store) ListReleases(ctx context.Context, project string) ([]domain.Rele
 	return out, rows.Err()
 }
 func (s *Store) GetRelease(ctx context.Context, project, id string) (domain.Release, error) {
-	return scanRelease(s.pool.QueryRow(ctx, "SELECT data,status FROM ctl_releases WHERE project=$1 AND id=$2", project, id))
+	return scanRelease(s.pool.QueryRow(ctx, "SELECT data,status FROM ctl_releases WHERE project=$1 AND id=$2 AND EXISTS(SELECT 1 FROM ctl_projects p WHERE p.slug=$1 AND p.deleted_at IS NULL)", project, id))
 }
 func (s *Store) RetireRelease(ctx context.Context, project, version, actor string) error {
 	tx, err := s.pool.Begin(ctx)
@@ -393,6 +456,9 @@ func (s *Store) RetireRelease(ctx context.Context, project, version, actor strin
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if _, err = scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL FOR UPDATE", project)); err != nil {
+		return err
+	}
 	cmd, err := tx.Exec(ctx, "UPDATE ctl_releases SET status='retired' WHERE project=$1 AND version=$2", project, version)
 	if err != nil {
 		return err
@@ -412,7 +478,7 @@ func (s *Store) Resolve(ctx context.Context, project, env, version string) (Reso
 		return out, err
 	}
 	defer tx.Rollback(ctx)
-	out.Project, err = scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1", project))
+	out.Project, err = scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL", project))
 	if err != nil {
 		return out, err
 	}
@@ -431,7 +497,7 @@ func (s *Store) Resolve(ctx context.Context, project, env, version string) (Reso
 		version = out.Revision.TargetVersion
 	}
 	if version == "stable" {
-		if err = tx.QueryRow(ctx, "SELECT stable_version FROM ctl_projects WHERE slug=$1", project).Scan(&version); err != nil {
+		if err = tx.QueryRow(ctx, "SELECT stable_version FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL", project).Scan(&version); err != nil {
 			return out, err
 		}
 	}

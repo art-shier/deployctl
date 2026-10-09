@@ -74,13 +74,13 @@ func (s *Store) createToken(ctx context.Context, t domain.Token, hash, raw, acto
 	// Validate every scope, including empty groups, before persisting any credential.
 	for _, id := range append(append([]string{}, projects...), t.ExcludedProjects...) {
 		var slug string
-		if err = tx.QueryRow(ctx, "SELECT slug FROM ctl_projects WHERE slug=$1 FOR KEY SHARE", id).Scan(&slug); err != nil {
+		if err = tx.QueryRow(ctx, "SELECT slug FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL FOR SHARE", id).Scan(&slug); err != nil {
 			return t, mapped(err)
 		}
 	}
 	for _, id := range t.Groups {
 		var slug string
-		if err = tx.QueryRow(ctx, "SELECT slug FROM ctl_groups WHERE slug=$1 FOR KEY SHARE", id).Scan(&slug); err != nil {
+		if err = tx.QueryRow(ctx, "SELECT slug FROM ctl_groups WHERE slug=$1 AND deleted_at IS NULL FOR SHARE", id).Scan(&slug); err != nil {
 			return t, mapped(err)
 		}
 	}
@@ -110,9 +110,49 @@ func (s *Store) Authenticate(ctx context.Context, hash string) (auth.Principal, 
 	if t.Project != "" && !slices.Contains(projects, t.Project) {
 		projects = append(projects, t.Project)
 	}
+	rows, err := s.pool.Query(ctx, "SELECT slug FROM ctl_projects WHERE slug=ANY($1) AND deleted_at IS NULL ORDER BY slug", projects)
+	if err != nil {
+		return p, err
+	}
+	projects = []string{}
+	for rows.Next() {
+		var slug string
+		if err = rows.Scan(&slug); err != nil {
+			rows.Close()
+			return p, err
+		}
+		projects = append(projects, slug)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return p, err
+	}
+	legacyProject := t.Project
+	if !slices.Contains(projects, legacyProject) {
+		legacyProject = ""
+	}
 	explicitProjects := append([]string{}, projects...)
-	if len(t.Groups) > 0 {
-		rows, err := s.pool.Query(ctx, "SELECT slug FROM ctl_projects WHERE group_slug=ANY($1) ORDER BY slug", t.Groups)
+	rows, err = s.pool.Query(ctx, "SELECT slug FROM ctl_groups WHERE slug=ANY($1) AND deleted_at IS NULL ORDER BY slug", t.Groups)
+	if err != nil {
+		return p, err
+	}
+	groups := []string{}
+	for rows.Next() {
+		var slug string
+		if err = rows.Scan(&slug); err != nil {
+			rows.Close()
+			return p, err
+		}
+		groups = append(groups, slug)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return p, err
+	}
+	if len(groups) > 0 {
+		rows, err := s.pool.Query(ctx, "SELECT slug FROM ctl_projects WHERE group_slug=ANY($1) AND deleted_at IS NULL ORDER BY slug", groups)
 		if err != nil {
 			return p, err
 		}
@@ -131,7 +171,7 @@ func (s *Store) Authenticate(ctx context.Context, hash string) (auth.Principal, 
 		}
 	}
 	projects = slices.DeleteFunc(projects, func(project string) bool { return slices.Contains(t.ExcludedProjects, project) })
-	return auth.Principal{ID: t.ID, Role: t.Role, Project: t.Project, Projects: projects, Groups: t.Groups, Environments: t.Environments, ExcludedProjects: t.ExcludedProjects, ExplicitProjects: explicitProjects}, nil
+	return auth.Principal{ID: t.ID, Role: t.Role, Project: legacyProject, Projects: projects, Groups: groups, Environments: t.Environments, ExcludedProjects: t.ExcludedProjects, ExplicitProjects: explicitProjects}, nil
 }
 func (s *Store) RevokeToken(ctx context.Context, id, actor string) error {
 	tx, err := s.pool.Begin(ctx)
@@ -204,10 +244,24 @@ func (s *Store) SaveReceipt(ctx context.Context, r domain.Receipt) error {
 	}
 	r.CreatedAt = time.Now().UTC()
 	b, _ := json.Marshal(r)
-	_, err := s.pool.Exec(ctx, "INSERT INTO ctl_receipts(id,project,data,created_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING", r.ID, r.Project, b, r.CreatedAt)
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL FOR SHARE", r.Project)); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, "INSERT INTO ctl_receipts(id,project,data,created_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING", r.ID, r.Project, b, r.CreatedAt)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 func (s *Store) ListReceipts(ctx context.Context, project string) ([]domain.Receipt, error) {
+	if _, err := s.GetProject(ctx, project); err != nil {
+		return nil, err
+	}
 	rows, err := s.pool.Query(ctx, "SELECT data FROM ctl_receipts WHERE project=$1 ORDER BY created_at DESC LIMIT 200", project)
 	if err != nil {
 		return nil, err

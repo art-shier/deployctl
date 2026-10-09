@@ -20,8 +20,8 @@ func (s *Server) groupEnvironments(w http.ResponseWriter, r *http.Request, p aut
 	return nil
 }
 
-func groupEnvironmentReply(w http.ResponseWriter, rev domain.GroupRevision) {
-	reply(w, http.StatusOK, map[string]any{"id": rev.ID, "environment": rev.Environment, "revision": rev.Revision, "runtime_env": masked(rev.Configuration.RuntimeEnv), "install_params": masked(rev.Configuration.InstallParams), "created_at": rev.CreatedAt})
+func groupEnvironmentReply(w http.ResponseWriter, rev domain.GroupRevision, reveal ...bool) {
+	reply(w, http.StatusOK, map[string]any{"id": rev.ID, "environment": rev.Environment, "revision": rev.Revision, "runtime_env": masked(rev.Configuration.RuntimeEnv, reveal...), "install_params": masked(rev.Configuration.InstallParams, reveal...), "created_at": rev.CreatedAt})
 }
 
 func (s *Server) groupEnvironment(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
@@ -29,10 +29,14 @@ func (s *Server) groupEnvironment(w http.ResponseWriter, r *http.Request, p auth
 		return err
 	}
 	rev, err := s.store.GetGroupRevision(r.Context(), r.PathValue("slug"), r.PathValue("env"))
+	reveal := r.URL.Query().Get("reveal") == "true"
+	if reveal {
+		rev, err = s.store.GetGroupRevisionRevealed(r.Context(), r.PathValue("slug"), r.PathValue("env"), p.ID)
+	}
 	if err != nil {
 		return err
 	}
-	groupEnvironmentReply(w, rev)
+	groupEnvironmentReply(w, rev, reveal)
 	return nil
 }
 

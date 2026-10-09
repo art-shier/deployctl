@@ -5,10 +5,11 @@ description: "Use when onboarding a repository to team-deploy's GitHub Actions a
 
 # Team Deploy
 
-使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.10.0，兼容发布包协议v1/v2并支持管理服务自动Release安装及快捷运维命令、项目组配置继承、可编辑凭据与真实镜像层下载进度；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
+使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.11.0，兼容发布包协议v1/v2并支持管理服务自动Release安装及快捷运维命令、项目/项目组管理、发布凭据配置读写、项目组配置继承、可编辑凭据与真实镜像层下载进度；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
 
 ## 选择任务
 
+- 读写项目/组配置或管理项目：读取 [管理服务模式](references/control-plane.md)。CLI>=1.11.0支持project/group及project-config/group-config；发布凭据只管理授权项目，组管理和删除需要owner。
 - 安装或升级ctl服务端：读取 [管理服务模式](references/control-plane.md)。CLI>=1.10.0支持server-install/server-upgrade默认获取官方最新正式Release，或指定--version/--release；旧server install/upgrade写法兼容。服务端首次安装不需要平台登录，业务安装仍需要scoped Token。
 
 - 注册到ctl管理服务、托管镜像/配置、login/publish或无`--release`安装：读取 [管理服务模式](references/control-plane.md)，先确认目标CLI>=1.7.0和真实服务地址。

@@ -40,13 +40,13 @@ func validEditableToken(t domain.Token) error {
 func checkEditableScopes(ctx context.Context, tx pgx.Tx, t domain.Token) error {
 	for _, key := range append(append([]string{}, t.Projects...), t.ExcludedProjects...) {
 		var found string
-		if err := tx.QueryRow(ctx, "SELECT slug FROM ctl_projects WHERE slug=$1 FOR KEY SHARE", key).Scan(&found); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT slug FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL FOR SHARE", key).Scan(&found); err != nil {
 			return mapped(err)
 		}
 	}
 	for _, key := range t.Groups {
 		var found string
-		if err := tx.QueryRow(ctx, "SELECT slug FROM ctl_groups WHERE slug=$1 FOR KEY SHARE", key).Scan(&found); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT slug FROM ctl_groups WHERE slug=$1 AND deleted_at IS NULL FOR SHARE", key).Scan(&found); err != nil {
 			return mapped(err)
 		}
 	}

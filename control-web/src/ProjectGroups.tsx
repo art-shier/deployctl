@@ -13,6 +13,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { api, send, type Group, type Project } from "./api";
+import { RemoveResource } from "./RemoveResource";
 
 type DialogProps = { title: string; close: () => void; children: ReactNode };
 type Props = {
@@ -39,6 +40,8 @@ export function GroupsView({
   const [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [creating, setCreating] = useState(false),
+    [removing, setRemoving] = useState(false),
+    [removeBusy, setRemoveBusy] = useState(false),
     [search, setSearch] = useState("");
   const load = async () => {
     setError("");
@@ -134,6 +137,33 @@ export function GroupsView({
                     名称和说明可修改，项目组标识保持不变。
                   </p>
                   <GroupForm group={selected} done={() => void load()} />
+                  <section className="resource-danger-section">
+                    <h3>移除项目组</h3>
+                    {selected.slug === "default" ? (
+                      <p className="muted small">
+                        default 是保留项目组，不能移除。
+                      </p>
+                    ) : (
+                      <>
+                        <p className="muted small">
+                          从管理台移除空项目组，保留配置与审计历史，标识不能复用。
+                        </p>
+                        {count(selected) > 0 && (
+                          <p className="muted small">
+                            请先移出或移除组内 {count(selected)}{" "}
+                            个项目，再移除项目组。
+                          </p>
+                        )}
+                        <button
+                          className="danger"
+                          disabled={count(selected) > 0}
+                          onClick={() => setRemoving(true)}
+                        >
+                          移除项目组
+                        </button>
+                      </>
+                    )}
+                  </section>
                 </section>
               ) : (
                 renderProjects(selected, () => void load())
@@ -210,6 +240,26 @@ export function GroupsView({
             done={() => {
               setCreating(false);
               void load();
+            }}
+          />
+        </Dialog>
+      )}
+      {removing && selected && (
+        <Dialog
+          title={`移除项目组 · ${selected.slug}`}
+          close={() => {
+            if (!removeBusy) setRemoving(false);
+          }}
+        >
+          <RemoveResource
+            kind="项目组"
+            slug={selected.slug}
+            name={selected.name}
+            busyChanged={setRemoveBusy}
+            cancel={() => setRemoving(false)}
+            done={() => {
+              setRemoving(false);
+              navigate("groups");
             }}
           />
         </Dialog>

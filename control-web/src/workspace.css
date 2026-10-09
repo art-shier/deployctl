@@ -665,6 +665,33 @@ td {
 .credential-table {
   background: #fff;
 }
+.resource-danger-section {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid #fecaca;
+}
+.resource-danger-section h3 {
+  color: #b91c1c;
+}
+.removal-effects {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.removal-effects p {
+  margin: 0;
+}
+.removal-effects p + p {
+  margin-top: 10px;
+}
+.modal[aria-label^="移除"] {
+  overflow-wrap: anywhere;
+}
+.modal[aria-label^="移除"] .section-heading h2 {
+  min-width: 0;
+}
+.modal[aria-label^="移除"] .section-heading > button {
+  flex-shrink: 0;
+}
 .inherited-variable {
   display: grid;
   grid-template-columns: minmax(130px, 1fr) minmax(100px, 1fr) auto;

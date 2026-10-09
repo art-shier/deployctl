@@ -61,6 +61,7 @@ func New(s *store.Store, o Options) *Server {
 	m.HandleFunc("GET /api/v1/groups", server.wrap(server.groups))
 	m.HandleFunc("POST /api/v1/groups", server.wrap(server.createGroup))
 	m.HandleFunc("PATCH /api/v1/groups/{slug}", server.wrap(server.updateGroup))
+	m.HandleFunc("DELETE /api/v1/groups/{slug}", server.wrap(server.deleteGroup))
 	m.HandleFunc("GET /api/v1/groups/{slug}/environments", server.wrap(server.groupEnvironments))
 	m.HandleFunc("GET /api/v1/groups/{slug}/environments/{env}", server.wrap(server.groupEnvironment))
 	m.HandleFunc("PUT /api/v1/groups/{slug}/environments/{env}", server.wrap(server.saveGroupEnvironment))
@@ -68,6 +69,7 @@ func New(s *store.Store, o Options) *Server {
 	m.HandleFunc("POST /api/v1/projects", server.wrap(server.createProject))
 	m.HandleFunc("GET /api/v1/projects/{slug}", server.wrap(server.getProject))
 	m.HandleFunc("PATCH /api/v1/projects/{slug}", server.wrap(server.updateProject))
+	m.HandleFunc("DELETE /api/v1/projects/{slug}", server.wrap(server.deleteProject))
 	m.HandleFunc("PATCH /api/v1/projects/{slug}/group", server.wrap(server.moveProjectGroup))
 	m.HandleFunc("GET /api/v1/projects/{slug}/environments", server.wrap(server.environments))
 	m.HandleFunc("GET /api/v1/projects/{slug}/environments/{env}", server.wrap(server.environment))
@@ -152,6 +154,12 @@ func (s *Server) wrap(h handler) http.HandlerFunc {
 			failure(w, errForbidden)
 			return
 		}
+		if slug := r.PathValue("slug"); slug != "" && strings.HasPrefix(r.URL.Path, "/api/v1/projects/") {
+			if _, err = s.store.GetProject(r.Context(), slug); err != nil {
+				failure(w, err)
+				return
+			}
+		}
 		if err = h(w, r, p); err != nil {
 			failure(w, err)
 		}
@@ -222,7 +230,7 @@ func failure(w http.ResponseWriter, err error) {
 		status, code, message = 404, "not_found", "项目、环境或可安装版本不存在"
 	case errors.Is(err, domain.ErrUnauthorized):
 		status, code, message = 401, "unauthorized", "凭据无效或已失效"
-	case errors.Is(err, errForbidden):
+	case errors.Is(err, errForbidden), errors.Is(err, domain.ErrForbidden):
 		status, code, message = 403, "forbidden", "没有此操作的权限"
 	}
 	reply(w, status, map[string]string{"code": code, "message": message})

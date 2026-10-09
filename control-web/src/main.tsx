@@ -42,6 +42,7 @@ import {
   type DraftRow,
 } from "./environmentForm";
 import { CredentialForm } from "./CredentialForm";
+import { RemoveResource } from "./RemoveResource";
 import { ImagesView } from "./ImagesView";
 import { GroupsView } from "./ProjectGroups";
 import { tokenScopeLabel } from "./tokenScope";
@@ -242,8 +243,9 @@ function App() {
       window.removeEventListener("hashchange", hash);
     };
   }, []);
-  const navigate = (next: string) => {
-    if (next !== location.hash.slice(1) && !canLeavePage()) return;
+  const navigate = (next: string, afterRemoval = false) => {
+    if (!afterRemoval && next !== location.hash.slice(1) && !canLeavePage())
+      return;
     location.hash = next;
     setPage(next);
   };
@@ -865,7 +867,7 @@ function ProjectView({
   navigate,
 }: {
   slug: string;
-  navigate: (page: string) => void;
+  navigate: (page: string, afterRemoval?: boolean) => void;
 }) {
   const {
       data: project,
@@ -874,7 +876,9 @@ function ProjectView({
       reload,
     } = useData<Project | null>(`/projects/${slug}`, null),
     [tab, setTab] = useState("releases"),
-    [edit, setEdit] = useState(false);
+    [edit, setEdit] = useState(false),
+    [removing, setRemoving] = useState(false),
+    [removeBusy, setRemoveBusy] = useState(false);
   useEffect(() => setTab("releases"), [slug]);
   if (loading) return <Loading />;
   if (error || !project)
@@ -947,6 +951,41 @@ function ProjectView({
             project={project}
             done={reload}
             close={() => setEdit(false)}
+          />
+          <section className="resource-danger-section">
+            <h3>移除项目</h3>
+            <p className="muted small">
+              从管理台移除后停止后续发布与部署，保留已有运行容器、镜像文件和审计，标识不能复用。
+            </p>
+            <button
+              className="danger"
+              onClick={() => {
+                setEdit(false);
+                setRemoving(true);
+              }}
+            >
+              移除项目
+            </button>
+          </section>
+        </Modal>
+      )}
+      {removing && (
+        <Modal
+          title={`移除项目 · ${project.slug}`}
+          close={() => {
+            if (!removeBusy) setRemoving(false);
+          }}
+        >
+          <RemoveResource
+            kind="项目"
+            slug={project.slug}
+            name={project.name}
+            busyChanged={setRemoveBusy}
+            cancel={() => setRemoving(false)}
+            done={() => {
+              setRemoving(false);
+              navigate(`group/${project.group || "default"}`, true);
+            }}
           />
         </Modal>
       )}
@@ -1873,10 +1912,16 @@ function TokensView({ group }: { group?: Group }) {
                     </small>
                   </td>
                   <td data-label="权限">
-                    {t.role === "publisher" ? "发布" : "部署"}
+                    {t.role === "publisher"
+                      ? "发布、项目管理与配置读写（授权范围内）"
+                      : "部署"}
                   </td>
                   <td data-label="环境">
-                    {t.role === "deployer" ? t.environments.join(", ") : "—"}
+                    {t.environments.length
+                      ? t.environments.join(", ")
+                      : t.role === "publisher"
+                        ? "全部环境"
+                        : "未授权环境"}
                   </td>
                   <td data-label="授权范围">
                     {tokenScopeLabel(t) || "无授权项目"}
@@ -2031,14 +2076,20 @@ function TokenReveal({
     <Modal title={`查看 Token · ${token.name}`} close={close}>
       <dl className="token-details">
         <dt>权限</dt>
-        <dd>{token.role === "publisher" ? "发布" : "部署"}</dd>
+        <dd>
+          {token.role === "publisher"
+            ? "发布、项目管理与配置读写（授权范围内）"
+            : "部署"}
+        </dd>
         <dt>授权范围</dt>
         <dd>{tokenScopeLabel(token) || "无"}</dd>
         <dt>环境</dt>
         <dd>
-          {token.role === "deployer"
+          {token.environments.length
             ? token.environments.join("、")
-            : "不限制发布环境"}
+            : token.role === "publisher"
+              ? "全部环境（配置读写）"
+              : "未授权环境"}
         </dd>
         <dt>到期</dt>
         <dd>{date(token.expires_at)}</dd>

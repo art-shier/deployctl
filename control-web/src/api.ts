@@ -32,6 +32,7 @@ export async function api<T>(
     } catch {}
     throw new APIError(response.status, message);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 export const send = (method: string, body: unknown): RequestInit => ({

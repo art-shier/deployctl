@@ -23,6 +23,7 @@ from deployctl.platform_credentials import Credentials
 from deployctl.release import build_release
 from deployctl.contract import read_yaml
 from deployctl.runtime import project_name
+from platform_management_integration import verify_management
 
 
 def run(*argv,input=None,env=None,check=True):
@@ -72,6 +73,7 @@ def main():
                 try:urlopen('http://'+host+'/v2/',timeout=2)
                 except HTTPError as e:return e.code==401
             wait(registry_ready)
+            verify_management(owner,origin,base)
             owner.json('POST','/api/v1/groups',{'slug':'fixture-apps','name':'Fixture applications'})
             for project in (app,other):
                 owner.json('POST','/api/v1/projects',{'slug':project,'group':'fixture-apps','name':project,'default_environment':'prod','image_repository':host+'/'+project})

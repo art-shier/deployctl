@@ -1,5 +1,15 @@
 # 管理服务模式（CLI>=1.7.0）
 
+## 项目与配置管理（CLI/服务端>=1.11.0）
+
+同一登录支持`ctl project list/show/create/update/move/delete`、`ctl group list/show/create/update/delete`、`ctl project-config list/get/set/unset/apply`与`ctl group-config list/get/set/unset/apply`。发布凭据可在显式授权组内新建项目、管理授权项目资料与配置，非空environments限制配置环境；不可移组、删除、管理组配置或凭据。部署凭据原权限不变。owner拥有全部能力。
+
+publisher新建项目只使用平台默认RegistryHost/slug托管路径，不能修改镜像仓库绑定；外部或共享镜像路径由owner配置，避免绕过组授权。
+
+项目配置省略环境使用默认环境；组配置必须指定--env或--prod。例：`ctl project-config get notes --prod`、`ctl project-config set notes DB_PASSWORD --prod --secret --value-file /private/password`、`ctl group-config set apps DB_HOST db.example.com --prod --public`。--kind install写安装参数，默认runtime写启动变量。默认隐藏秘密，仅get --reveal明确输出自身和继承秘密且记录审计。值/JSON文件必须私有、无链接、<=64KiB；写入结果不回显秘密。apply --file使用原API expected_revision及set/keep/remove格式，可含项目deployment_defaults/target_version，409须重新读取对比，不盲目重试。
+
+删除仅owner：`ctl project delete retired-app --confirm retired-app`、`ctl group delete retired-group --confirm retired-group`，确认必须与标识完全一致。归档保留历史配置/镜像/版本/审计，不停止已安装容器，停止后续管理和部署访问；标识不可复用，default及非空组不可删。已签发Registry bearer沿用最长5分钟期限。旧凭据的归档范围可以在管理台移除。详细权限矩阵见平台仓库docs/project-management.md。
+
 目标服务器先检查CLI>=1.7.0。管理服务支持 `sudo ctl server install --release <真实ctl-platform发布包URL>`，无需clone或先登录；相邻.sha256自动验证，包固定镜像digest。默认origin为https://ctl.shier.art，Registry host为ctl.shier.art。升级使用server upgrade；失败保留pending，修复后重试同包。平台数据/密钥留在/opt/ctl-platform，HTTPS由现有代理配置。引导不提供数据库自动回滚。详见平台仓库docs/control-plane.md。
 
 CLI>=1.10.0可直接`sudo ctl server-install`或`sudo ctl server-upgrade`，默认解析官方最新正式Release为固定版本并校验SHA256；--version固定版本，--release沿用审核URL/本地包，二者不能同时传。旧`ctl server install/upgrade`等价。用户目录安装用原用户self-update，需要root时使用`sudo "$(command -v ctl)" ...`。不自动升级CLI以绕过包的最低版本要求。
@@ -23,7 +33,7 @@ CLI>=1.8.2默认管理地址为`https://ctl.shier.art`，已有自定义配置�
 
 未指定环境时managed install/upgrade取项目默认。`--prod`是`--env prod`，不能与其他环境冲突。版本默认取环境目标，不等于latest。status/rollback等本地操作省略环境，仅在主机唯一已安装环境时允许。
 
-CI先推送托管或已登记外部镜像，取得真实digest，按现有契约package，再`ctl publish <项目> --version <版本> --package <包> --channel stable`。不提供channel不会推进stable。同版本内容不可覆盖。publisher不可读生产配置；不要把构建参数放进环境配置。
+CI先推送托管或已登记外部镜像，取得真实digest，按现有契约package，再`ctl publish <项目> --version <版本> --package <包> --channel stable`。不提供channel不会推进stable。同版本内容不可覆盖。publisher可读写授权项目配置，非空environments限定配置环境；发布行为沿用原范围。配置GET默认遮盖秘密，明确--reveal才返回明文；不要把构建参数放进环境配置。
 
 公共外部Registry自动匿名认证。外部私有仓库校验使用`publish --registry-token-file <权限600的短期pull Token文件>`；服务端只验证本次登记仓库，不保存/回显/转交主机。该文件不能使用ctl平台Token或长期账号密码。安装主机沿用自己的Docker凭据。
 
@@ -39,4 +49,4 @@ CI先推送托管或已登记外部镜像，取得真实digest，按现有契约
 
 CLI>=1.9.0的install/upgrade实时显示Compose镜像层的下载/解压大小、百分比和完成/缓存状态；只有Docker返回总大小时才显示该层百分比，不估算整体安装进度。发布包下载也显示实际字节数与已知长度百分比。长时间无进度时另行显示等待提示。stdout结果不变，--quiet仅关闭显示，仍使用同一有界读取与中断/超时进程组清理逻辑。失败/中断不显示done，恢复成功仍保持失败退出码。只呈现白名单状态和计数，不回显原始Docker/hook日志或配置值。已运行的旧CLI进程不会获得新进度，不重复启动install。
 
-管理服务0.3.0支持项目组按环境配置runtime_env与install_params；项目同名值覆盖组值，移组/组修改仅影响下次部署。配置获取在同一数据库快照内固定成员归属与两级修订，resolve协议保持兼容。凭据可编辑groups/projects/excluded_projects范围，排除项始终优先；Token加密保存、owner可单独查看，旧哈希凭据需确认重新生成；已撤销凭据不再列出，审计保留。
+管理服务0.4.0支持项目组按环境配置runtime_env与install_params；项目同名值覆盖组值，移组/组修改仅影响下次部署。配置获取在同一数据库快照内固定成员归属与两级修订，resolve协议保持兼容。凭据可编辑groups/projects/excluded_projects范围，排除项始终优先；Token加密保存、owner可单独查看，旧哈希凭据需确认重新生成；已撤销凭据不再列出，审计保留。

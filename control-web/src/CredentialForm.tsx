@@ -85,11 +85,10 @@ export function CredentialForm({
         ),
       ];
       if (
-        role === "deployer" &&
-        (!parsedEnvironments.length ||
-          parsedEnvironments.some(
-            (value) => !/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(value),
-          ))
+        (role === "deployer" && !parsedEnvironments.length) ||
+        parsedEnvironments.some(
+          (value) => !/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(value),
+        )
       )
         throw new Error("请填写有效环境名称，多个环境以逗号分隔。");
       const expiresAt = token
@@ -105,7 +104,7 @@ export function CredentialForm({
           groups,
           projects,
           excluded_projects: excluded,
-          environments: role === "deployer" ? parsedEnvironments : [],
+          environments: parsedEnvironments,
           expires_at: expiresAt,
         }),
       );
@@ -131,9 +130,18 @@ export function CredentialForm({
       </label>
       <label>
         权限
-        <select value={role} onChange={(e) => setRole(e.target.value)}>
+        <select
+          value={role}
+          onChange={(e) => {
+            setRole(e.target.value);
+            if (e.target.value === "deployer" && !environments.trim())
+              setEnvironments("prod");
+          }}
+        >
           <option value="deployer">部署 · 拉取镜像与指定环境配置</option>
-          <option value="publisher">发布 · 推送镜像与发布包</option>
+          <option value="publisher">
+            发布、项目管理与配置读写（授权范围内）
+          </option>
         </select>
       </label>
       {group && !token && (
@@ -164,6 +172,24 @@ export function CredentialForm({
                 </span>
               </label>
             ))}
+            {groups
+              .filter((slug) => !options.groups.some((g) => g.slug === slug))
+              .map((slug) => (
+                <label className="scope-option" key={slug}>
+                  <input
+                    type="checkbox"
+                    aria-label={`授权项目组 ${slug}`}
+                    checked
+                    onChange={() => setGroups(toggle(groups, slug, false))}
+                  />
+                  <span>
+                    <code>{slug}</code>
+                    <small className="block muted">
+                      已移除 · 取消此范围后可保存
+                    </small>
+                  </span>
+                </label>
+              ))}
             {!options.groups.length && (
               <p className="muted small">没有可选项目组。</p>
             )}
@@ -226,6 +252,27 @@ export function CredentialForm({
                 </div>
               );
             })}
+            {projects
+              .filter(
+                (slug) =>
+                  !options.projects.some((project) => project.slug === slug),
+              )
+              .map((slug) => (
+                <label className="scope-option" key={slug}>
+                  <input
+                    type="checkbox"
+                    aria-label={`单独授权项目 ${slug}`}
+                    checked
+                    onChange={() => setProjects(toggle(projects, slug, false))}
+                  />
+                  <span>
+                    <code>{slug}</code>
+                    <small className="block muted">
+                      已移除 · 单独授权，取消此范围后可保存
+                    </small>
+                  </span>
+                </label>
+              ))}
             {excluded
               .filter((slug) => !options.projects.some((p) => p.slug === slug))
               .map((slug) => (
@@ -236,7 +283,7 @@ export function CredentialForm({
                     checked
                     onChange={() => setExcluded(toggle(excluded, slug, false))}
                   />
-                  <span>{slug} · 已排除</span>
+                  <span>{slug} · 已排除 · 已移除</span>
                 </label>
               ))}
             {!options.projects.length && (
@@ -256,7 +303,7 @@ export function CredentialForm({
               以后加入所选组的项目自动获得授权，排除项优先。
               {role === "deployer"
                 ? "只能读取所选环境配置及拉取镜像，不能发布或管理项目。"
-                : "可以推送镜像和发布版本，不能读取生产环境配置。"}
+                : "可以推送镜像与发布版本，可管理授权项目并读取、修改环境配置（含秘密值）；不能管理项目组、其他范围或访问凭据。"}
             </p>
           </section>
         </>
@@ -269,20 +316,22 @@ export function CredentialForm({
           </button>
         </div>
       )}
-      {role === "deployer" && (
+      {
         <label>
           允许的环境
           <input
-            required
+            required={role === "deployer"}
             value={environments}
             onChange={(e) => setEnvironments(e.target.value)}
             placeholder="prod,test"
           />
           <span className="muted small">
-            仅允许这些环境，多个环境以逗号分隔。
+            {role === "publisher"
+              ? "可选，留空允许授权项目的全部环境。配置读写、新项目初始环境及修改默认环境均受限制；发布、镜像与其他项目资料不受此环境过滤。"
+              : "仅允许这些环境，多个环境以逗号分隔。"}
           </span>
         </label>
-      )}
+      }
       {token ? (
         <label>
           到期时间

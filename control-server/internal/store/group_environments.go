@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const groupRevisionSelect = `SELECT r.id,r.group_slug,r.environment,r.revision,r.ciphertext,r.created_at FROM ctl_group_environments e JOIN ctl_group_revisions r ON r.id=e.current_id WHERE e.group_slug=$1 AND e.name=$2`
+const groupRevisionSelect = `SELECT r.id,r.group_slug,r.environment,r.revision,r.ciphertext,r.created_at FROM ctl_group_environments e JOIN ctl_group_revisions r ON r.id=e.current_id JOIN ctl_groups g ON g.slug=e.group_slug AND g.deleted_at IS NULL WHERE e.group_slug=$1 AND e.name=$2`
 
 // The namespace prefix prevents a group ciphertext from being used as a project revision.
 func groupRevisionAAD(r domain.GroupRevision) string {
@@ -21,7 +21,7 @@ func groupRevisionAAD(r domain.GroupRevision) string {
 }
 
 func (s *Store) GetGroup(ctx context.Context, slug string) (domain.Group, error) {
-	return scanGroup(s.pool.QueryRow(ctx, "SELECT data FROM ctl_groups WHERE slug=$1", slug))
+	return scanGroup(s.pool.QueryRow(ctx, "SELECT data FROM ctl_groups WHERE slug=$1 AND deleted_at IS NULL", slug))
 }
 
 func (s *Store) readGroupRevision(row scanner) (domain.GroupRevision, error) {
@@ -72,7 +72,7 @@ func (s *Store) SaveGroupRevision(ctx context.Context, group, env string, expect
 		return r, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = scanGroup(tx.QueryRow(ctx, "SELECT data FROM ctl_groups WHERE slug=$1", group)); err != nil {
+	if err = s.lockGroup(ctx, tx, group); err != nil {
 		return r, err
 	}
 	if _, err = tx.Exec(ctx, "INSERT INTO ctl_group_environments(group_slug,name) VALUES($1,$2) ON CONFLICT DO NOTHING", group, env); err != nil {

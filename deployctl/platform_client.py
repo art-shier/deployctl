@@ -77,7 +77,10 @@ class NoRedirect(HTTPRedirectHandler):
 class PlatformError(RuntimeError):
     def __init__(self,status):
         self.status=status
-        super().__init__(f'platform HTTP {status}; check permissions, project, environment and version')
+        message = ('conflict: reload current metadata/revision before retrying; '
+                   'a name may already exist or a group may still contain projects'
+                   if status == 409 else 'check permissions, project, environment and version')
+        super().__init__(f'platform HTTP {status}; {message}')
 
 
 def validate_registry_token(token):
@@ -91,7 +94,7 @@ class PlatformClient:
         self.server = validate_origin(credentials.server)
         self.token = validate_token(credentials.token)
 
-    def request(self, method, path, value=None, raw=None, content_type=None, limit=512*1024, basic=False, verification_token=None, download_progress=None):
+    def request(self, method, path, value=None, raw=None, content_type=None, limit=512*1024, basic=False, verification_token=None, download_progress=None, expected_status=None):
         if not isinstance(path,str) or not path.startswith('/') or path.startswith('//') or '\\' in path or any(ord(c)<=32 for c in path):
             raise ValueError('invalid platform API path')
         headers = {'Accept':'application/json','User-Agent':f'deployctl/{__version__}'}
@@ -101,6 +104,8 @@ class PlatformClient:
         if content_type: headers['Content-Type']=content_type
         try:
             with build_opener(NoRedirect()).open(Request(self.server+path,data=raw,headers=headers,method=method),timeout=60) as response:
+                if expected_status is not None and response.status != expected_status:
+                    raise ValueError('unexpected platform response status')
                 if download_progress is not None:
                     from .download import read_response
                     return read_response(response, limit, download_progress)
