@@ -173,7 +173,9 @@ class ServerCommandTests(unittest.TestCase):
     @unittest.skipIf(os.name == 'nt', 'real POSIX command and protected instance paths')
     def test_installed_lifecycle_preserves_files_and_uses_instance_profile(self):
         self.assertTrue(callable(getattr(server_bundle, 'operate_server', None)), 'installed server lifecycle is missing')
-        with tempfile.TemporaryDirectory() as tmp:
+        # The fixture owns a fake Docker daemon. Root authorization is tested
+        # separately; hosted unit-test runners intentionally run unprivileged.
+        with tempfile.TemporaryDirectory() as tmp, patch.object(server_bundle, 'require_runtime'):
             folder = Path(tmp); home = folder/'instance'
             package = server_bundle.build_bundle(ROOT, folder/'package', IMAGE, 'v1.9.0')
             with patch.object(server_bundle, 'require_runtime'), patch.object(server_bundle, 'LOCK_HOME', folder/'locks'), patch.object(server_bundle, 'run_bootstrap'):
@@ -240,6 +242,11 @@ if 'logs' in sys.argv: print('fixture service log')
             with patch.dict(os.environ, environment), patch.object(server_bundle, 'LOCK_HOME', folder/'locks'), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(main(['server-restart', '--home', str(home)]), 1)
             self.assertEqual(len([json.loads(line) for line in calls.read_text().splitlines() if '--project-name' in line]), count)
+
+    def test_actual_server_runtime_rejects_non_root_before_docker(self):
+        with patch.object(server_bundle.sys, 'platform', 'linux'), patch.object(server_bundle.os, 'geteuid', return_value=1000, create=True):
+            with self.assertRaisesRegex(ValueError, 'Linux root'):
+                server_bundle.require_runtime()
 
 
 if __name__ == '__main__': unittest.main()
