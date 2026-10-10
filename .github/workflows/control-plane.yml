@@ -106,13 +106,18 @@ jobs:
           python-version: '3.12'
       - name: Real managed CLI and authenticated Docker deployment
         env:
-          CTL_FIXTURE_DATABASE_URL: postgres://postgres:fixture-only@127.0.0.1:5432/postgres?sslmode=disable
+          CTL_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
           CTL_SERVER_BINARY: ${{ runner.temp }}/ctl-server
           CTL_AGENT_DIR: ${{ runner.temp }}/ctl-agent-assets
         run: |
           python -m pip install PyYAML==6.0.3
-          python tests/static_control_plane_integration.py
-          python tests/control_plane_integration.py
+          # Each fixture initializes its own encryption keys and must have its own database.
+          docker exec "$CTL_POSTGRES_CONTAINER" createdb -U postgres ctl_static_e2e
+          CTL_FIXTURE_DATABASE_URL='postgres://postgres:fixture-only@127.0.0.1:5432/ctl_static_e2e?sslmode=disable' \
+            python tests/static_control_plane_integration.py
+          docker exec "$CTL_POSTGRES_CONTAINER" createdb -U postgres ctl_docker_e2e
+          CTL_FIXTURE_DATABASE_URL='postgres://postgres:fixture-only@127.0.0.1:5432/ctl_docker_e2e?sslmode=disable' \
+            python tests/control_plane_integration.py
       - name: Build and repeat actual platform bootstrap
         run: |
           docker build -f control-deploy/Dockerfile -t ctl-platform-ci .
