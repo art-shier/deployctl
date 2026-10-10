@@ -46,7 +46,7 @@ def archive_name(value, directory):
 class _Entries:
     def __init__(self,destination):
         self.destination=destination
-        self.seen={};self.parents=set();self.total=0;self.count=0;self.files=0
+        self.seen={};self.parents=set();self.nodes=set();self.total=0;self.count=0;self.files=0
 
     def consume(self,name,directory,size,reader=None):
         name=archive_name(name,directory)
@@ -57,6 +57,8 @@ class _Entries:
         if any(self.seen.get(p) is False for p in parents) or not directory and name in self.parents:
             raise ValueError('static file/directory prefix collision')
         self.parents.update(parents);self.seen[name]=directory
+        self.nodes.update(parents);self.nodes.add(name)
+        if len(self.nodes)>MAX_ENTRIES:raise ValueError('too many expanded static entries')
         if directory:
             if size: raise ValueError('directory contains payload')
             if self.destination is not None:

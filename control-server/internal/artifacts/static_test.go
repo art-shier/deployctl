@@ -1,11 +1,34 @@
 package artifacts
 
 import (
+	"archive/zip"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestImplicitStaticDirectoriesAreBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "many.zip")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	z := zip.NewWriter(f)
+	for i := 0; i < 5001; i++ {
+		entry, err := z.Create(fmt.Sprintf("item-%d/a/b/c/d/e/f/g/h/file", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry.Write([]byte("one"))
+	}
+	z.Close()
+	f.Close()
+	if _, err = ValidateStaticFile(path, ""); err == nil {
+		t.Fatal("implicit directory expansion accepted")
+	}
+}
 
 func TestSharedStaticArchiveFixtures(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "tests", "fixtures", "static-archives")

@@ -25,6 +25,7 @@ const MaxStaticEntries = 50000
 type staticEntries struct {
 	seen         map[string]bool
 	parents      map[string]bool
+	nodes        map[string]bool
 	count, files int
 	total        int64
 }
@@ -75,11 +76,16 @@ func (e *staticEntries) consume(name string, directory bool, size int64, reader 
 			return domain.ErrInvalid
 		}
 		e.parents[parent] = true
+		e.nodes[parent] = true
 	}
 	if !directory && e.parents[name] {
 		return domain.ErrInvalid
 	}
 	e.seen[name] = directory
+	e.nodes[name] = true
+	if len(e.nodes) > MaxStaticEntries {
+		return domain.ErrInvalid
+	}
 	if directory {
 		if size != 0 {
 			return domain.ErrInvalid
@@ -124,7 +130,7 @@ func ValidateStaticFile(filename, expectedSHA string) (domain.Release, error) {
 		return out, domain.ErrInvalid
 	}
 	f.Seek(0, io.SeekStart)
-	entries := staticEntries{seen: map[string]bool{}, parents: map[string]bool{}}
+	entries := staticEntries{seen: map[string]bool{}, parents: map[string]bool{}, nodes: map[string]bool{}}
 	switch {
 	case string(magic[:2]) == "PK":
 		out.ArchiveFormat = "zip"

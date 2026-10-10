@@ -38,3 +38,12 @@ class StaticArchiveTests(unittest.TestCase):
             dest=Path(directory);(dest/'existing').write_text('preserve')
             with self.assertRaises(ValueError):extract_static_archive(FIXTURES/'valid.zip',dest)
             self.assertEqual((dest/'existing').read_text(),'preserve')
+
+    def test_implicit_directories_are_included_in_resource_budget(self):
+        import zipfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            package=Path(directory)/'deep.zip'
+            with zipfile.ZipFile(package,'w') as archive:archive.writestr('a/b/c/d/file',b'one')
+            with patch('deployctl.static_archive.MAX_ENTRIES',3):
+                with self.assertRaises(ValueError):inspect_static_archive(package)
