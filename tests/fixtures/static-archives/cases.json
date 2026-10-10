@@ -1,0 +1,110 @@
+[
+  {
+    "name": "valid.zip",
+    "valid": true
+  },
+  {
+    "name": "parent.zip",
+    "valid": false
+  },
+  {
+    "name": "absolute.zip",
+    "valid": false
+  },
+  {
+    "name": "drive.zip",
+    "valid": false
+  },
+  {
+    "name": "backslash.zip",
+    "valid": false
+  },
+  {
+    "name": "dot-parent.zip",
+    "valid": false
+  },
+  {
+    "name": "empty.zip",
+    "valid": false
+  },
+  {
+    "name": "directories.zip",
+    "valid": false
+  },
+  {
+    "name": "duplicate.zip",
+    "valid": false
+  },
+  {
+    "name": "prefix.zip",
+    "valid": false
+  },
+  {
+    "name": "link.zip",
+    "valid": false
+  },
+  {
+    "name": "valid.tar.gz",
+    "valid": true
+  },
+  {
+    "name": "parent.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "absolute.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "drive.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "backslash.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "dot-parent.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "empty.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "directories.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "duplicate.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "prefix.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "link.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "nul-name.zip",
+    "valid": false
+  },
+  {
+    "name": "encrypted.zip",
+    "valid": false
+  },
+  {
+    "name": "crc.zip",
+    "valid": false
+  },
+  {
+    "name": "truncated.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "concatenated.tar.gz",
+    "valid": false
+  }
+]
