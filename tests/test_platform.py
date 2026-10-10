@@ -119,7 +119,10 @@ class PlatformTests(unittest.TestCase):
     def test_managed_cli_and_prod_conflicts(self):
         from contextlib import redirect_stdout,redirect_stderr,nullcontext
         import io
-        from deployctl.cli import main
+        from deployctl.cli import main,parser
+        # Load command modules before replacing the client class. Otherwise a
+        # module imported inside this patch permanently captures the test double.
+        parser()
         client=PlatformClient(Credentials('https://ctl.test','private-test-token'))
         with patch('deployctl.platform_credentials.Credentials.load',return_value=Credentials(client.server,client.token)), patch('deployctl.platform_client.PlatformClient') as platform, patch('deployctl.runtime.Manager') as manager, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             platform.return_value.resolve.return_value=self.resolution()

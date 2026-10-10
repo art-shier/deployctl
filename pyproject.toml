@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "team-deployctl"
-version = "1.12.1"
+version = "1.13.0"
 description = "Standard GitHub release delivery and Docker Compose deployment"
 requires-python = ">=3.10"
 dependencies = ["PyYAML==6.0.3"]

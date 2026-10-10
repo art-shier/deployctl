@@ -388,6 +388,14 @@ func scanRelease(row scanner) (domain.Release, error) {
 		return r, err
 	}
 	r.Status = status
+	var err error
+	r.DeploymentType, err = domain.DeploymentType(r.DeploymentType)
+	if err != nil {
+		return r, err
+	}
+	if r.ArchiveFormat == "" {
+		r.ArchiveFormat = "tar.gz"
+	}
 	return r, nil
 }
 
@@ -401,8 +409,29 @@ func (s *Store) PublishRelease(ctx context.Context, r domain.Release, stable boo
 // Verification is performed while holding the same repository lock used by
 // image removal. Another project sharing the repository cannot delete in between.
 func (s *Store) PublishReleaseChecked(ctx context.Context, r domain.Release, stable bool, actor string, check func(domain.Project) error) (domain.Release, error) {
+	return s.PublishReleaseAuthorized(ctx, r, stable, actor, nil, check)
+}
+
+// Authorization is separate from artifact persistence: deny stale rights before
+// inspecting an immutable version, and persist only after conflict validation.
+func (s *Store) PublishReleaseAuthorized(ctx context.Context, r domain.Release, stable bool, actor string, authorize, check func(domain.Project) error) (domain.Release, error) {
 	checksum := regexp.MustCompile(`^[a-f0-9]{64}$`)
-	if domain.ValidateName(r.Project, 48) != nil || domain.ValidateVersion(r.Version) != nil || domain.ValidateImage(r.Image) != nil || !checksum.MatchString(r.SHA256) || r.Size <= 0 || r.Size > 10*1024*1024 {
+	kind, kindErr := domain.DeploymentType(r.DeploymentType)
+	if kindErr != nil {
+		return r, kindErr
+	}
+	r.DeploymentType = kind
+	if r.ArchiveFormat == "" {
+		r.ArchiveFormat = "tar.gz"
+	}
+	if domain.ValidateName(r.Project, 48) != nil || domain.ValidateVersion(r.Version) != nil || !checksum.MatchString(r.SHA256) || r.Size <= 0 || r.Commit != "" && !regexp.MustCompile(`^[a-f0-9]{40,64}$`).MatchString(r.Commit) {
+		return r, domain.ErrInvalid
+	}
+	if kind == "docker" {
+		if domain.ValidateImage(r.Image) != nil || r.Size > 10*1024*1024 || r.ArchiveFormat != "tar.gz" {
+			return r, domain.ErrInvalid
+		}
+	} else if r.Image != "" || r.Size > 256*1024*1024 || r.ExpandedSize < 0 || r.ExpandedSize > 1024*1024*1024 || r.EntryCount < 1 || r.EntryCount > 50000 || r.ArchiveFormat != "zip" && r.ArchiveFormat != "tar.gz" {
 		return r, domain.ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -414,20 +443,24 @@ func (s *Store) PublishReleaseChecked(ctx context.Context, r domain.Release, sta
 	if err != nil {
 		return r, err
 	}
-	if strings.Split(r.Image, "@")[0] != p.ImageRepository {
+	if p.DeploymentType != kind {
 		return r, domain.ErrInvalid
 	}
-	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", "ctl-images:"+p.ImageRepository); err != nil {
+	if kind == "docker" && strings.Split(r.Image, "@")[0] != p.ImageRepository {
+		return r, domain.ErrInvalid
+	}
+	if err = lockRepositories(ctx, tx, p.ImageRepository); err != nil {
 		return r, err
 	}
-	if check != nil {
-		if err = check(p); err != nil {
+	if authorize != nil {
+		if err = authorize(p); err != nil {
 			return r, err
 		}
 	}
 	old, err := scanRelease(tx.QueryRow(ctx, "SELECT data,status FROM ctl_releases WHERE project=$1 AND version=$2", r.Project, r.Version))
+	isNew := errors.Is(err, domain.ErrNotFound)
 	if err == nil {
-		if old.SHA256 != r.SHA256 || old.Image != r.Image || old.Status != "published" {
+		if old.SHA256 != r.SHA256 || old.Image != r.Image || old.Status != "published" || old.DeploymentType != r.DeploymentType || old.ArchiveFormat != r.ArchiveFormat || old.Commit != r.Commit || old.Size != r.Size || kind == "static" && (old.ExpandedSize != r.ExpandedSize || old.EntryCount != r.EntryCount) {
 			return r, domain.ErrConflict
 		}
 		r = old
@@ -437,6 +470,14 @@ func (s *Store) PublishReleaseChecked(ctx context.Context, r domain.Release, sta
 		r.ID = domain.NewID()
 		r.CreatedAt = time.Now().UTC()
 		r.Status = "published"
+	}
+	// Even an idempotent retry rechecks current permissions/registry/artifact integrity.
+	if check != nil {
+		if err = check(p); err != nil {
+			return r, err
+		}
+	}
+	if isNew {
 		b, _ := json.Marshal(r)
 		if _, err = tx.Exec(ctx, "INSERT INTO ctl_releases(id,project,version,status,data) VALUES($1,$2,$3,'published',$4)", r.ID, r.Project, r.Version, b); err != nil {
 			return r, mapped(err)
