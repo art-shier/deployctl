@@ -10,6 +10,32 @@ from .runtime import atomic_json
 from .runtime_snapshot import reject_links
 from .static_state import validate_target_dir
 
+CACHE_MARKER='.ctl-static-cache.json'
+
+
+def reject_managed_cache_path(path,allowed_root=None):
+    """Protect physical caches even when another manager uses a different root."""
+    path=Path(path)
+    for parent in (path,*path.parents):
+        marker=parent/CACHE_MARKER
+        if not os.path.lexists(marker):continue
+        if allowed_root is not None and parent==Path(allowed_root):
+            reject_links(marker)
+            if not marker.is_file() or marker.stat().st_size>65536:raise ValueError('invalid managed static cache marker')
+            try:value=json.loads(marker.read_text(encoding='utf-8'))
+            except (UnicodeError,json.JSONDecodeError):raise ValueError('invalid managed static cache marker') from None
+            if value!={'schema_version':1,'root':str(parent)}:raise ValueError('managed static cache marker changed')
+            return
+        raise ValueError('path overlaps an existing managed static cache')
+
+
+def mark_cache_root(root):
+    root=Path(root);reject_managed_cache_path(root,allowed_root=root)
+    marker=root/CACHE_MARKER;reject_links(marker)
+    if not marker.exists():
+        atomic_json(marker,{'schema_version':1,'root':str(root)})
+        marker.chmod(0o600);sync_dir(root)
+
 
 def sync_dir(path):
     fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY)
@@ -50,6 +76,7 @@ def owner_record(target):
 def validate_target(target,root,config_root,owner):
     target=Path(validate_target_dir(str(target)))
     reject_links(target.parent)
+    reject_managed_cache_path(target)
     if '.ctl-static' in target.parts:raise ValueError('target overlaps deployment ownership metadata')
     for managed in (Path(root),Path(config_root)):
         if target==managed or target.is_relative_to(managed) or managed.is_relative_to(target):raise ValueError('target overlaps managed deployment data')

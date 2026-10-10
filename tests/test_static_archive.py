@@ -7,6 +7,17 @@ from deployctl.static_archive import inspect_static_archive, extract_static_arch
 FIXTURES = Path(__file__).parent/'fixtures/static-archives'
 
 class StaticArchiveTests(unittest.TestCase):
+    @unittest.skipUnless(__import__('os').name=='posix','requires GNU tar')
+    def test_gnu_tar_root_directory_record(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as temporary:
+            base=Path(temporary);site=base/'site';site.mkdir();(site/'index.html').write_bytes(b'hello')
+            package=base/'site.tar.gz'
+            subprocess.run(['tar','-czf',str(package),'-C',str(site),'.'],check=True)
+            info=inspect_static_archive(package)
+            self.assertEqual((info.expanded_size,info.entry_count),(5,2))
+            extract_static_archive(package,base/'files')
+            self.assertEqual((base/'files/index.html').read_bytes(),b'hello')
     def test_shared_archives_and_safe_extraction(self):
         for case in json.loads((FIXTURES/'cases.json').read_text()):
             with self.subTest(case=case['name']):

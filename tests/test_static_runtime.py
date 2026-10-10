@@ -26,6 +26,21 @@ def resolution(package,version='v1.0.0',project='project-a',target=None):
 
 @unittest.skipIf(os.name=='nt','Linux static file transactions')
 class StaticRuntimeTests(unittest.TestCase):
+    def test_other_root_cannot_mutate_physical_release_tree(self):
+        package=self.package('with-empty',{'index.html':b'one','empty/':b''})
+        self.manager.deploy('project-a','prod',package,resolution(package,target=self.target))
+        physical=(self.target/'empty').resolve()
+        second=StaticManager(self.base/'other-root',self.base/'other-config')
+        for proposed in (physical,physical/'new'/'child'):
+            with self.subTest(target=proposed),self.assertRaisesRegex(ValueError,'managed|cache'):
+                second.deploy('project-b','prod',self.v2,resolution(self.v2,project='project-b',target=proposed))
+        nested_root=physical/'hidden-root'
+        with self.assertRaisesRegex(ValueError,'managed|cache'):
+            StaticManager(nested_root,self.base/'other-config').deploy('project-b','prod',self.v2,resolution(self.v2,project='project-b',target=self.base/'other-public'))
+        self.assertEqual(list(physical.iterdir()),[])
+        self.assertFalse(nested_root.exists())
+        self.assertIn('v1.0.0',self.manager.operate('project-a','prod','status'))
+
     def test_missing_state_cannot_reclaim_owned_target(self):
         self.install()
         (self.root/'project-a/prod/state.json').unlink()

@@ -28,6 +28,8 @@ class BoundedWriter:
 def package_static(directory: Path, output: Path, archive_format='tar.gz') -> contract.ArchiveInfo:
     directory=Path(directory).absolute();output=Path(output).absolute()
     reject_links(directory);reject_links(output)
+    sidecar=output.with_name(output.name+'.sha256');reject_links(sidecar)
+    if sidecar.exists() and not sidecar.is_file():raise ValueError('checksum output must be a regular file')
     if not directory.is_dir():raise ValueError('build output must be a directory')
     directory=directory.resolve();output=output.resolve()
     if output.is_relative_to(directory):raise ValueError('archive output cannot be inside build output')
@@ -69,8 +71,14 @@ def package_static(directory: Path, output: Path, archive_format='tar.gz') -> co
                             with open_file(path,size) as source,archive.open(item,'w') as dest:shutil.copyfileobj(source,dest,65536)
             raw.flush();os.fsync(raw.fileno())
         result=contract.inspect_static_archive(temporary)
-        os.replace(temporary,output)
-        output.with_name(output.name+'.sha256').write_text(f'{result.sha256}  {output.name}\n',encoding='ascii')
+        checksum_fd,checksum_name=tempfile.mkstemp(prefix='.ctl-checksum-',dir=output.parent)
+        checksum_temp=Path(checksum_name)
+        try:
+            with os.fdopen(checksum_fd,'w',encoding='ascii',newline='\n') as checksum:
+                checksum.write(f'{result.sha256}  {output.name}\n');checksum.flush();os.fsync(checksum.fileno())
+            os.replace(temporary,output)
+            os.replace(checksum_temp,sidecar)
+        finally:checksum_temp.unlink(missing_ok=True)
         return result
     finally:
         temporary.unlink(missing_ok=True)

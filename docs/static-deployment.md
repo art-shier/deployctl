@@ -41,7 +41,7 @@ ctl logs project-a --prod --tail 50
 
 组默认目录是**固定绝对路径**，不会插入项目名。同组多项目/不同环境需分别指定项目专用目录，如 `/var/www/project-a/prod` 和 `/var/www/project-b/prod`；不得共享或相互嵌套。仅接管不存在/空目录，拒绝未知链接、已有非空目录和所有权冲突。目标与缓存已有父目录需可公开遍历，ctl 不修改外部父目录权限。
 
-公开路径为 ctl 管理的符号链接。升级切换完整版本树，旧文件从公开路径消失，旧版本保留本机供离线回滚。不要修改链接/缓存。主机静态变更串行执行，遇到锁冲突重试。备份同时保留 state、版本缓存与 target.parent 的 `.ctl-static` 所有权记录。
+公开路径为 ctl 管理的符号链接。升级切换完整版本树，旧文件从公开路径消失，旧版本保留本机供离线回滚。不要修改链接/缓存。主机静态变更串行执行，遇到锁冲突重试。备份同时保留 state、版本缓存、root/.ctl-static-cache.json 与 target.parent 的 `.ctl-static` 所有权记录。
 
 静态项目拒绝 `--env-var/--set/--unset-env/--port/--bind`、stop/restart 和旧 `--release`。本期不注入浏览器运行变量、不执行 pre/post hook；公开配置在构建时生成。
 

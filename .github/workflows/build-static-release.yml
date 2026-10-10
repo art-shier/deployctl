@@ -131,8 +131,8 @@ jobs:
           project, release = os.environ['PROJECT'], os.environ['VERSION']
           validate_name(project); version(release)
           root = Path.cwd().resolve()
-          source = (root / os.environ['OUTPUT_DIRECTORY']).resolve()
-          if not source.is_relative_to(root): raise SystemExit('output-directory must stay inside the project checkout')
+          source = root / os.environ['OUTPUT_DIRECTORY']
+          if not source.resolve().is_relative_to(root): raise SystemExit('output-directory must stay inside the project checkout')
           info = package_static(source, Path(os.environ['RUNNER_TEMP'], 'static-delivery', f'{project}-{release}.tar.gz'))
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
               out.write(f'application={project}\nversion={release}\nsha256={info.sha256}\narchive_format={info.archive_format}\n')

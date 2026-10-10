@@ -15,7 +15,7 @@ from .runtime import atomic_json,service_lock
 from .runtime_snapshot import reject_links
 from .static_archive import extract_static_archive,inspect_static_archive,MAX_PACKAGE
 from .static_state import normalize_static_state,build_tree_manifest,verify_tree,tree_bytes,validate_target_dir
-from .static_target import target_lock,validate_target,switch_target,claim_target,release_target,owner_record,metadata_paths,sync_dir
+from .static_target import target_lock,validate_target,switch_target,claim_target,release_target,owner_record,metadata_paths,sync_dir,reject_managed_cache_path,mark_cache_root
 
 
 def public_directories(path):
@@ -38,7 +38,11 @@ class StaticManager:
     def _home(self,app,env,create=False):
         validate_name(app);validate_name(env,'environment',32)
         home=self.root/app/env;reject_links(home)
-        if create:public_directories(home/'releases')
+        if create:
+            reject_managed_cache_path(self.root,allowed_root=self.root)
+            public_directories(self.root);mark_cache_root(self.root)
+            reject_managed_cache_path(home,allowed_root=self.root)
+            public_directories(home/'releases')
         return home
 
     def _state(self,app,env):
@@ -197,10 +201,11 @@ class StaticManager:
                 validate_target_dir(chosen)
                 if state['target_dir'] is not None and chosen!=state['target_dir']:raise ValueError('target directory migration requires a separate operation')
                 candidate_state=copy.deepcopy(state);candidate_state['target_dir']=chosen
-                target=Path(chosen);public_directories(target.parent)
+                target=Path(chosen)
                 owner=self._owner(candidate_state);validate_target(target,self.root,self.config_root,owner)
                 if not state['current'] and owner_record(target) is not None:
                     raise ValueError('owned static target has no authoritative state; restore state from backup')
+                public_directories(target.parent)
                 if state['current']:
                     self._verify(state,state['current']);self._check_link(state,[state['current']])
                 candidate=self._prepare(candidate_state,package,resolution,management_source)

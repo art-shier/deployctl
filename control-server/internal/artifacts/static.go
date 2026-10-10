@@ -52,6 +52,9 @@ func staticName(name string, directory bool) (string, error) {
 		}
 	}
 	if len(out) == 0 {
+		if directory && name != "" {
+			return "", nil
+		}
 		return "", domain.ErrInvalid
 	}
 	return strings.Join(out, "/"), nil
@@ -68,6 +71,13 @@ func (e *staticEntries) consume(name string, directory bool, size int64, reader 
 	}
 	if _, exists := e.seen[name]; exists {
 		return domain.ErrInvalid
+	}
+	if name == "" {
+		if !directory || size != 0 {
+			return domain.ErrInvalid
+		}
+		e.seen[name] = true
+		return nil
 	}
 	parts := strings.Split(name, "/")
 	for i := 1; i < len(parts); i++ {

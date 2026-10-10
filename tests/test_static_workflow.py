@@ -8,6 +8,31 @@ import zipfile
 ROOT=Path(__file__).resolve().parents[1]
 
 class StaticPackagingTests(unittest.TestCase):
+    @unittest.skipUnless(os.name=='posix','requires symlinks')
+    def test_checksum_symlink_cannot_overwrite_unrelated_file(self):
+        package=self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);site=root/'site';site.mkdir();(site/'index.html').write_bytes(b'index')
+            victim=root/'unrelated-config';victim.write_bytes(b'KEEP THIS CONFIG')
+            output=root/'bundle.tar.gz';output.write_bytes(b'previous archive')
+            output.with_name(output.name+'.sha256').symlink_to(victim)
+            with self.assertRaises(ValueError):package(site,output)
+            self.assertEqual(victim.read_bytes(),b'KEEP THIS CONFIG')
+            self.assertEqual(output.read_bytes(),b'previous archive')
+
+    @unittest.skipUnless(os.name=='posix','requires symlinks')
+    def test_workflow_packaging_rejects_linked_output_directory(self):
+        import subprocess,sys,yaml
+        workflow=yaml.safe_load((ROOT/'.github/workflows/build-static-release.yml').read_text())
+        step=next(s for s in workflow['jobs']['release']['steps'] if s.get('name')=='Package static build output')
+        code=step['run'].split("python - <<'PY'\n",1)[1].rsplit('\nPY',1)[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);site=root/'site';site.mkdir();(site/'actual').mkdir();(site/'actual/index.html').write_bytes(b'index');(site/'dist').symlink_to('actual')
+            env={**os.environ,'PYTHONPATH':os.pathsep.join((str(ROOT),os.environ.get('PYTHONPATH',''))),'PROJECT':'project-a','VERSION':'v1.0.0','OUTPUT_DIRECTORY':'dist','RUNNER_TEMP':str(root),'GITHUB_OUTPUT':str(root/'outputs')}
+            result=subprocess.run([sys.executable,'-c',code],cwd=site,env=env,capture_output=True,text=True)
+            self.assertNotEqual(result.returncode,0,'workflow bypassed root link validation')
+            self.assertFalse((root/'static-delivery/project-a-v1.0.0.tar.gz').exists())
+
     def builder(self):
         path=ROOT/'scripts/package_static.py'
         self.assertTrue(path.exists(), 'static packager is missing')

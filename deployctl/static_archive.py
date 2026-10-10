@@ -39,7 +39,9 @@ def archive_name(value, directory):
     parts=value.rstrip('/').split('/')
     if '..' in parts: raise ValueError('static archive path escapes root')
     parts=[p for p in parts if p not in ('','.')]
-    if not parts: raise ValueError('empty static archive path')
+    if not parts:
+        if directory and value:return '' # A tar ./ record names the archive root.
+        raise ValueError('empty static archive path')
     return '/'.join(parts)
 
 
@@ -52,6 +54,10 @@ class _Entries:
         name=archive_name(name,directory)
         self.count+=1
         if self.count>MAX_ENTRIES or name in self.seen: raise ValueError('duplicate or excessive static entries')
+        if not name:
+            if not directory or size:raise ValueError('invalid static archive root record')
+            self.seen[name]=True
+            return
         parts=name.split('/')
         parents=['/'.join(parts[:i]) for i in range(1,len(parts))]
         if any(self.seen.get(p) is False for p in parents) or not directory and name in self.parents:

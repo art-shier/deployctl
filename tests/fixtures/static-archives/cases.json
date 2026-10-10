@@ -126,5 +126,21 @@
   {
     "name": "oversized-pax.tar.gz",
     "valid": false
+  },
+  {
+    "name": "valid-root.tar.gz",
+    "valid": true
+  },
+  {
+    "name": "duplicate-root.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "root-file.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "root-payload.tar.gz",
+    "valid": false
   }
 ]

@@ -30,7 +30,7 @@ ctl logs project-a --prod --tail 50
 
 首次目录必须不存在或为空，拒绝未知链接/非空目录/跨 root 所有权冲突。首次保存绑定，升级/回滚沿用，改目录需单独规划迁移。--root 缓存的已有父目录必须供Web用户遍历；不擅自 chmod 外部父目录。
 
-目标为受管理 symlink，升级完整替换文件树，旧文件从公开路径消失，旧包/树保留离线回滚。state/包/清单/诊断不在公开目录；不要手改链接/缓存。备份 state、版本缓存和 target.parent/.ctl-static；状态丢失不应重装接管未知目标。
+目标为受管理 symlink，升级完整替换文件树，旧文件从公开路径消失，旧包/树保留离线回滚。state/包/清单/诊断不在公开目录；不要手改链接/缓存。备份 state、版本缓存、root/.ctl-static-cache.json 和 target.parent/.ctl-static；状态丢失不应重装接管未知目标。
 
 不用 website 前缀或旧 --release，不传 --env-var/--set/--unset-env/--port/--bind，不执行 stop/restart、pre/post hook 或部署时配置注入；这些参数会明确报错。
 
