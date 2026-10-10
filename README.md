@@ -24,17 +24,17 @@ v1.9.0支持项目组按环境配置启动变量与安装参数，项目同名�
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.12.1/install.sh \
-  | bash -s -- --user --version v1.12.1
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.13.0/install.sh \
+  | bash -s -- --user --version v1.13.0
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```
 
 安装器下载 CLI、检查 SHA256 和版本，安装 `ctl` 与 `deployctl` 到 `~/.local/bin`。CLI 内置依赖，无需服务器 pip 安装。再次执行可升级本安装器管理的命令；已有其他同名工具会保留并报告冲突。
 
-安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.12.1`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
+安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.13.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
 
-要求 Python >=3.10；服务部署另需 Docker Engine、Docker Compose >=2.30。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
+要求 Python >=3.10；Docker 项目部署另需 Docker Engine、Docker Compose >=2.30，静态项目部署无需 Docker。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
 
 ## 业务项目接入
 
