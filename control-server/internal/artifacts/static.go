@@ -139,6 +139,9 @@ func ValidateStaticFile(filename, expectedSHA string) (domain.Release, error) {
 			return out, domain.ErrInvalid
 		}
 		for _, item := range archive.File {
+			if item.Flags&0x800 == 0 && strings.IndexFunc(item.Name, func(r rune) bool { return r > 127 }) >= 0 {
+				return out, domain.ErrInvalid
+			}
 			mode := item.Mode()
 			directory := mode.IsDir()
 			if item.Flags&1 != 0 || !(mode.IsRegular() || directory) || item.UncompressedSize64 > uint64(MaxStaticFile) {

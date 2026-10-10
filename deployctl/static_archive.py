@@ -96,6 +96,16 @@ class _BoundedGzip:
         return data
 
 
+class _SafeTarInfo(tarfile.TarInfo):
+    def _proc_member(self,archive):
+        # tarfile buffers PAX/GNU metadata internally before returning members.
+        # Bound those allocations and reject sparse processing before it starts.
+        if self.type==tarfile.GNUTYPE_SPARSE:raise ValueError('static sparse entries are forbidden')
+        if self.type in (tarfile.XHDTYPE,tarfile.XGLTYPE,tarfile.GNUTYPE_LONGNAME,tarfile.GNUTYPE_LONGLINK) and self.size>1024*1024:
+            raise ValueError('static TAR metadata exceeds limit')
+        return super()._proc_member(archive)
+
+
 def _process(package,destination):
     package=Path(package)
     if package.is_symlink() or not package.is_file(): raise ValueError('static package must be a regular file')
@@ -114,8 +124,10 @@ def _process(package,destination):
                 for item in archive.infolist():
                     mode=item.external_attr>>16 if item.create_system==3 else 0
                     kind=stat.S_IFMT(mode)
-                    directory=item.is_dir()
-                    if item.flag_bits&1 or kind not in (0,stat.S_IFREG,stat.S_IFDIR) or kind==stat.S_IFDIR and not directory:
+                    directory=item.is_dir() or kind==stat.S_IFDIR or bool(item.external_attr&0x10)
+                    if item.compress_type not in (zipfile.ZIP_STORED,zipfile.ZIP_DEFLATED):raise ValueError('unsupported static ZIP compression')
+                    if not item.flag_bits&0x800 and not item.orig_filename.isascii():raise ValueError('static ZIP names must use UTF-8')
+                    if item.flag_bits&1 or kind not in (0,stat.S_IFREG,stat.S_IFDIR):
                         raise ValueError('static archive links or special files are forbidden')
                     if directory: entries.consume(item.orig_filename,True,item.file_size)
                     else:
@@ -124,9 +136,9 @@ def _process(package,destination):
             format_name='tar.gz'
             with gzip.open(package,'rb') as gz:
                 bounded=_BoundedGzip(gz)
-                with tarfile.open(fileobj=bounded,mode='r|') as archive:
+                with tarfile.open(fileobj=bounded,mode='r|',tarinfo=_SafeTarInfo) as archive:
                     for item in archive:
-                        if not (item.isdir() or item.isfile()) or item.issparse(): raise ValueError('static archive contains a non-regular entry')
+                        if not (item.isdir() or item.isfile()) or item.issparse() or any(key.startswith('GNU.sparse') for key in item.pax_headers): raise ValueError('static archive contains a non-regular entry')
                         if item.isdir(): entries.consume(item.name,True,item.size)
                         else:
                             with archive.extractfile(item) as reader: entries.consume(item.name,False,item.size,reader)

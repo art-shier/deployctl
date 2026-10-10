@@ -1,10 +1,12 @@
 # deployctl：团队标准部署
 
-业务项目通过 GitHub Actions 构建 Docker 镜像和标准发布包，Linux 云服务器用 `ctl install/upgrade/rollback` 统一部署。`ctl` 与 `deployctl` 是同一个工具。
+业务项目通过 GitHub Actions 构建 Docker 镜像或静态文件压缩包，Linux 云服务器用 `ctl install/upgrade/rollback` 统一部署。`ctl` 与 `deployctl` 是同一个工具。
+
+CLI 1.13.0 新增静态项目：创建时选择 static，首次安装可 `ctl install project-a --prod --target-dir /var/www/project-a`，后续升级完整替换，回滚可离线执行。模板、目录配置和 Web 入口对接见 [静态部署指南](docs/static-deployment.md)。本功能需配套管理服务，源码版本不代表已发布标签。
 
 平台仓库：[art-shier/deployctl](https://github.com/art-shier/deployctl) · [版本与安装资产](https://github.com/art-shier/deployctl/releases) · [构建流水线](https://github.com/art-shier/deployctl/actions)
 
-本版本包含**管理服务与管理台0.5.1及CLI1.12.1**：按权限管理项目/项目组、读写配置、托管镜像/发布包和访问凭据；服务器登录后可直接 `ctl install notes --prod`。侧栏新增「Agent 接入」，从当前服务下载完整skill及CLI、查看接入说明和权限，见[Agent接入说明](docs/agent-access.md)。管理服务支持 `ctl server-install` 自动获取官方最新正式Release，或 `ctl server install` 等价写法；仍可指定 `--version` 或 `--release`。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)，项目与配置命令见[项目管理说明](docs/project-management.md)。
+本版本包含**管理服务与管理台0.6.0及CLI1.13.0**：按权限管理项目/项目组、读写配置、托管镜像/发布包和访问凭据；服务器登录后可直接 `ctl install notes --prod`。侧栏新增「Agent 接入」，从当前服务下载完整skill及CLI、查看接入说明和权限，见[Agent接入说明](docs/agent-access.md)。管理服务支持 `ctl server-install` 自动获取官方最新正式Release，或 `ctl server install` 等价写法；仍可指定 `--version` 或 `--release`。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)，项目与配置命令见[项目管理说明](docs/project-management.md)。
 
 v1.8.1完善**项目组工作台与组授权**：登录先进入项目组，点组查看项目列表，在组内注册、加入或移出项目，并直接管理该组的发布/部署凭据。新凭据只授权项目组，项目详情不再提供凭据入口。旧 Token 保留原项目权限，owner 为全局超级管理员。CLI 提供 `whoami` / `projects`。详见 [项目组和共享部署凭据](docs/control-plane.md#项目组和共享部署凭据v181)。
 

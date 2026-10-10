@@ -1,5 +1,7 @@
 # 管理服务模式（CLI>=1.7.0）
 
+下文镜像、Compose、--release与Docker构建/运行参数适用于Docker项目；静态项目使用[静态部署](static-deployment.md)的模板、目录和统一命令。
+
 ## 项目与配置管理（CLI/服务端>=1.11.0）
 
 同一登录支持`ctl project list/show/create/update/move/delete`、`ctl group list/show/create/update/delete`、`ctl project-config list/get/set/unset/apply`与`ctl group-config list/get/set/unset/apply`。发布凭据可在显式授权组内新建项目、管理授权项目资料与配置，非空environments限制配置环境；不可移组、删除、管理组配置或凭据。部署凭据原权限不变。owner拥有全部能力。

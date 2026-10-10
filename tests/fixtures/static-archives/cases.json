@@ -106,5 +106,25 @@
   {
     "name": "concatenated.tar.gz",
     "valid": false
+  },
+  {
+    "name": "valid-attributes.zip",
+    "valid": true
+  },
+  {
+    "name": "bzip2.zip",
+    "valid": false
+  },
+  {
+    "name": "ambiguous-encoding.zip",
+    "valid": false
+  },
+  {
+    "name": "sparse-pax.tar.gz",
+    "valid": false
+  },
+  {
+    "name": "oversized-pax.tar.gz",
+    "valid": false
   }
 ]

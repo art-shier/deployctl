@@ -1,0 +1,152 @@
+name: Build and publish static release
+on:
+  workflow_call:
+    inputs:
+      platform-repository:
+        type: string
+        required: true
+      platform-ref:
+        description: Same immutable commit or tag as the called workflow
+        type: string
+        required: true
+      project:
+        type: string
+        required: true
+      version:
+        description: Existing source tag, e.g. v1.0.0
+        type: string
+        required: true
+      server:
+        type: string
+        required: true
+      build-command:
+        description: Project script including dependency installation
+        type: string
+        required: true
+      output-directory:
+        type: string
+        default: dist
+      test-command:
+        type: string
+        default: ''
+    secrets:
+      CTL_PUBLISH_TOKEN:
+        required: true
+      PLATFORM_READ_TOKEN:
+        required: false
+    outputs:
+      application:
+        value: ${{ jobs.release.outputs.application }}
+      version:
+        value: ${{ jobs.release.outputs.version }}
+      sha256:
+        value: ${{ jobs.release.outputs.sha256 }}
+      archive_format:
+        value: ${{ jobs.release.outputs.archive_format }}
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: static-release-${{ github.repository }}-${{ inputs.project }}-${{ inputs.version }}
+      cancel-in-progress: false
+    outputs:
+      application: ${{ steps.recover.outputs.application || steps.package.outputs.application }}
+      version: ${{ steps.recover.outputs.version || steps.package.outputs.version }}
+      sha256: ${{ steps.recover.outputs.sha256 || steps.package.outputs.sha256 }}
+      archive_format: ${{ steps.recover.outputs.archive_format || steps.package.outputs.archive_format }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.version }}
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ inputs.platform-repository }}
+          ref: ${{ inputs.platform-ref }}
+          path: platform
+          token: ${{ secrets.PLATFORM_READ_TOKEN || github.token }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyYAML==6.0.3
+      - name: Configure publisher and record checked-out source
+        id: config
+        working-directory: source
+        env:
+          CTL_TOKEN: ${{ secrets.CTL_PUBLISH_TOKEN }}
+          CTL_SERVER: ${{ inputs.server }}
+        run: |
+          umask 077
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          Path(os.environ['RUNNER_TEMP'], 'ctl-static.token').write_text(os.environ['CTL_TOKEN'])
+          PY
+          CLI="$GITHUB_WORKSPACE/platform/skills/team-deploy/assets/deployctl.pyz"
+          python "$CLI" config set server "$CTL_SERVER" --client-config "$RUNNER_TEMP/ctl-static/client.json"
+          python "$CLI" login --token-file "$RUNNER_TEMP/ctl-static.token" --client-config "$RUNNER_TEMP/ctl-static/client.json"
+          rm -- "$RUNNER_TEMP/ctl-static.token"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Recover registered version before building
+        id: recover
+        env:
+          PROJECT: ${{ inputs.project }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ steps.config.outputs.commit }}
+        run: |
+          python platform/scripts/static_delivery.py --project "$PROJECT" --version "$VERSION" \
+            --commit "$SOURCE_COMMIT" --output "$RUNNER_TEMP/static-delivery" \
+            --client-config "$RUNNER_TEMP/ctl-static/client.json"
+      - name: Project tests
+        if: steps.recover.outputs.recovered != 'true' && inputs.test-command != ''
+        working-directory: source
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: bash -e -o pipefail -c "$TEST_COMMAND"
+      - name: Build project
+        if: steps.recover.outputs.recovered != 'true'
+        working-directory: source
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: bash -e -o pipefail -c "$BUILD_COMMAND"
+      - name: Package static build output
+        id: package
+        if: steps.recover.outputs.recovered != 'true'
+        working-directory: source
+        env:
+          PYTHONPATH: ${{ github.workspace }}/platform
+          PROJECT: ${{ inputs.project }}
+          VERSION: ${{ inputs.version }}
+          OUTPUT_DIRECTORY: ${{ inputs.output-directory }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from deployctl.contract import validate_name, version
+          from scripts.package_static import package_static
+          project, release = os.environ['PROJECT'], os.environ['VERSION']
+          validate_name(project); version(release)
+          root = Path.cwd().resolve()
+          source = (root / os.environ['OUTPUT_DIRECTORY']).resolve()
+          if not source.is_relative_to(root): raise SystemExit('output-directory must stay inside the project checkout')
+          info = package_static(source, Path(os.environ['RUNNER_TEMP'], 'static-delivery', f'{project}-{release}.tar.gz'))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'application={project}\nversion={release}\nsha256={info.sha256}\narchive_format={info.archive_format}\n')
+          PY
+      - name: Publish immutable static release
+        env:
+          PROJECT: ${{ inputs.project }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ steps.config.outputs.commit }}
+          ARCHIVE_FORMAT: ${{ steps.recover.outputs.archive_format || steps.package.outputs.archive_format }}
+        run: |
+          python platform/skills/team-deploy/assets/deployctl.pyz publish "$PROJECT" --version "$VERSION" \
+            --package "$RUNNER_TEMP/static-delivery/$PROJECT-$VERSION.$ARCHIVE_FORMAT" \
+            --commit "$SOURCE_COMMIT" --channel stable --client-config "$RUNNER_TEMP/ctl-static/client.json"
+      - name: Remove publisher credentials
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/ctl-static.token" "$RUNNER_TEMP/ctl-static/client.json"

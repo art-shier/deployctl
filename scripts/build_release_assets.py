@@ -25,7 +25,7 @@ def main():
     skill = ROOT / 'skills/team-deploy'
     for file in ('deployctl.pyz', 'deployctl.pyz.sha256'):
         shutil.copyfile(dist / file, skill / 'assets' / file)
-    for file in ('release.yml', 'deploy.yml', 'deployment.yaml'):
+    for file in ('release.yml', 'static-release.yml', 'deploy.yml', 'deployment.yaml'):
         shutil.copyfile(ROOT / 'templates' / file, skill / 'assets/templates' / file)
     shutil.copyfile(ROOT / 'install.sh', skill / 'assets/install.sh')
     shutil.copyfile(ROOT / 'install.sh', dist / 'install.sh')

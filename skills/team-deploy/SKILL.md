@@ -5,9 +5,11 @@ description: "Use when connecting an agent to ctl, managing authorized projects 
 
 # Team Deploy
 
-使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.12.1，兼容发布包协议v1/v2并支持管理服务自动Release安装及快捷运维命令、项目/项目组管理、发布凭据配置读写、项目组配置继承、可编辑凭据与真实镜像层下载进度；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
+使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.13.0，兼容发布包协议v1/v2并支持管理服务自动Release安装及快捷运维命令、项目/项目组管理、发布凭据配置读写、项目组配置继承、可编辑凭据与真实镜像层下载进度；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
 
 ## 选择任务
+
+- 静态站点/前端压缩包发布、指定公开目录或静态升级回滚：读取 [静态部署](references/static-deployment.md)。先查看deployment_type；静态使用独立模板，共享publish/install等命令，本期init仍生成Docker配置。
 
 - 从管理台接入Agent、下载/更新skill或使用随附CLI访问服务：读取 [Agent接入](references/agent-access.md)。管理台侧栏提供当前服务的skill、CLI及接入说明，不需要MCP。
 
@@ -16,7 +18,7 @@ description: "Use when connecting an agent to ctl, managing authorized projects 
 
 - 注册到ctl管理服务、托管镜像/配置、login/publish或无`--release`安装：读取 [管理服务模式](references/control-plane.md)，先确认目标CLI>=1.7.0和真实服务地址。
 
-- 项目接入或生成发布包：读取 [项目接入](references/onboarding.md)，新接入优先使用deployctl init，已有配置按需合并。
+- Docker项目接入或生成发布包：读取 [项目接入](references/onboarding.md)，新接入优先使用deployctl init，已有配置按需合并。静态项目使用静态模板。
 - 项目构建脚本需要参数、配置build.args或工作流覆盖：读取 [构建参数](references/build-args.md)。init保持基础配置，项目后续自行填写。
 - install/upgrade需要应用JSON配置、env-var/set/unset或pre/post安装脚本：读取 [运行时配置与钩子](references/runtime-config-hooks.md)，先核对CLI>=1.5.0和两个workflow引用。
 - ctl/deployctl找不到、PATH问题、首次安装或工具自身升级：读取 [CLI安装与升级](references/cli-lifecycle.md)。
@@ -39,9 +41,11 @@ python "$SKILL_DIR/assets/deployctl.pyz" validate deploy/deployment.yaml
 
 本地init/validate/package及远端项目/配置管理可在Windows执行；服务运行命令只能在目标Linux服务器执行。服务器已安装CLI时先检查版本和--help；版本/契约不一致时查对应说明。v1.0.0没有init，可使用随附CLI初始化；远程平台引用沿用用户指定的真实版本。
 
-`ctl self-update` 更新部署工具本身（CLI>=1.3.0且由安装器管理），`ctl upgrade <application> --env ... --release ...` 更新业务服务。旧CLI、源码/直接运行pyz或缺少安装记录时，通过安装器准备受管理的命令，不猜测其支持self-update。
+`ctl self-update` 更新部署工具本身（CLI>=1.3.0且由安装器管理），`ctl upgrade <application> --env ...` 更新托管业务项目；--release仅用于Docker旧模式。旧CLI、源码/直接运行pyz或缺少安装记录时，通过安装器准备受管理的命令，不猜测其支持self-update。
 
-## 交付契约
+## Docker 交付契约
+
+静态项目的包根、模板和目录绑定以 [静态部署](references/static-deployment.md) 为准。
 
 | 文件/产物 | 来源 |
 |---|---|
@@ -58,8 +62,8 @@ python "$SKILL_DIR/assets/deployctl.pyz" validate deploy/deployment.yaml
 
 ## 运行约束
 
-- 一个发布包对应一个无状态 HTTP 服务，单机替换可能短暂中断；不承诺多机编排或零停机。
-- 固定镜像 digest，校验发布包 SHA256；不能为绕过失败改用 `latest`、手工改 Compose 或删除 state.json。
+- Docker包对应一个无状态HTTP服务，单机替换可能短暂中断；静态包对应一个项目环境的公开文件树；不承诺多机编排或入口健康。
+- Docker固定镜像digest，所有类型校验包SHA256；不能为绕过失败改用latest、手改Compose/静态链接或删除state.json。
 - 密钥留在服务器配置/凭证管理中，不进入 Git、发布包、命令 URL 或对话输出。raw env_file 保留 `$`；不要加 shell 引号。
 - 快照部署回滚恢复版本、配置和绑定；未捕获的旧历史引用仍用服务器文件。数据库/文件系统等hook副作用需另行恢复。
 - 退出码非零就是发布失败，即使旧版本恢复成功。pending transaction 先诊断再恢复，不能继续 upgrade。

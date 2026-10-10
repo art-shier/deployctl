@@ -114,7 +114,8 @@ class StaticManager:
                 # its tree again from the verified archive, never from its own
                 # potentially modified manifest.
                 with tempfile.TemporaryDirectory(prefix='.verify-',dir=self._home(state['application'],state['environment'])) as temporary:
-                    files=Path(temporary)/'files';extract_static_archive(package,files)
+                    files=Path(temporary)/'files'
+                    if extract_static_archive(package,files)!=info:raise ValueError('static package changed during preparation')
                     ref['tree_sha256']=hashlib.sha256(tree_bytes(build_tree_manifest(files))).hexdigest()
             self._verify(state,ref)
             return ref
@@ -198,6 +199,8 @@ class StaticManager:
                 candidate_state=copy.deepcopy(state);candidate_state['target_dir']=chosen
                 target=Path(chosen);public_directories(target.parent)
                 owner=self._owner(candidate_state);validate_target(target,self.root,self.config_root,owner)
+                if not state['current'] and owner_record(target) is not None:
+                    raise ValueError('owned static target has no authoritative state; restore state from backup')
                 if state['current']:
                     self._verify(state,state['current']);self._check_link(state,[state['current']])
                 candidate=self._prepare(candidate_state,package,resolution,management_source)

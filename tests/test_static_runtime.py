@@ -13,6 +13,7 @@ import zipfile
 from deployctl.static_archive import inspect_static_archive
 from deployctl.static_runtime import StaticManager
 from deployctl.static_state import build_tree_manifest,tree_bytes
+from dataclasses import replace
 
 
 def resolution(package,version='v1.0.0',project='project-a',target=None):
@@ -25,6 +26,25 @@ def resolution(package,version='v1.0.0',project='project-a',target=None):
 
 @unittest.skipIf(os.name=='nt','Linux static file transactions')
 class StaticRuntimeTests(unittest.TestCase):
+    def test_missing_state_cannot_reclaim_owned_target(self):
+        self.install()
+        (self.root/'project-a/prod/state.json').unlink()
+        with self.assertRaisesRegex(ValueError,'state|ownership|owner'):
+            self.install()
+        self.assertEqual((self.target/'index.html').read_bytes(),b'one')
+
+    def test_obsolete_cache_reextraction_rechecks_package_identity(self):
+        self.install();self.upgrade()
+        v3=self.base/'v3.zip'
+        with zipfile.ZipFile(v3,'w') as archive:archive.writestr('index.html',b'three')
+        self.manager.deploy('project-a','prod',v3,resolution(v3,'v3.0.0'),upgrade=True)
+        from deployctl.static_archive import extract_static_archive
+        def changed_identity(package,destination):
+            return replace(extract_static_archive(package,destination),sha256='0'*64)
+        with patch('deployctl.static_runtime.extract_static_archive',side_effect=changed_identity):
+            with self.assertRaisesRegex(ValueError,'changed'):
+                self.manager.deploy('project-a','prod',self.v1,resolution(self.v1),upgrade=True)
+        self.assertEqual((self.target/'index.html').read_bytes(),b'three')
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(prefix='ctl-static-')
         self.addCleanup(self.tmp.cleanup);self.base=Path(self.tmp.name);self.base.chmod(0o755)

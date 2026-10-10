@@ -111,6 +111,7 @@ jobs:
           CTL_AGENT_DIR: ${{ runner.temp }}/ctl-agent-assets
         run: |
           python -m pip install PyYAML==6.0.3
+          python tests/static_control_plane_integration.py
           python tests/control_plane_integration.py
       - name: Build and repeat actual platform bootstrap
         run: |

@@ -1,5 +1,7 @@
 # 项目接入与产物生成（兼容协议v1/v2）
 
+下文镜像、Compose、--release与Docker构建/运行参数适用于Docker项目；静态项目使用[静态部署](static-deployment.md)的模板、目录和统一命令。
+
 本文件中的相对资源路径以 skill 根目录为基准。工作目录应是业务项目，而不是 skill 目录。
 
 ## 接入项目

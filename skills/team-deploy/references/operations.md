@@ -1,5 +1,7 @@
 # 服务器操作（CLI v1.5.0，兼容发布包协议v1/v2）
 
+下文镜像、Compose、--release与Docker构建/运行参数适用于Docker项目；静态项目使用[静态部署](static-deployment.md)的模板、目录和统一命令。
+
 ## 定位并检查目标
 
 确认用户授权的主机、application、environment、发布版本；沿用既有部署用户、DEPLOY_ROOT/DEPLOY_CONFIG_ROOT或命令中的目录选项。只在目标Linux主机执行运行命令。

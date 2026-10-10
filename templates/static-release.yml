@@ -1,0 +1,22 @@
+name: Static project release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  release:
+    # Replace both references with the same published version or immutable commit.
+    uses: art-shier/deployctl/.github/workflows/build-static-release.yml@v1.13.0
+    with:
+      platform-repository: art-shier/deployctl
+      platform-ref: v1.13.0
+      project: project-a
+      version: ${{ github.ref_name }}
+      server: https://ctl.example.com
+      build-command: npm ci && npm run build
+      output-directory: dist
+      # test-command: npm ci && npm test
+    secrets:
+      CTL_PUBLISH_TOKEN: ${{ secrets.CTL_PUBLISH_TOKEN }}
+      PLATFORM_READ_TOKEN: ${{ secrets.PLATFORM_READ_TOKEN }}
