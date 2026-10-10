@@ -30,10 +30,15 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, p auth.Pr
 	if err := decode(w, r, &project); err != nil {
 		return err
 	}
-	if project.ImageRepository == "" {
+	kind, err := domain.DeploymentType(project.DeploymentType)
+	if err != nil {
+		return err
+	}
+	project.DeploymentType = kind
+	if kind == "docker" && project.ImageRepository == "" {
 		project.ImageRepository = s.options.RegistryPublicHost + "/" + project.Slug
 	}
-	if p.Role == "publisher" && project.ImageRepository != s.options.RegistryPublicHost+"/"+project.Slug {
+	if kind == "docker" && p.Role == "publisher" && project.ImageRepository != s.options.RegistryPublicHost+"/"+project.Slug {
 		return errForbidden
 	}
 	result, err := s.store.CreateProjectAuthorized(r.Context(), project, p)

@@ -145,6 +145,15 @@ func (s *Store) SaveConfigurationAuthorized(ctx context.Context, slug, env strin
 	if patch.DeploymentDefaults != nil {
 		cfg.DeploymentDefaults = *patch.DeploymentDefaults
 	}
+	if project.DeploymentType == "static" {
+		d := cfg.DeploymentDefaults
+		d.TargetDir = ""
+		if len(cfg.RuntimeEnv) > 0 || len(cfg.InstallParams) > 0 || d != (domain.DeploymentDefaults{}) {
+			return previous, domain.ErrInvalid
+		}
+	} else if cfg.DeploymentDefaults.TargetDir != "" {
+		return previous, domain.ErrInvalid
+	}
 	target := previous.TargetVersion
 	if patch.TargetVersion != nil {
 		target = *patch.TargetVersion

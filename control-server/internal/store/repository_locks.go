@@ -12,6 +12,9 @@ import (
 func lockRepositories(ctx context.Context, tx pgx.Tx, repositories ...string) error {
 	slices.Sort(repositories)
 	for _, repository := range slices.Compact(repositories) {
+		if repository == "" {
+			continue
+		}
 		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", "ctl-images:"+repository); err != nil {
 			return err
 		}

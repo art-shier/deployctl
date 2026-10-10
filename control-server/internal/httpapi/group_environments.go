@@ -21,7 +21,7 @@ func (s *Server) groupEnvironments(w http.ResponseWriter, r *http.Request, p aut
 }
 
 func groupEnvironmentReply(w http.ResponseWriter, rev domain.GroupRevision, reveal ...bool) {
-	reply(w, http.StatusOK, map[string]any{"id": rev.ID, "environment": rev.Environment, "revision": rev.Revision, "runtime_env": masked(rev.Configuration.RuntimeEnv, reveal...), "install_params": masked(rev.Configuration.InstallParams, reveal...), "created_at": rev.CreatedAt})
+	reply(w, http.StatusOK, map[string]any{"id": rev.ID, "environment": rev.Environment, "revision": rev.Revision, "runtime_env": masked(rev.Configuration.RuntimeEnv, reveal...), "install_params": masked(rev.Configuration.InstallParams, reveal...), "deployment_defaults": rev.Configuration.DeploymentDefaults, "created_at": rev.CreatedAt})
 }
 
 func (s *Server) groupEnvironment(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
@@ -45,9 +45,10 @@ func (s *Server) saveGroupEnvironment(w http.ResponseWriter, r *http.Request, p 
 		return err
 	}
 	var body struct {
-		ExpectedRevision int64           `json:"expected_revision"`
-		RuntimeEnv       []domain.Change `json:"runtime_env"`
-		InstallParams    []domain.Change `json:"install_params"`
+		ExpectedRevision   int64                      `json:"expected_revision"`
+		RuntimeEnv         []domain.Change            `json:"runtime_env"`
+		InstallParams      []domain.Change            `json:"install_params"`
+		DeploymentDefaults *domain.DeploymentDefaults `json:"deployment_defaults"`
 	}
 	if err := decode(w, r, &body); err != nil {
 		return err
@@ -64,6 +65,9 @@ func (s *Server) saveGroupEnvironment(w http.ResponseWriter, r *http.Request, p 
 		return domain.ErrConflict
 	}
 	cfg := previous.Configuration
+	if body.DeploymentDefaults != nil {
+		cfg.DeploymentDefaults = *body.DeploymentDefaults
+	}
 	cfg.RuntimeEnv, err = domain.ApplyChanges(cfg.RuntimeEnv, body.RuntimeEnv, true)
 	if err != nil {
 		return err

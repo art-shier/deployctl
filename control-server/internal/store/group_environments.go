@@ -64,7 +64,9 @@ func (s *Store) ListGroupEnvironments(ctx context.Context, group string) ([]stri
 
 func (s *Store) SaveGroupRevision(ctx context.Context, group, env string, expected int64, cfg domain.Configuration, actor string) (domain.GroupRevision, error) {
 	r := domain.GroupRevision{ID: domain.NewID(), Group: group, Environment: env, Configuration: cfg, CreatedAt: time.Now().UTC()}
-	if domain.ValidateName(group, 48) != nil || domain.ValidateName(env, 32) != nil || expected < 0 || domain.ValidateConfiguration(cfg) != nil || cfg.DeploymentDefaults != (domain.DeploymentDefaults{}) {
+	dockerDefaults := cfg.DeploymentDefaults
+	dockerDefaults.TargetDir = ""
+	if domain.ValidateName(group, 48) != nil || domain.ValidateName(env, 32) != nil || expected < 0 || domain.ValidateConfiguration(cfg) != nil || dockerDefaults != (domain.DeploymentDefaults{}) {
 		return r, domain.ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -166,5 +168,17 @@ func effectiveRevision(p domain.Project, r domain.Revision) domain.Revision {
 	}
 	r.Configuration.RuntimeEnv = mergeVariables(r.InheritedConfiguration.RuntimeEnv, r.Configuration.RuntimeEnv)
 	r.Configuration.InstallParams = mergeVariables(r.InheritedConfiguration.InstallParams, r.Configuration.InstallParams)
+	if p.DeploymentType == "static" {
+		if r.Configuration.DeploymentDefaults.TargetDir == "" {
+			r.Configuration.DeploymentDefaults.TargetDir = r.InheritedConfiguration.DeploymentDefaults.TargetDir
+		}
+		r.Configuration.DeploymentDefaults = domain.DeploymentDefaults{TargetDir: r.Configuration.DeploymentDefaults.TargetDir}
+		r.Configuration.RuntimeEnv = map[string]domain.Variable{}
+		r.Configuration.InstallParams = map[string]domain.Variable{}
+		r.InheritedConfiguration.RuntimeEnv = map[string]domain.Variable{}
+		r.InheritedConfiguration.InstallParams = map[string]domain.Variable{}
+	} else {
+		r.Configuration.DeploymentDefaults.TargetDir = ""
+	}
 	return r
 }

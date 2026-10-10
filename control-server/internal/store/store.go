@@ -68,6 +68,16 @@ func validProject(p domain.Project) error {
 		return domain.ErrInvalid
 	}
 	repo := regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*(:[0-9]{1,5})?/[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$`)
+	kind, err := domain.DeploymentType(p.DeploymentType)
+	if err != nil {
+		return err
+	}
+	if kind == "static" {
+		if p.ImageRepository != "" {
+			return domain.ErrInvalid
+		}
+		return nil
+	}
 	if !repo.MatchString(p.ImageRepository) {
 		return domain.ErrInvalid
 	}
@@ -84,6 +94,11 @@ func (s *Store) CreateProject(ctx context.Context, p domain.Project, actor strin
 }
 func (s *Store) CreateProjectAuthorized(ctx context.Context, p domain.Project, principal auth.Principal) (domain.Project, error) {
 	actor := principal.ID
+	var kindErr error
+	p.DeploymentType, kindErr = domain.DeploymentType(p.DeploymentType)
+	if kindErr != nil {
+		return p, kindErr
+	}
 	if p.Group == "" {
 		p.Group = "default"
 	}
@@ -109,7 +124,7 @@ func (s *Store) CreateProjectAuthorized(ctx context.Context, p domain.Project, p
 	if err = lockRepositories(ctx, tx, p.ImageRepository); err != nil {
 		return p, err
 	}
-	if principal.Role != "owner" {
+	if principal.Role != "owner" && p.DeploymentType == "docker" {
 		rows, err := tx.Query(ctx, "SELECT slug,group_slug,deleted_at IS NOT NULL FROM ctl_projects WHERE data->>'image_repository'=$1", p.ImageRepository)
 		if err != nil {
 			return p, err
@@ -152,6 +167,9 @@ func scanProject(row scanner) (domain.Project, error) {
 		return p, mapped(err)
 	}
 	err = json.Unmarshal(b, &p)
+	if err == nil {
+		p.DeploymentType, err = domain.DeploymentType(p.DeploymentType)
+	}
 	return p, err
 }
 func (s *Store) GetProject(ctx context.Context, slug string) (domain.Project, error) {
@@ -178,9 +196,6 @@ func (s *Store) UpdateProject(ctx context.Context, p domain.Project, actor strin
 }
 func (s *Store) UpdateProjectAuthorized(ctx context.Context, p domain.Project, principal auth.Principal) (domain.Project, error) {
 	actor := principal.ID
-	if err := validProject(p); err != nil {
-		return p, err
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return p, err
@@ -192,6 +207,15 @@ func (s *Store) UpdateProjectAuthorized(ctx context.Context, p domain.Project, p
 	}
 	if !principal.CanInGroup("project.update", old.Slug, old.Group, "") {
 		return p, domain.ErrForbidden
+	}
+	if p.DeploymentType == "" {
+		p.DeploymentType = old.DeploymentType
+	}
+	if p.DeploymentType != old.DeploymentType {
+		return p, domain.ErrConflict
+	}
+	if err := validProject(p); err != nil {
+		return p, err
 	}
 	if principal.Role != "owner" && p.ImageRepository != old.ImageRepository {
 		return p, domain.ErrForbidden
