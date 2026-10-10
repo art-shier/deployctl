@@ -11,6 +11,8 @@ import yaml
 
 
 def main():
+    if yaml.__version__ != '6.0.3':
+        raise SystemExit('Release assets require PyYAML==6.0.3; install the pinned build dependency first')
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', default='dist/deployctl.pyz')
     args = parser.parse_args()

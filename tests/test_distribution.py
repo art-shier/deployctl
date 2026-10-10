@@ -10,6 +10,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DistributionTests(unittest.TestCase):
+    def test_unpinned_yaml_is_rejected_before_building_release_assets(self):
+        from scripts import build_zipapp
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / 'deployctl.pyz'
+            with patch.object(build_zipapp.yaml, '__version__', '6.0.1'), \
+                 patch('sys.argv', ['build_zipapp', '--output', str(artifact)]):
+                with self.assertRaisesRegex(SystemExit, 'PyYAML==6.0.3'):
+                    build_zipapp.main()
+            self.assertFalse(artifact.exists())
+
     def test_cli_archive_is_reproducible_across_source_newlines_and_timestamps(self):
         from scripts import build_zipapp
         with tempfile.TemporaryDirectory() as directory:
