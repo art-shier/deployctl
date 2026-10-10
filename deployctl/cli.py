@@ -56,6 +56,7 @@ def parser():
     publish.add_argument('--version', required=True)
     publish.add_argument('--package', required=True)
     publish.add_argument('--channel', choices=['stable'])
+    publish.add_argument('--commit', help='optional source Git commit; Docker must match its manifest')
     publish.add_argument('--client-config', help='private client configuration; default: ~/.ctl/client.json')
     publish.add_argument('--registry-token-file', help='private short-lived pull verification token for an external private Registry')
     self_update = sub.add_parser('self-update', help='update the installed CLI itself; leaves deployed services unchanged')
@@ -98,6 +99,7 @@ def parser():
             command.add_argument('--quiet', action='store_true', help='hide progress; preserve result and errors')
             command.add_argument('--release', help='legacy local archive or HTTPS URL')
             command.add_argument('--version', help='managed release version; default: environment target')
+            command.add_argument('--target-dir', help='static public directory when no platform default is configured; saved on first install')
             command.add_argument('--with-platform-config', action='store_true', help='overlay management configuration on an explicit release')
             command.add_argument('--client-config', help='private client configuration; default: ~/.ctl/client.json')
             command.add_argument('--sha256', help='expected checksum; default: adjacent .sha256')
@@ -172,7 +174,7 @@ def main(argv=None):
             else:
                 from .platform_credentials import read_registry_token_file
                 proof=read_registry_token_file(args.registry_token_file) if args.registry_token_file else None
-                release = PlatformClient(Credentials.load(args.client_config)).publish(args.application,args.version,args.package,args.channel,proof)
+                release = PlatformClient(Credentials.load(args.client_config)).publish(args.application,args.version,args.package,args.channel,proof,commit=args.commit)
                 print(f"OK: published {args.application}/{release['version']}")
         elif args.command == 'self-update':
             from .self_update import update_tool
@@ -204,15 +206,17 @@ def main(argv=None):
                 if args.env and args.env != 'prod': raise ValueError('--prod conflicts with --env')
                 args.env = 'prod'
             if args.env: validate_name(args.env, 'environment', 32)
-            manager = Manager(args.root, args.config_root)
+            manager = None
             if args.command in ('install', 'upgrade'):
                 from .progress import Progress
                 progress = Progress(enabled=not args.quiet)
-                manager.progress = progress
                 if args.release and args.version: raise ValueError('--release conflicts with --version')
                 if args.with_platform_config and not args.release: raise ValueError('--with-platform-config requires --release')
                 if args.release and not args.env: raise ValueError('legacy --release requires --env or --prod')
                 if not args.release and args.sha256: raise ValueError('--sha256 is only used with --release')
+                if args.release:
+                    if args.target_dir is not None:raise ValueError('--target-dir applies to managed static projects; legacy --release is Docker only')
+                    if local_deployment_type(args.root,args.application,args.env)=='static':raise ValueError('static projects require managed releases; --release is Docker only')
                 runtime_env = parse_assignments(args.env_var, 'env-var')
                 install_params = parse_assignments(args.set, 'installation parameters', reserve_platform=False)
                 unset_env = getattr(args, 'unset_env', [])
@@ -239,6 +243,25 @@ def main(argv=None):
                         with progress.stage(f'Resolving {args.application} release and configuration'):
                             resolution = client.resolve(args.application,args.env,requested_version)
                         args.env = resolution['environment']
+                        static=resolution.get('deployment_type')=='static'
+                        if static:
+                            if args.release:raise ValueError('--release does not apply to static projects')
+                            if args.env_var or args.set or unset_env or args.port is not None or args.bind is not None:
+                                raise ValueError('Docker env/install parameters and port/bind flags do not apply to static files')
+                            from .static_runtime import StaticManager
+                            if package is None:
+                                with progress.stage('Downloading and verifying static archive'):
+                                    package=client.download_release(resolution,cache,progress=progress)
+                            manager=StaticManager(args.root,args.config_root,progress=progress)
+                            try:
+                                with progress.stage('Preparing and switching static files'):
+                                    state=manager.deploy(args.application,args.env,package,resolution,upgrade=args.command=='upgrade',target_dir=args.target_dir,management_source={'origin':client.server})
+                            except (ValueError,OSError,RuntimeError):
+                                report_receipt(client,resolution,args.config_root,False);raise
+                            report_receipt(client,resolution,args.config_root,True)
+                            print(f"OK: {args.application}/{args.env} deployed {state['current']['version']} to {state['target_dir']}")
+                            return 0
+                        if args.target_dir is not None:raise ValueError('--target-dir only applies to static projects')
                         if package is None:
                             with progress.stage('Downloading and verifying release package'):
                                 package = client.download_release(resolution,cache,progress=progress)
@@ -252,6 +275,8 @@ def main(argv=None):
                                    'origin':client.server,'project':args.application,'environment':args.env,
                                    'release_id':resolution['release']['id'],'revision_id':cfg['id']}}
                     from contextlib import nullcontext
+                    manager=Manager(args.root,args.config_root)
+                    manager.progress=progress
                     registry_context = client.registry_config(resolution['release']['image']) if client else nullcontext(None)
                     from contextlib import ExitStack
                     with ExitStack() as stack:
@@ -275,11 +300,13 @@ def main(argv=None):
                 print(f"OK: {args.application}/{args.env} running {state['current']['version']}")
             elif args.command == 'rollback':
                 args.env = local_environment(args.root,args.application,args.env)
+                manager=local_manager(args.root,args.config_root,args.application,args.env)
                 state = manager.rollback(args.application, args.env)
                 current = state['current']['version'] if state['current'] else None
                 print(f"OK: recovered {args.application}/{args.env}; current={current}")
             else:
                 args.env = local_environment(args.root,args.application,args.env)
+                manager=local_manager(args.root,args.config_root,args.application,args.env)
                 if args.command == 'logs' and not 1 <= args.tail <= 10000:
                     raise ValueError('--tail must be 1..10000')
                 print(manager.operate(args.application, args.env, args.command, getattr(args, 'tail', 100)))
@@ -317,6 +344,31 @@ def local_environment(root, app, env):
                 reject_links(folder); validate_name(folder.name,'environment',32); candidates.append(folder.name)
     if len(candidates) != 1: raise ValueError('specify --env: no unique installed environment')
     return candidates[0]
+
+
+def local_deployment_type(root,app,env):
+    from pathlib import Path
+    from .contract import validate_name
+    from .runtime_snapshot import reject_links
+    from .static_state import validate_deployment_type
+    validate_name(app)
+    if env is None:return 'docker'
+    validate_name(env,'environment',32)
+    path=Path(root)/app/env/'state.json';reject_links(path)
+    if not path.exists():return 'docker'
+    if not path.is_file() or path.stat().st_size>65536:raise ValueError('invalid local deployment state')
+    try:state=json.loads(path.read_text(encoding='utf-8'))
+    except (UnicodeError,json.JSONDecodeError):raise ValueError('invalid local deployment state') from None
+    if not isinstance(state,dict) or state.get('application')!=app or state.get('environment')!=env:raise ValueError('mismatched local deployment state')
+    return validate_deployment_type(state.get('deployment_type'))
+
+
+def local_manager(root,config_root,app,env):
+    if local_deployment_type(root,app,env)=='static':
+        from .static_runtime import StaticManager
+        return StaticManager(root,config_root)
+    from .runtime import Manager
+    return Manager(root,config_root)
 
 
 def report_receipt(client, resolution, config_root, success):

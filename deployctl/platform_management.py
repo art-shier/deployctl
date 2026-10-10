@@ -268,17 +268,17 @@ def handle(args):
             selected={field:value for field,value in selected.items() if value is not None}
             if not selected: raise ValueError('update requires at least one metadata field')
             body={key:current[key] for key in ('slug',*(PROJECT_FIELDS if scope=='project' else GROUP_FIELDS))}
-            if scope=='project': body['deployment_type']=current['deployment_type']
             body.update(selected)
         else:
             body={'slug':args.slug,'name':args.name if args.name is not None else args.slug,'description':args.description or ''}
             if scope=='project':
                 body.update(group=args.group,repository=args.repository or '',default_environment=args.default_environment or 'prod')
-                body['deployment_type']=args.deployment_type
+                if args.deployment_type=='static':body['deployment_type']='static'
                 if args.image_repository is not None: body['image_repository']=args.image_repository
         # Validate outgoing metadata without requiring a server-default repository.
         check=dict(body)
         if scope=='project':
+            check['deployment_type']=current['deployment_type'] if operation=='update' else args.deployment_type
             check.setdefault('group',current['group'] if operation=='update' else args.group)
             check.setdefault('image_repository','' if check['deployment_type']=='static' else 'check.test/check')
         metadata(check,scope,args.slug)

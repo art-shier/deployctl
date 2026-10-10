@@ -25,6 +25,11 @@ GROUP = {'slug':'team','name':'Team','description':'retain group description','c
 
 
 class ManagementTests(unittest.TestCase):
+    def test_docker_management_remains_compatible_with_legacy_server_fields(self):
+        self.legacy_project_fields=True
+        self.assert_success('project','create','notes','--group','team')
+        self.assert_success('project','update','notes','--name','Changed')
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -39,6 +44,7 @@ class ManagementTests(unittest.TestCase):
         self.malformed_defaults = False
         self.environment_missing = False
         self.delete_status = 204
+        self.legacy_project_fields = False
         fixture = self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args): pass
@@ -57,6 +63,8 @@ class ManagementTests(unittest.TestCase):
                 if self.command == 'DELETE': return self.send(fixture.delete_status)
                 if self.path in ('/api/v1/projects','/api/v1/projects/notes'):
                     if self.command in ('POST','PATCH'):
+                        if fixture.legacy_project_fields and 'deployment_type' in body:
+                            return self.send(400,{'code':'invalid_input'})
                         fixture.project.update(body)
                     return self.send(200 if self.command != 'POST' else 201,
                         [fixture.project] if self.path.endswith('/projects') and self.command=='GET' else fixture.project)
