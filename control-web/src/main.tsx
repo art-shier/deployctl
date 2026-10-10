@@ -31,6 +31,7 @@ import {
   type Defaults,
   type Group,
   type MaskedVariable,
+  type DeploymentType,
 } from "./api";
 import {
   draftRows,
@@ -48,6 +49,7 @@ import { GroupsView } from "./ProjectGroups";
 import { AgentAccess } from "./AgentAccessPage";
 import { tokenScopeLabel } from "./tokenScope";
 import { projectFormPayload } from "./projectForm";
+import { ReleaseUpload } from "./ReleaseUploadForm";
 import "./styles.css";
 import "./workspace.css";
 
@@ -423,6 +425,7 @@ function ProjectForm({
       description: project?.description ?? "",
       repository: project?.repository ?? "",
       image_repository: project?.image_repository ?? "",
+      deployment_type: project?.deployment_type ?? ("docker" as DeploymentType),
       default_environment: project?.default_environment ?? "prod",
       group: project?.group ?? group?.slug ?? "default",
     }),
@@ -495,15 +498,34 @@ function ProjectForm({
         />
       </label>
       <label>
-        镜像仓库
-        <input
-          value={value.image_repository}
+        部署类型
+        <select
+          value={value.deployment_type}
+          disabled={!!project}
           onChange={(e) =>
-            setValue({ ...value, image_repository: e.target.value })
+            setValue({
+              ...value,
+              deployment_type: e.target.value as DeploymentType,
+            })
           }
-          placeholder="留空使用平台 Registry / 项目标识"
-        />
+        >
+          <option value="docker">Docker 服务</option>
+          <option value="static">静态文件</option>
+        </select>
+        <small className="muted">创建后类型固定。</small>
       </label>
+      {value.deployment_type !== "static" && (
+        <label>
+          镜像仓库
+          <input
+            value={value.image_repository}
+            onChange={(e) =>
+              setValue({ ...value, image_repository: e.target.value })
+            }
+            placeholder="留空使用平台 Registry / 项目标识"
+          />
+        </label>
+      )}
       <label>
         所属项目组
         <select
@@ -745,6 +767,9 @@ function Projects({
                       <span className="badge">{p.default_environment}</span>
                     </td>
                     <td data-label="镜像仓库">
+                      <span className="badge">
+                        {p.deployment_type === "static" ? "静态文件" : "Docker"}
+                      </span>
                       <code
                         className="repository-cell"
                         title={p.image_repository}
@@ -917,6 +942,9 @@ function ProjectView({
             </div>
             <h1>{project.name}</h1>
             <span className="badge">{project.slug}</span>
+            <span className="badge">
+              {project.deployment_type === "static" ? "静态文件" : "Docker"}
+            </span>
           </div>
           <p className="muted">
             {project.description || project.image_repository}
@@ -928,18 +956,22 @@ function ProjectView({
         </button>
       </div>
       <div className="tabs" role="tablist" aria-label="项目内容">
-        {tabs.map(([id, label]) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={tab === id}
-            onClick={() => {
-              if (id !== tab && canLeavePage()) setTab(id);
-            }}
-          >
-            {label}
-          </button>
-        ))}
+        {tabs
+          .filter(
+            ([id]) => project.deployment_type !== "static" || id !== "images",
+          )
+          .map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => {
+                if (id !== tab && canLeavePage()) setTab(id);
+              }}
+            >
+              {label}
+            </button>
+          ))}
       </div>
       <div key={slug + tab} role="tabpanel">
         {tab === "releases" ? (
@@ -962,7 +994,7 @@ function ProjectView({
           <section className="resource-danger-section">
             <h3>移除项目</h3>
             <p className="muted small">
-              从管理台移除后停止后续发布与部署，保留已有运行容器、镜像文件和审计，标识不能复用。
+              从管理台移除后停止后续发布与部署，保留已安装内容、制品和审计，标识不能复用。
             </p>
             <button
               className="danger"
@@ -1000,6 +1032,7 @@ function ProjectView({
   );
 }
 function ReleasesView({ project }: { project: Project }) {
+  const staticProject = project.deployment_type === "static";
   const { data, loading, error, reload } = useData<Release[]>(
       `/projects/${project.slug}/releases`,
       [],
@@ -1029,7 +1062,11 @@ function ReleasesView({ project }: { project: Project }) {
       <div className="section-heading">
         <div>
           <h2>发布版本</h2>
-          <p className="muted small">安装使用已验证的发布包和固定镜像。</p>
+          <p className="muted small">
+            {staticProject
+              ? "安装使用已验证的压缩包，完整替换项目专用目录。"
+              : "安装使用已验证的发布包和固定镜像。"}
+          </p>
         </div>
         <button onClick={() => setUpload(true)}>
           <Plus size={16} />
@@ -1045,7 +1082,7 @@ function ReleasesView({ project }: { project: Project }) {
             <thead>
               <tr>
                 <th>版本</th>
-                <th>镜像</th>
+                <th>{staticProject ? "格式 / 压缩大小" : "镜像"}</th>
                 <th>发布时间</th>
                 <th>状态</th>
                 <th />
@@ -1064,7 +1101,9 @@ function ReleasesView({ project }: { project: Project }) {
                   </td>
                   <td>
                     <code className="truncate" title={r.image}>
-                      {r.image}
+                      {staticProject
+                        ? `${r.archive_format} / ${(r.size / 1024 / 1024).toFixed(2)} MiB`
+                        : r.image}
                     </code>
                   </td>
                   <td className="muted">{date(r.created_at)}</td>
@@ -1094,15 +1133,27 @@ function ReleasesView({ project }: { project: Project }) {
       ) : (
         <Empty
           title="还没有发布版本"
-          detail="让项目流水线推送镜像并执行 ctl publish，或在此登记标准发布包。"
+          detail={
+            staticProject
+              ? "让流水线打包构建产物并执行 ctl publish，或在此上传 ZIP / tar.gz。"
+              : "让项目流水线推送镜像并执行 ctl publish，或在此登记标准发布包。"
+          }
         />
       )}
       {selected && (
         <Modal title={selected.version} close={() => setSelected(null)}>
           <div className="detail-stack">
-            <label>
-              镜像<code className="code-block">{selected.image}</code>
-            </label>
+            {staticProject ? (
+              <p>
+                格式：{selected.archive_format} · 压缩 {selected.size} 字节 ·
+                解压 {selected.expanded_size} 字节 · {selected.entry_count}{" "}
+                个条目
+              </p>
+            ) : (
+              <label>
+                镜像<code className="code-block">{selected.image}</code>
+              </label>
+            )}
             <label>
               发布包 SHA256<code className="code-block">{selected.sha256}</code>
             </label>
@@ -1130,8 +1181,8 @@ function ReleasesView({ project }: { project: Project }) {
       )}
       {upload && (
         <Modal title="登记发布版本" close={() => setUpload(false)}>
-          <UploadRelease
-            slug={project.slug}
+          <ReleaseUpload
+            project={project}
             done={() => {
               setUpload(false);
               reload();
@@ -1140,99 +1191,6 @@ function ReleasesView({ project }: { project: Project }) {
         </Modal>
       )}
     </>
-  );
-}
-function UploadRelease({ slug, done }: { slug: string; done: () => void }) {
-  const [version, setVersion] = useState(""),
-    [file, setFile] = useState<File | null>(null),
-    [stable, setStable] = useState(true),
-    [proof, setProof] = useState(""),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!file) return;
-    setBusy(true);
-    setError("");
-    try {
-      const raw = await file.arrayBuffer();
-      if (raw.byteLength > 10 * 1024 * 1024)
-        throw new Error("发布包不能超过 10 MiB。");
-      const sum = [
-        ...new Uint8Array(await crypto.subtle.digest("SHA-256", raw)),
-      ]
-        .map((n) => n.toString(16).padStart(2, "0"))
-        .join("");
-      const form = new FormData();
-      form.set("package", file);
-      form.set("version", version);
-      form.set("sha256", sum);
-      if (stable) form.set("channel", "stable");
-      await api(`/projects/${slug}/releases`, {
-        method: "POST",
-        body: form,
-        headers: proof ? { "X-Registry-Verification-Token": proof } : undefined,
-      });
-      done();
-    } catch (e) {
-      setError(message(e));
-    } finally {
-      setBusy(false);
-      setProof("");
-    }
-  };
-  return (
-    <form onSubmit={submit} className="form-stack">
-      <p className="muted">
-        镜像需要先推送到项目仓库。上传由 ctl package 生成的标准包。
-      </p>
-      <label>
-        版本号
-        <input
-          value={version}
-          onChange={(e) => setVersion(e.target.value)}
-          placeholder="v1.0.0"
-          required
-        />
-      </label>
-      <label>
-        标准发布包
-        <input
-          type="file"
-          accept=".tar.gz,.gz"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          required
-        />
-      </label>
-      <label className="checkbox">
-        <input
-          type="checkbox"
-          checked={stable}
-          onChange={(e) => setStable(e.target.checked)}
-        />
-        发布成功后设为 stable
-      </label>
-      <details className="registry-proof">
-        <summary>外部私有仓库验证（可选）</summary>
-        <label>
-          短期 pull Token
-          <input
-            type="password"
-            autoComplete="off"
-            maxLength={12288}
-            value={proof}
-            onChange={(e) => setProof(e.target.value)}
-          />
-        </label>
-        <p className="muted small">
-          只验证本次镜像，不保存或转交安装主机。托管 Registry 无需填写。
-        </p>
-      </details>
-      <ErrorMessage text={error} />
-      <button className="primary" disabled={busy}>
-        {busy ? "正在验证并发布…" : "登记版本"}
-      </button>
-    </form>
   );
 }
 function EnvironmentsView({
@@ -1320,6 +1278,7 @@ function EnvironmentsView({
               slug={slug}
               env={envs.includes(env) ? env : envs[0]}
               group={!!group}
+              deploymentType={project?.deployment_type}
             />
           ) : (
             <Empty
@@ -1524,11 +1483,14 @@ function EnvironmentEditor({
   slug,
   env,
   group = false,
+  deploymentType = "docker",
 }: {
   slug: string;
   env: string;
   group?: boolean;
+  deploymentType?: DeploymentType;
 }) {
+  const staticProject = !group && deploymentType === "static";
   const path = `/${group ? "groups" : "projects"}/${slug}/environments/${env}`;
   const { data, loading, error, reload } = useData<Environment | null>(
       path,
@@ -1581,9 +1543,11 @@ function EnvironmentEditor({
           expected_revision: data.revision,
           runtime_env: changes(runtime),
           install_params: changes(params),
-          ...(!group
-            ? { deployment_defaults: defaults, target_version: target }
-            : {}),
+          deployment_defaults:
+            group || staticProject
+              ? { target_dir: defaults.target_dir || "" }
+              : defaults,
+          ...(!group ? { target_version: target } : {}),
         }),
       );
       setPreview(false);
@@ -1701,23 +1665,54 @@ function EnvironmentEditor({
           </label>
         </section>
       )}
-      <VariableEditor
-        title="业务变量"
-        detail="注入应用的运行环境。秘密值保存后不再显示。"
-        rows={runtime}
-        setRows={setRuntime}
-        inherited={group ? [] : data.inherited_runtime_env}
-        source={group ? undefined : data.group_source?.slug}
-      />
-      <VariableEditor
-        title="安装参数"
-        detail="用于项目的安装准备与初始化，例如管理员邮箱。"
-        rows={params}
-        setRows={setParams}
-        inherited={group ? [] : data.inherited_install_params}
-        source={group ? undefined : data.group_source?.slug}
-      />
-      {!group && (
+      {!staticProject && (
+        <>
+          <VariableEditor
+            title="业务变量"
+            detail="注入应用的运行环境。秘密值保存后不再显示。"
+            rows={runtime}
+            setRows={setRuntime}
+            inherited={group ? [] : data.inherited_runtime_env}
+            source={group ? undefined : data.group_source?.slug}
+          />
+          <VariableEditor
+            title="安装参数"
+            detail="用于项目的安装准备与初始化，例如管理员邮箱。"
+            rows={params}
+            setRows={setParams}
+            inherited={group ? [] : data.inherited_install_params}
+            source={group ? undefined : data.group_source?.slug}
+          />
+        </>
+      )}
+      {(group || staticProject) && (
+        <section className="panel">
+          <h3>静态文件目录</h3>
+          <p className="muted small">
+            首次安装使用目录默认值。升级与回滚沿用主机绑定目录；每个目录专属于一个项目和环境。
+          </p>
+          <label>
+            安装目录
+            <input
+              value={defaults.target_dir || ""}
+              placeholder={
+                data.inherited_deployment_defaults?.target_dir ||
+                "/var/www/project-a"
+              }
+              onChange={(e) =>
+                setDefaults({ ...defaults, target_dir: e.target.value })
+              }
+            />
+          </label>
+          {!group && data.inherited_deployment_defaults?.target_dir && (
+            <p className="muted small">
+              继承目录：{data.inherited_deployment_defaults.target_dir}
+              （项目留空恢复继承）
+            </p>
+          )}
+        </section>
+      )}
+      {!group && !staticProject && (
         <section className="panel">
           <h3>部署默认值</h3>
           <p className="muted small">

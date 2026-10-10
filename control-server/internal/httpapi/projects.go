@@ -110,7 +110,7 @@ func masked(vars map[string]domain.Variable, reveal ...bool) []maskedVariable {
 	return out
 }
 func environmentReply(w http.ResponseWriter, rev domain.Revision, reveal ...bool) {
-	reply(w, 200, map[string]any{"id": rev.ID, "environment": rev.Environment, "revision": rev.Revision, "target_version": rev.TargetVersion, "runtime_env": masked(rev.Configuration.RuntimeEnv, reveal...), "install_params": masked(rev.Configuration.InstallParams, reveal...), "deployment_defaults": rev.Configuration.DeploymentDefaults, "created_at": rev.CreatedAt, "inherited_runtime_env": masked(rev.InheritedConfiguration.RuntimeEnv, reveal...), "inherited_install_params": masked(rev.InheritedConfiguration.InstallParams, reveal...), "group_source": rev.GroupSource})
+	reply(w, 200, map[string]any{"id": rev.ID, "environment": rev.Environment, "revision": rev.Revision, "target_version": rev.TargetVersion, "runtime_env": masked(rev.Configuration.RuntimeEnv, reveal...), "install_params": masked(rev.Configuration.InstallParams, reveal...), "deployment_defaults": rev.Configuration.DeploymentDefaults, "created_at": rev.CreatedAt, "inherited_runtime_env": masked(rev.InheritedConfiguration.RuntimeEnv, reveal...), "inherited_install_params": masked(rev.InheritedConfiguration.InstallParams, reveal...), "inherited_deployment_defaults": rev.InheritedConfiguration.DeploymentDefaults, "group_source": rev.GroupSource})
 }
 func (s *Server) environment(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	reveal := r.URL.Query().Get("reveal") == "true"

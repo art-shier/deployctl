@@ -150,7 +150,7 @@ test("conflict keeps draft and hides secrets from review while group save exclud
   await page.route("**/api/v1/groups/apps/environments/prod", async (route) => {
     if (route.request().method() === "PUT") {
       const body = route.request().postDataJSON();
-      expect(body).not.toHaveProperty("deployment_defaults");
+      expect(body.deployment_defaults).toEqual({ target_dir: "" });
       expect(body).not.toHaveProperty("target_version");
       await route.fulfill({
         status: 409,

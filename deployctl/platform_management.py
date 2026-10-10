@@ -140,6 +140,8 @@ def configuration(value, scope, environment, reveal=False):
         if target!='stable': version(target)
         result['target_version']=target
         result['deployment_defaults']=defaults(value.get('deployment_defaults'))
+        if 'inherited_deployment_defaults' in value:
+            result['inherited_deployment_defaults']=defaults(value['inherited_deployment_defaults'])
         for field in ('inherited_runtime_env','inherited_install_params'):
             result[field]=variable_rows(value.get(field,[]),field=='inherited_runtime_env',reveal)
         source=value.get('group_source')

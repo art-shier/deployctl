@@ -138,6 +138,13 @@ func (s *Store) projectRevision(ctx context.Context, tx pgx.Tx, p domain.Project
 		r.InheritedConfiguration = group.Configuration
 		r.GroupSource = &domain.GroupSource{Slug: group.Group, ID: group.ID, Revision: group.Revision}
 	}
+	if p.DeploymentType == "static" {
+		r.InheritedConfiguration.RuntimeEnv = map[string]domain.Variable{}
+		r.InheritedConfiguration.InstallParams = map[string]domain.Variable{}
+		r.InheritedConfiguration.DeploymentDefaults = domain.DeploymentDefaults{TargetDir: r.InheritedConfiguration.DeploymentDefaults.TargetDir}
+	} else {
+		r.InheritedConfiguration.DeploymentDefaults.TargetDir = ""
+	}
 	return r, nil
 }
 
