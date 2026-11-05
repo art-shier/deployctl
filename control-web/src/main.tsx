@@ -46,10 +46,13 @@ import { RemoveResource } from "./RemoveResource";
 import { ImagesView } from "./ImagesView";
 import { GroupsView } from "./ProjectGroups";
 import { AgentAccess } from "./AgentAccessPage";
+import { NodesPage } from "./NodesPage";
+import { ProjectDeployments } from "./ProjectDeployments";
 import { tokenScopeLabel } from "./tokenScope";
 import { projectFormPayload } from "./projectForm";
 import "./styles.css";
 import "./workspace.css";
+import "./remote.css";
 
 const date = (value: string) =>
   new Date(value).toLocaleString("zh-CN", {
@@ -350,6 +353,10 @@ function App() {
             <Clock size={18} />
             审计
           </a>
+          <a href="#nodes" className={page === "nodes" ? "active" : ""}>
+            <Box size={18} />
+            部署节点
+          </a>
           <a href="#agent" className={page === "agent" ? "active" : ""}>
             <Terminal size={18} />
             Agent 接入
@@ -392,6 +399,8 @@ function App() {
             <AuditView />
           ) : page === "agent" ? (
             <AgentAccess />
+          ) : page === "nodes" ? (
+            <NodesPage Dialog={Modal} />
           ) : selected ? (
             <ProjectView slug={selected} navigate={navigate} />
           ) : (
@@ -865,6 +874,7 @@ function Projects({
 }
 const tabs = [
   ["releases", "版本"],
+  ["deployments", "部署"],
   ["images", "镜像管理"],
   ["environments", "环境配置"],
   ["receipts", "安装记录"],
@@ -948,6 +958,8 @@ function ProjectView({
           <ImagesView project={project} Dialog={Modal} />
         ) : tab === "environments" ? (
           <EnvironmentsView project={project} />
+        ) : tab === "deployments" ? (
+          <ProjectDeployments project={project} />
         ) : (
           <ReceiptsView slug={slug} />
         )}
