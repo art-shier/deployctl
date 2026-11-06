@@ -226,6 +226,43 @@ def read_platform_key(path):
         if len(raw)>1024*1024: raise ValueError('center key exceeds size limit')
         return raw
 
+
+def pg_dump_executable():
+    """Validate root-controlled system links; retain pg_dump argv[0] for wrappers."""
+    executable=shutil.which('pg_dump',path='/usr/bin:/usr/local/bin:/bin')
+    if not executable: raise ValueError('external database backup requires pg_dump')
+    original=Path(executable)
+    if not original.is_absolute() or any(ord(c)<32 for c in str(original)):
+        raise ValueError('unsafe PostgreSQL client path')
+    current=Path(original.anchor); pending=list(original.parts[1:]); links=0
+    root_info=current.lstat()
+    if root_info.st_uid!=0 or root_info.st_mode & 0o022 or not stat.S_ISDIR(root_info.st_mode):
+        raise ValueError('unsafe PostgreSQL client root')
+    while pending:
+        part=pending.pop(0)
+        if part=='.': continue
+        if part=='..': current=current.parent; continue
+        candidate=current/part; info=candidate.lstat()
+        if info.st_uid!=0: raise ValueError('PostgreSQL client paths must be root-owned')
+        if stat.S_ISLNK(info.st_mode):
+            links+=1
+            if links>40: raise ValueError('PostgreSQL client symlink chain exceeds limit')
+            target=Path(os.readlink(candidate))
+            if target.is_absolute():
+                current=Path(target.anchor)
+                pending=list(target.parts[1:])+pending
+            else:
+                pending=list(target.parts)+pending
+            continue
+        if info.st_mode & 0o022: raise ValueError('PostgreSQL client paths must not be writable by other users')
+        if pending and not stat.S_ISDIR(info.st_mode): raise ValueError('invalid PostgreSQL client ancestor')
+        current=candidate
+    info=current.lstat()
+    if not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111:
+        raise ValueError('PostgreSQL client must be a regular executable')
+    return str(original)
+
+
 class Host:
     def __init__(self, config, runner=subprocess.run):
         self.config, self.runner = config, runner
@@ -303,8 +340,9 @@ class Host:
                 if state['pending']: return current,False,'pending_operation'
                 if not current: return '',False,'setup_required'
                 cfg=server_bundle.read_instance(self.server_home)
-                if cfg['external_database'] and not shutil.which('pg_dump',path='/usr/bin:/usr/local/bin:/bin'):
-                    return current,False,'backup_unavailable'
+                if cfg['external_database']:
+                    try: pg_dump_executable()
+                    except (ValueError,OSError): return current,False,'backup_unavailable'
                 server_bundle.wait_ready(cfg['api_port'],timeout=5)
             return current,True,''
         except (ValueError,RuntimeError,OSError,subprocess.SubprocessError):
@@ -356,12 +394,11 @@ class Host:
             destination=private_directory(backup/'keys')
             for path in keys.iterdir():
                 bootstrap.atomic_write(destination/path.name,read_platform_key(path),0o600)
+            fsync_directory(destination)
             cfg=server_bundle.read_instance(self.server_home)
             env=None
             if cfg['external_database']:
-                executable=shutil.which('pg_dump',path='/usr/bin:/usr/local/bin:/bin')
-                if not executable: raise ValueError('external database backup requires pg_dump')
-                trusted(executable)
+                executable=pg_dump_executable()
                 argv=[executable,'--format=custom','--no-owner','--no-acl']
                 env={'PGDATABASE':(destination/'database.url').read_text().strip()}
             else:
@@ -388,8 +425,15 @@ class Host:
         with service_lock(self.agent_home/'.lock'): pass
 
     def restart_agent(self,directory):
+        info=self.service_info()
+        if info.get('ActiveState') not in ('inactive','failed') or info.get('MainPID')!='0':
+            raise RuntimeError('Agent has not fully stopped before restart')
         write_json(directory/'restart.json',{'after_ns':time.time_ns()})
-        self.command(['systemctl','reset-failed',self.unit],timeout=30)
+        # Normal inactive units may have been unloaded by systemd GC; resetting
+        # them fails with "unit not loaded". Failed units retain their state and
+        # must have restart limits cleared successfully before the next start.
+        if info['ActiveState']=='failed':
+            self.command(['systemctl','reset-failed',self.unit],timeout=30)
         self.command(['systemctl','start',self.unit],timeout=60)
 
     def install(self,job,directory,stage):

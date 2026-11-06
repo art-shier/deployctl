@@ -67,13 +67,21 @@ def candidate(source,output,version,fail_agent=False):
 
 class LocalReleaseHost(Host):
     def __init__(self,config,artifact):
-        super().__init__(config)
+        super().__init__(config,runner=host_command)
         self.artifact=artifact
     def prepare(self,job,directory):
         if hashlib.sha256(self.artifact.read_bytes()).hexdigest()!=job['cli_sha256']:
             raise RuntimeError('fixture artifact changed')
         shutil.copyfile(self.artifact,directory/'deployctl.pyz')
         shutil.copyfile(Path(str(self.artifact)+'.sha256'),directory/'deployctl.pyz.sha256')
+
+
+def host_command(argv,**kwargs):
+    result=subprocess.run(argv,**kwargs)
+    if result.returncode and argv[0]=='systemctl':
+        detail=result.stderr.decode(errors='replace') if isinstance(result.stderr,bytes) else result.stderr
+        print('Fixture systemctl failure:', ' '.join(argv), (detail or '')[:2048],file=sys.stderr)
+    return result
 
 
 class ControlFixture:
@@ -114,7 +122,7 @@ def main():
                 command('systemctl','daemon-reload');command('systemctl','start',unit_name)
                 config={'kind':'node','target_id':node_id,'server':origin,'cli_path':str(executable),
                         'agent_home':str(agent_home),'agent_service':unit_name}
-                host=Host(config)
+                host=Host(config,runner=host_command)
                 deadline=time.monotonic()+60
                 while not host.readiness()[1]:
                     if time.monotonic()>deadline: raise RuntimeError('fixture Agent did not become ready')

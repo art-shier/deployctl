@@ -198,7 +198,7 @@ def test_exact_private_backup_restores_both_commands_and_metadata(tmp_path,monke
     for name in metadata['commands']: (host.executable.parent/name).write_bytes(b'changed')
     host.restore(JOB,directory,lambda stage:None)
     assert {name:(host.executable.parent/name).read_bytes() for name in before}==before
-    assert [c[1] for c in calls]==['stop','reset-failed','start']
+    assert [c[1] for c in calls]==['stop','start']
     assert updater.read_json(directory/'restart.json')['after_ns']>0
 
 
@@ -425,7 +425,7 @@ def center_host(tmp_path,monkeypatch,external=False,fail=False,keys_owner=0,keys
     monkeypatch.setattr(updater.server_bundle,'read_instance',lambda path:updater.read_json(path/'instance.json'))
     monkeypatch.setattr(updater.server_bundle,'check_project',lambda path:None)
     monkeypatch.setattr(updater.server_bundle,'installed_content',lambda *args:None)
-    monkeypatch.setattr(updater.shutil,'which',lambda *args,**kwargs:'/usr/bin/pg_dump')
+    monkeypatch.setattr(updater,'pg_dump_executable',lambda:'/usr/bin/pg_dump')
     calls=[]
     def runner(argv,**kwargs):
         calls.append((argv,kwargs))
@@ -628,3 +628,80 @@ def test_journal_parent_synced_before_start(tmp_path,monkeypatch):
     client.json=request
     w=worker(tmp_path,client=client); w.run_once()
     assert w.host.events
+
+def pg_dump_link_fixture(tmp_path,monkeypatch,*,target_mode=0o755,link_uid=0,parent_mode=0o755,loop=False):
+    import stat
+    from types import SimpleNamespace
+    command=tmp_path/'usr'/'bin'/'pg_dump'
+    target=tmp_path/'usr'/'share'/'postgresql-common'/'pg_wrapper'
+    def info(path,*args,**kwargs):
+        if path==command: return SimpleNamespace(st_uid=link_uid,st_mode=stat.S_IFLNK|0o777)
+        if path==target: return SimpleNamespace(st_uid=0,st_mode=stat.S_IFREG|target_mode)
+        return SimpleNamespace(st_uid=0,st_mode=stat.S_IFDIR|(parent_mode if path==target.parent else 0o755))
+    monkeypatch.setattr(Path,'lstat',info)
+    monkeypatch.setattr(updater.os,'readlink',lambda path:command.name if loop else '../share/postgresql-common/pg_wrapper')
+    monkeypatch.setattr(updater.shutil,'which',lambda *args,**kwargs:str(command))
+    return command,target
+
+
+def test_pg_dump_trusted_distro_link_preserves_invocation_name(tmp_path,monkeypatch):
+    command,target=pg_dump_link_fixture(tmp_path,monkeypatch)
+    assert updater.pg_dump_executable()==str(command)
+    assert updater.pg_dump_executable()!=str(target)
+
+
+@pytest.mark.parametrize('changes',[{'target_mode':0o777},{'target_mode':0o644},{'link_uid':1001},{'parent_mode':0o777},{'loop':True}])
+def test_pg_dump_rejects_untrusted_link_target_or_ancestors(tmp_path,monkeypatch,changes):
+    pg_dump_link_fixture(tmp_path,monkeypatch,**changes)
+    with pytest.raises(ValueError): updater.pg_dump_executable()
+
+
+def test_external_database_readiness_uses_same_trusted_resolver(tmp_path,monkeypatch):
+    host,_=center_host(tmp_path,monkeypatch,external=True)
+    calls=[]
+    def reject(): calls.append('resolved'); raise ValueError('unsafe PostgreSQL client')
+    monkeypatch.setattr(updater,'pg_dump_executable',reject)
+    assert host.readiness()==('v1.15.0',False,'backup_unavailable')
+    directory=tmp_path/'job'; directory.mkdir(mode=0o700)
+    with pytest.raises(ValueError): host.backup(dict(JOB,kind='center'),directory)
+    assert calls==['resolved','resolved']
+
+
+def test_key_backup_directory_synced_before_complete_marker(tmp_path,monkeypatch):
+    host,_=center_host(tmp_path,monkeypatch)
+    directory=tmp_path/'job'; directory.mkdir(mode=0o700)
+    events=[]; original=updater.write_json
+    monkeypatch.setattr(updater,'fsync_directory',lambda path:events.append(('sync',Path(path))))
+    def write(path,value):
+        if path.name=='complete.json':
+            assert ('sync',directory/'backup'/'keys') in events
+            assert (directory/'backup'/'keys'/'database.url').exists()
+            events.append(('complete',path))
+        return original(path,value)
+    monkeypatch.setattr(updater,'write_json',write)
+    host.backup(dict(JOB,kind='center'),directory)
+    assert events[-1][0]=='complete'
+
+
+def test_inactive_agent_restart_does_not_reset_unloaded_unit(tmp_path,monkeypatch):
+    host,_,calls,state=managed_host(tmp_path,monkeypatch)
+    state.update(active='inactive',pid='0')
+    original=host.command
+    def command(argv,**kwargs):
+        if argv[1]=='reset-failed': raise RuntimeError('unit not loaded after inactive GC')
+        return original(argv,**kwargs)
+    host.command=command
+    host.restart_agent(tmp_path)
+    assert [argv[1] for argv in calls]==['start']
+    assert state['active']=='active'
+
+
+def test_failed_agent_restart_stops_if_reset_start_limit_fails(tmp_path,monkeypatch):
+    host,_,calls,state=managed_host(tmp_path,monkeypatch)
+    state.update(active='failed',pid='0')
+    def command(argv,**kwargs):
+        calls.append(argv)
+        if argv[1]=='reset-failed': raise RuntimeError('cannot clear failed/startlimit state')
+    host.command=command
+    with pytest.raises(RuntimeError): host.restart_agent(tmp_path)
+    assert [argv[1] for argv in calls]==['reset-failed']
