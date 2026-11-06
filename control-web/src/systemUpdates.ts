@@ -224,7 +224,10 @@ export class UpdateSubmission {
         throw new Error("请先重试原请求并确认结果。");
     } else {
       this.pending = {
-        ...structuredClone(draft),
+        updater_ids: [...draft.updater_ids],
+        version: draft.version,
+        parallelism: draft.parallelism,
+        backup_confirmed: draft.backup_confirmed,
         request_id: crypto.randomUUID().replaceAll("-", ""),
       };
     }

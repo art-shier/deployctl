@@ -101,13 +101,19 @@ describe("uncertain update submission", () => {
     const submission = new UpdateSubmission(storage);
     let original: unknown;
     await expect(
-      submission.submit(draft, async (body) => {
-        original = structuredClone(body);
-        throw new APIError(503, "offline");
-      }),
+      submission.submit(
+        { ...draft, enrollment_token: "must-not-persist" } as any,
+        async (body) => {
+          original = structuredClone(body);
+          throw new APIError(503, "offline");
+        },
+      ),
     ).rejects.toThrow();
     expect(JSON.parse(values.get(UPDATE_REQUEST_STORAGE_KEY)!)).toEqual(
       original,
+    );
+    expect(values.get(UPDATE_REQUEST_STORAGE_KEY)).not.toContain(
+      "must-not-persist",
     );
     const restored = new UpdateSubmission(storage);
     expect(restored.draft).toEqual(draft);
