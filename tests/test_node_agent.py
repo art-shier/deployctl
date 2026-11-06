@@ -313,8 +313,9 @@ class AgentTests(unittest.TestCase):
     def test_enrollment_saves_only_private_node_identity_and_preserves_journals(self):
         self.worker.execute_task(task())
         credential = {'node_id': NODE, 'token': 'ctl_' + 'x' * 40}
-        with patch('deployctl.node_agent.PlatformClient.json', return_value=credential):
+        with patch('deployctl.node_agent.PlatformClient.json', return_value=credential) as request:
             node = agent.enroll('https://ctl.example', 'ctl_' + 'y' * 40, self.home)
+        self.assertEqual(request.call_args.args[2]['name'], agent.platform.node())
         self.assertEqual(node, NODE)
         saved = agent.read_json(self.home / 'node.json')
         self.assertEqual(saved['token'], credential['token'])

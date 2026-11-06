@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   type ComponentType,
   type ReactNode,
@@ -28,8 +29,8 @@ function NodeForm({
   saved,
   close,
 }: {
-  node?: DeploymentNode;
-  saved: (result?: Enrollment) => void;
+  node: DeploymentNode;
+  saved: () => void;
   close: () => void;
 }) {
   const [name, setName] = useState(node?.name || "");
@@ -96,6 +97,10 @@ function NodeForm({
       setError("请填写节点名称。");
       return;
     }
+    if (node.pending_authorization && !groups.length && !projects.length) {
+      setError("请授权至少一个项目组或项目。");
+      return;
+    }
     if (!envs.length) {
       setError("请授权至少一个环境。");
       return;
@@ -113,13 +118,11 @@ function NodeForm({
         excluded_projects: excluded,
         environments: envs,
       };
-      if (node) {
-        await api(
-          `/nodes/${node.id}`,
-          send("PATCH", { ...body, enabled: node.enabled }),
-        );
-        saved();
-      } else saved(await api<Enrollment>("/nodes", send("POST", body)));
+      await api(
+        `/nodes/${node.id}`,
+        send("PATCH", { ...body, enabled: node.enabled }),
+      );
+      saved();
     } catch (cause) {
       setError(errorText(cause));
     } finally {
@@ -249,12 +252,133 @@ function NodeForm({
   );
 }
 
+function NodeOnboarding({
+  nodes,
+  close,
+}: {
+  nodes: DeploymentNode[];
+  close: () => void;
+}) {
+  const [fresh, setFresh] = useState<Enrollment | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const pending = useRef<AbortController | null>(null);
+  useEffect(() => () => pending.current?.abort(), []);
+  const generate = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    const controller = new AbortController();
+    pending.current = controller;
+    try {
+      const result = await api<Enrollment>("/node-enrollments", {
+        ...send("POST", {}),
+        signal: controller.signal,
+      });
+      if (!controller.signal.aborted) setFresh(result);
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(errorText(cause));
+    } finally {
+      if (!controller.signal.aborted) setBusy(false);
+    }
+  };
+  const waiting = nodes.filter((node) => node.pending_authorization);
+  return (
+    <div className="form-stack">
+      <section className="remote-section">
+        <h3>1. 在 Linux 主机安装 ctl</h3>
+        <p>
+          需要 Python ≥ 3.10、Docker Engine 和 Docker Compose ≥
+          2.30。使用当前管理服务提供、支持 agent 命令的 ctl，安装后运行{" "}
+          <code>ctl --version</code> 检查。
+        </p>
+        <p>
+          <a className="inline-link" href="#agent">
+            打开 Agent 接入，获取 CLI 安装说明与 SHA-256 校验值
+          </a>
+        </p>
+      </section>
+      <section className="remote-section">
+        <h3>2. 使用一次性凭据登记</h3>
+        <p>
+          生成凭据时尚未创建节点。Agent
+          完成登记后，主机信息会自动出现在节点列表，并等待分配授权。
+        </p>
+        <code className="code-block">
+          sudo ctl agent enroll --server {location.origin}
+        </code>
+        <p className="muted small">
+          在隐藏输入提示中粘贴凭据。凭据只展示本次，有效期 15 分钟。
+        </p>
+        {["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) && (
+          <p className="notice">
+            当前地址为本机开发地址，仅同一主机可访问。远程 Linux
+            主机接入时，请从可访问的 HTTPS 管理服务地址打开此页面。
+          </p>
+        )}
+        {!fresh && (
+          <button
+            className="primary"
+            disabled={busy}
+            onClick={() => void generate()}
+          >
+            {busy ? "正在生成凭据…" : "生成一次性注册凭据"}
+          </button>
+        )}
+        {error && (
+          <p className="notice error" role="alert">
+            {error}
+          </p>
+        )}
+        {fresh && (
+          <>
+            <label>
+              一次性注册凭据
+              <textarea
+                readOnly
+                spellCheck={false}
+                autoComplete="off"
+                value={fresh.enrollment_token}
+                onFocus={(event) => event.target.select()}
+              />
+            </label>
+            <p className="muted small">
+              到期时间 {remoteDate(fresh.expires_at)}
+            </p>
+          </>
+        )}
+      </section>
+      <section className="remote-section">
+        <h3>3. 启动 Agent 并分配授权</h3>
+        <p>
+          登记后运行 <code>sudo ctl agent run</code>。持续运行可使用{" "}
+          <code>sudo ctl agent service --executable /usr/local/bin/ctl</code>{" "}
+          生成 systemd 单元，再安装并启用服务。
+        </p>
+        <p>
+          节点列表每 5
+          秒自动刷新。在节点的“分配授权”中选择项目组、项目和环境后即可部署。
+        </p>
+        {waiting.length > 0 && (
+          <div className="notice" role="status">
+            等待分配授权 · {waiting.map((node) => node.name).join("、")}
+          </div>
+        )}
+      </section>
+      <button onClick={close}>
+        {fresh ? "已保存，关闭凭据" : "关闭接入说明"}
+      </button>
+    </div>
+  );
+}
+
 export function NodesPage({ Dialog }: { Dialog: DialogType }) {
   const [nodes, setNodes] = useState<DeploymentNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
-  const [editing, setEditing] = useState<DeploymentNode | "new" | null>(null);
+  const [editing, setEditing] = useState<DeploymentNode | null>(null);
+  const [onboarding, setOnboarding] = useState(false);
   const [fresh, setFresh] = useState<Enrollment | null>(null);
   const [revision, reload] = useState(0);
   useEffect(() => {
@@ -274,7 +398,7 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false);
-          timer = setTimeout(refresh, 10000);
+          timer = setTimeout(refresh, 5000);
         }
       }
     };
@@ -343,9 +467,9 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
             <RefreshCw size={16} />
             刷新
           </button>
-          <button className="primary" onClick={() => setEditing("new")}>
+          <button className="primary" onClick={() => setOnboarding(true)}>
             <Plus size={16} />
-            创建节点
+            接入节点
           </button>
         </div>
       </div>
@@ -389,6 +513,11 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
                   <td>
                     <span>组 {node.groups.join("、") || "无"}</span>
                     <small className="block">
+                      <span className="badge">
+                        {node.pending_authorization ? "等待分配授权" : "已授权"}
+                      </span>
+                    </small>
+                    <small className="block">
                       项目 {node.projects.join("、") || "无"}
                     </small>
                     <small className="block">
@@ -415,9 +544,9 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
                       <button
                         disabled={!!busy}
                         onClick={() => setEditing(node)}
-                        aria-label={`编辑节点 ${node.name}`}
+                        aria-label={`${node.pending_authorization ? "分配授权" : "编辑节点"} ${node.name}`}
                       >
-                        编辑授权
+                        {node.pending_authorization ? "分配授权" : "编辑授权"}
                       </button>
                       <button
                         disabled={!!busy}
@@ -444,23 +573,31 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
       ) : (
         <div className="empty">
           <h3>暂无部署节点</h3>
-          <p>创建节点后，在 Linux 主机上使用一次性凭据登记 Agent。</p>
+          <p>
+            点击接入节点获取一次性凭据，在 Linux 主机登记 Agent 后自动发现节点。
+          </p>
         </div>
       )}
       {editing && (
         <Dialog
-          title={editing === "new" ? "创建节点" : "编辑节点授权"}
+          title={
+            editing.pending_authorization ? "分配节点授权" : "编辑节点授权"
+          }
           close={() => setEditing(null)}
         >
           <NodeForm
-            node={editing === "new" ? undefined : editing}
+            node={editing}
             close={() => setEditing(null)}
-            saved={(result) => {
+            saved={() => {
               setEditing(null);
-              setFresh(result || null);
               reload((value) => value + 1);
             }}
           />
+        </Dialog>
+      )}
+      {onboarding && (
+        <Dialog title="接入节点" close={() => setOnboarding(false)}>
+          <NodeOnboarding nodes={nodes} close={() => setOnboarding(false)} />
         </Dialog>
       )}
       {fresh && (
@@ -485,7 +622,7 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
             </p>
             <p>
               在节点执行{" "}
-              <code>ctl agent enroll --server {location.origin}</code>
+              <code>sudo ctl agent enroll --server {location.origin}</code>
               ，按隐藏输入提示粘贴凭据。
             </p>
             <button className="primary" onClick={() => setFresh(null)}>

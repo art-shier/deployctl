@@ -48,6 +48,9 @@ CREATE INDEX IF NOT EXISTS ctl_receipts_project ON ctl_receipts(project,created_
 CREATE INDEX IF NOT EXISTS ctl_sessions_expiry ON ctl_sessions(expires_at);
 
 -- Remote identities deliberately never enter ctl_tokens or ctl_sessions.
+CREATE TABLE IF NOT EXISTS ctl_node_enrollments (
+ hash text PRIMARY KEY, expires_at timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ctl_nodes (
  id text PRIMARY KEY, data jsonb NOT NULL, token_hash text UNIQUE,
  enrollment_hash text UNIQUE, enrollment_expires timestamptz,

@@ -12,10 +12,13 @@ from deployctl.release import build_release
 def verify_remote_agent(owner, origin, base, application, deployment, image, root, config_root):
     package = build_release(deployment, image, 'v1.0.1', base / 'remote-packages')
     owner.publish(application, 'v1.0.1', package)
-    node = owner.json('POST', '/api/v1/nodes', {'name': 'CI Docker node', 'groups': [],
-        'projects': [application], 'excluded_projects': [], 'environments': ['prod']})
+    node = owner.json('POST', '/api/v1/node-enrollments', {})
     agent_home = base / 'remote-agent'
     node_id = enroll(origin, node['enrollment_token'], agent_home)
+    discovered = next(n for n in owner.json('GET', '/api/v1/nodes') if n['id'] == node_id)
+    assert discovered['pending_authorization']
+    owner.json('PATCH', f'/api/v1/nodes/{node_id}', {'name': 'CI Docker node', 'enabled': True, 'groups': [],
+        'projects': [application], 'excluded_projects': [], 'environments': ['prod']})
     identity = read_json(agent_home / 'node.json')
     client = PlatformClient(Credentials(identity['server'], identity['token']))
     manager = Manager(root, config_root, driver=AgentDockerDriver())

@@ -20,13 +20,14 @@ type NodeInput struct {
 
 type Node struct {
 	NodeInput
-	ID              string     `json:"id"`
-	CreatedAt       time.Time  `json:"created_at"`
-	LastSeen        *time.Time `json:"last_seen"`
-	AgentVersion    string     `json:"agent_version"`
-	Platform        string     `json:"platform"`
-	DockerAvailable bool       `json:"docker_available"`
-	Online          bool       `json:"online"`
+	PendingAuthorization bool       `json:"pending_authorization"`
+	ID                   string     `json:"id"`
+	CreatedAt            time.Time  `json:"created_at"`
+	LastSeen             *time.Time `json:"last_seen"`
+	AgentVersion         string     `json:"agent_version"`
+	Platform             string     `json:"platform"`
+	DockerAvailable      bool       `json:"docker_available"`
+	Online               bool       `json:"online"`
 }
 
 func (n NodeInput) Validate() error {
@@ -46,7 +47,7 @@ func (n NodeInput) Validate() error {
 	return nil
 }
 func (n Node) Allows(p Project, env string) bool {
-	return n.Enabled && !slices.Contains(n.ExcludedProjects, p.Slug) && (slices.Contains(n.Projects, p.Slug) || slices.Contains(n.Groups, p.Group)) && slices.Contains(n.Environments, env)
+	return n.Enabled && !n.PendingAuthorization && !slices.Contains(n.ExcludedProjects, p.Slug) && (slices.Contains(n.Projects, p.Slug) || slices.Contains(n.Groups, p.Group)) && slices.Contains(n.Environments, env)
 }
 
 type Binding struct {

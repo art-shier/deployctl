@@ -16,7 +16,7 @@
 
 ## 对象与约束
 
-- Node：独立 ID、名称、enabled、组/项目/排除项目/环境授权、注册时间、最后心跳、Agent/平台/Docker 状态。
+- Node：独立 ID、名称、enabled、pending_authorization、组/项目/排除项目/环境授权、注册时间、最后心跳、Agent/平台/Docker 状态。
 - 环境授权必须显式列出；空 environments 不授予任何环境。组和项目均为空时不授予任何项目，排除项目优先。
 - Instance：独立 ID、node_id、project、environment，唯一约束 (node_id, project, environment)；actual_version、health、observed_at、binding、pending_transaction。业务状态与连接状态分别展示。
 - Task：独立 ID、instance_id、node_id、project、environment、action、actor、request_id、status、stage、时间及非秘密结果。action 仅 install/upgrade/rollback。任务持有加密部署规格，普通查询永远不返回配置明文。
@@ -30,7 +30,7 @@
 ### 管理接口
 
 - GET /nodes → Node[]。owner 查看全部；deployer 仅能通过项目可用节点接口查看授权范围。
-- POST /nodes，body {name,groups:[],projects:[],excluded_projects:[],environments:[]} → 201 {node:Node,enrollment_token:string,expires_at:string}。owner；一次性凭据有效 15 分钟，只展示一次。
+- POST /node-enrollments，body {} → 201 {enrollment_token:string,expires_at:string}。owner；一次性凭据有效 15 分钟，只展示一次，只存哈希，不创建节点、不带授权。旧 POST /nodes 预建节点接口保留兼容，不再用于 Web 接入。
 - PATCH /nodes/{id}，body 同上加 enabled:boolean → Node。owner，完整替换可编辑字段。
 - POST /nodes/{id}/enrollment → {enrollment_token,expires_at}。owner，重新登记轮换节点身份，旧身份立即失效；有活动任务时拒绝。
 - GET /projects/{slug}/nodes?environment=prod → Node[]。仅返回操作者有 resolve 权限且节点允许该项目/环境的节点；禁用节点不列出，离线节点标记离线。
@@ -45,7 +45,7 @@ Task 公共字段：id,instance_id,node_id,project,environment,action,actor,requ
 
 ### Agent 接口（独立节点 Bearer 身份，不接受用户会话）
 
-- POST /node/enroll，Bearer 一次性凭据，body {agent_version,platform} → {node_id,token}。事务内消费凭据；只存 token 哈希。注册失败且响应丢失时需管理员重新生成凭据，不重复公开身份。
+- POST /node/enroll，Bearer 一次性凭据，body {agent_version,platform,name?} → {node_id,token}。事务内消费凭据；通用凭据首次兑换时创建 enabled=true、pending_authorization=true、空授权的节点，name 使用上报主机名（仅作展示），缺省生成名称；只存 token 哈希。节点专属的重新登记凭据保留原 ID、名称和授权。注册失败且响应丢失时需管理员重新生成凭据，不重复公开身份。
 - POST /node/heartbeat，body {agent_version,platform,docker_available,instances:[Observation]} → {enabled:boolean,instances:[{id,project,environment}]}。只更新已分配给当前节点的实例，拒绝外节点 ID；响应提供要观测的实例清单。
 - POST /node/poll，body {wait_seconds:0..25} → {task:AgentTask|null}。每节点返回已有 leased/running 任务，或原子领取最早可执行 queued 任务；无任务可等待，不持有数据库连接等待。领取前重新检查操作者有效性、当前组成员关系、节点授权、项目存在性与任务有效期。
 - POST /node/tasks/{id}/start，body {} → AgentTask。leased → running；再次请求幂等返回 running；重新检查授权、有效期，已取消或终结返回 409。
@@ -79,7 +79,7 @@ needs_attention 为终态，但本地 transaction 仍必须通过回滚处理。
 
 ## Web 工作流
 
-沿用现有视觉组件。侧栏新增“部署节点”，支持创建、单次显示注册凭据、修改授权、禁用和重新登记，清楚标注失联与禁用区别。组/项目/环境授权选项可从现有接口加载。
+沿用现有视觉组件。侧栏新增“部署节点”，支持接入说明、生成并单次显示注册凭据、自动发现待授权节点、分配授权、禁用和重新登记，清楚标注失联与禁用区别。组/项目/环境授权选项可从现有接口加载。
 
 项目新增“部署”页签：环境选择、已部署实例表、版本/节点选择及端口/绑定设置、安装/升级/回滚、任务列表与待执行取消。每次操作只选一节点，允许重复给同一项目环境添加不同节点。任务创建后轮询刷新，页面离开停止请求。操作中禁用重复提交，失败保留表单；网络结果不确定时同一 request_id 重试。
 
@@ -97,3 +97,7 @@ needs_attention 为终态，但本地 transaction 仍必须通过回滚处理。
 - 重复创建、领取、start、report 和 Agent 重启均不重复执行；中心重启后任务仍存在。
 - 失联不等于业务故障，任务失败与恢复结果分离；本地 pending transaction 阻止错误升级。
 - 保持原 CLI 行为，Python/Go/Web 自动化检查通过；无 Docker 环境明确区分模拟测试与真实 Linux Docker 验证。
+
+## 2026-11-06 接入流程修订
+
+节点列表每 5 秒刷新，包括接入弹窗打开期间。生成凭据不新增节点；Agent 登记后出现待授权节点。PATCH /nodes/{id} 在节点 enabled、组或项目非空、环境非空时清除首次待授权状态。Node.Allows 同时检查待授权标志及当前授权范围；待授权仍可心跳与空轮询。凭据只留在弹窗瞬时状态，关闭或导航后清除。

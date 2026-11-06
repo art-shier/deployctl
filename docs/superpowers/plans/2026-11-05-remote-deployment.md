@@ -90,3 +90,13 @@
 - Built `dist/deployctl.pyz`; isolated `-I -S` agent help/service and deployment validation pass. Installer generation check passed. `git diff --check` passed.
 - Full-change review and scoped re-review approved; no known remaining must-fix findings.
 - Environment limit: no Linux Docker runtime and no Windows GCC/CGO race instrumentation here. Real authenticated Agent upgrade/rollback coverage was added to existing Linux CI; `go test -race` remains in that CI. These infrastructure-dependent checks have not been executed locally.
+
+## Discovery-first onboarding revision (2026-11-06)
+
+- [x] Generate a 15-minute, single-use enrollment invitation without creating a node or assigning grants. Atomically consume it when Agent registers; create a pending node with empty scopes and issue its independent identity. Preserve legacy owner pre-provisioning API and known-node reenrollment.
+- [x] Agent reports hostname as a display label. Pending nodes heartbeat and poll but cannot receive deployment tasks/material; explicit enabled + group/project + environment grants complete authorization.
+- [x] Web uses 接入节点 → generate credential → discover pending node → 分配授权, with 5-second refresh while instructions remain open and transient credential cleanup on dismissal/navigation. Existing edit/disable/reenrollment flows remain available.
+- [x] Go full suite against real PostgreSQL and Go/Python protocol fixture passed; go vet passed. New tests cover no precreation, expiry, concurrent one-use redemption, pending task denial and retained identity/grants on reenrollment. Protocol and Linux Docker helper now use discovery and subsequent grants.
+- [x] Python full suite: 301 tests, OK, 35 Windows/platform skips. Web: 30 unit tests, build, 33 mocked browser cases passed; mobile onboarding inspected. Independent review found no actionable issues.
+- [x] Rebuilt bundled CLI and local preview Agent assets; restarted API with original keys/database and retained Vite preview at http://127.0.0.1:5174/#nodes. Live proxy smoke verified readiness and successful credential generation with unchanged node count; no fake nodes added. git diff --check passed.
+- Remaining environment limit unchanged: actual Linux Docker deployment was not run locally; protocol Docker operations are simulated, and real Docker coverage remains in CI.

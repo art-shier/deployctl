@@ -36,6 +36,39 @@ ctl --version
 
 要求 Python >=3.10；服务部署另需 Docker Engine、Docker Compose >=2.30。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
 
+## 安装中心服务（管理台 + 镜像仓库）
+
+上面的安装命令只安装 `ctl` 工具。自建镜像服务器和 Web 管理台，还需在**中心 Linux 服务器**上执行 `ctl server-install`。它通过 Docker Compose 一起启动管理 API / Web、Distribution Registry 镜像仓库和默认 PostgreSQL，无需单独安装 Registry。使用外部 PostgreSQL 时可跳过内置数据库。
+
+要求 Python >=3.10、Docker Engine、Docker Compose >=2.30，以及 root / sudo 权限。先按上文安装 ctl，再执行以下命令；将 `ctl.example.com` 替换为自己的域名：
+
+```bash
+# 兼容上文安装到 ~/.local/bin 的 ctl；默认获取官方最新正式 Release
+sudo "$(command -v ctl)" server-install \
+  --origin https://ctl.example.com \
+  --registry-host ctl.example.com
+
+sudo "$(command -v ctl)" server-status
+```
+
+完成安装后：
+
+1. 将域名解析到中心服务器，配置 HTTPS 反向代理。同域名部署时，整个域名（包括 `/v2/`）转发到 `127.0.0.1:8080`。安装器不会自动配置 DNS、证书或反向代理。
+2. 从服务器的 `/opt/ctl-platform/keys/owner.token` 获取首次管理员登录凭据，访问自己的 HTTPS 地址登录管理台。
+3. 在管理台创建项目和配置，向镜像仓库上传或推送镜像，再接入业务部署节点。
+
+默认数据目录为 `/opt/ctl-platform`。API 入口为本机 `8080`，额外 Registry 网关入口为本机 `5000`；同域名模式只需代理 `8080`，底层 Registry 不直接对外开放。首次安装可用 `--api-port` / `--registry-port` 调整端口。代理还需配置镜像上传大小和超时。
+
+已有中心实例使用 `server-upgrade` 升级。固定版本、外部数据库、反向代理要求、备份和故障处理见 [中心服务完整安装与运维指南](docs/control-plane.md#引导管理服务)。
+
+**本分支的远程部署功能尚需配套的新服务端和 CLI 构建**，上述正式 Release 安装不保证包含这些未发布改动。测试本分支可按完整指南的源码构建方式安装中心服务，并使用当前服务提供的新 CLI。
+
+## 接入远程部署节点
+
+在每台承载业务容器的 Linux 主机安装配套的 `ctl`，通过 `ctl agent enroll` 登记，再用 systemd 常驻运行 `ctl agent run`。中心管理台发现节点后，分配项目组、项目和环境授权，即可在项目中选择节点部署。
+
+节点安装步骤、一次性凭据、开机启动和恢复方法见 [远程部署与节点运维](docs/remote-deployment.md)。节点无需再次安装中心服务或镜像仓库。
+
 ## 业务项目接入
 
 在已有 Dockerfile 的业务仓库根目录执行：
@@ -59,7 +92,7 @@ v1.6.0起增加可选pre `refresh_config: true`，让钩子生成的服务器配
 
 v1.5.0新增 `--env-var` 应用运行配置、`--set` 安装参数、`--unset-env` 删除覆盖值，以及可选宿主机pre/post hooks。应用通过 `DEPLOYCTL_ENV_FILE` 读取只读 `.env.json`；成功配置随版本提交，失败恢复旧快照。项目接入见 [运行时配置与钩子](docs/runtime-config.md)。
 
-## 服务器部署
+## 手动部署业务项目
 
 按 [运维手册](docs/operations.md) 配置部署用户、Docker 镜像拉取权限以及 `/etc/deployctl/project-a/production/{config.env,secrets.env}`，然后：
 

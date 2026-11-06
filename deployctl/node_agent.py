@@ -525,7 +525,7 @@ def enroll(server, token, home=DEFAULT_HOME):
     client = PlatformClient(Credentials(validate_origin(server), validate_token(token)))
     with service_lock(home / '.lock'):
         response = client.json('POST', '/api/v1/node/enroll', {'agent_version': __version__,
-            'platform': platform.system().lower() + '/' + platform.machine()})
+            'platform': platform.system().lower() + '/' + platform.machine(), 'name': platform.node()})
         if not isinstance(response, dict):
             raise ValueError('invalid node enrollment response')
         validate_id(response.get('node_id'))

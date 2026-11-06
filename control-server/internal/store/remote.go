@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/art-shier/deployctl/control-server/internal/auth"
 	"github.com/art-shier/deployctl/control-server/internal/domain"
@@ -57,6 +58,32 @@ func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	}
 	return out, rows.Err()
 }
+
+// CreateNodeEnrollment issues a one-use invitation without precreating a node.
+func (s *Store) CreateNodeEnrollment(ctx context.Context, actor string) (string, time.Time, error) {
+	raw, err := auth.NewToken()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	expires := time.Now().UTC().Add(15 * time.Minute)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", expires, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, "DELETE FROM ctl_node_enrollments WHERE expires_at<=now()"); err != nil {
+		return "", expires, err
+	}
+	if _, err = tx.Exec(ctx, "INSERT INTO ctl_node_enrollments(hash,expires_at) VALUES($1,$2)", auth.HashToken(raw), expires); err != nil {
+		return "", expires, err
+	}
+	if err = audit(ctx, tx, actor, "node.enrollment.create", "", "", nil); err != nil {
+		return "", expires, err
+	}
+	return raw, expires, tx.Commit(ctx)
+}
+
+// CreateNode is the legacy pre-provisioning API. New clients use discovery.
 func (s *Store) CreateNode(ctx context.Context, in domain.NodeInput, actor string) (domain.Node, string, time.Time, error) {
 	var n domain.Node
 	if err := in.Validate(); err != nil {
@@ -98,6 +125,9 @@ func (s *Store) UpdateNode(ctx context.Context, id string, in domain.NodeInput, 
 		return n, err
 	}
 	n.NodeInput = normalizeNode(in)
+	if n.PendingAuthorization && n.Enabled && len(n.Groups)+len(n.Projects) > 0 && len(n.Environments) > 0 {
+		n.PendingAuthorization = false
+	}
 	data, _ := json.Marshal(n)
 	if _, err = tx.Exec(ctx, "UPDATE ctl_nodes SET data=$2 WHERE id=$1", id, data); err != nil {
 		return n, err
@@ -144,7 +174,10 @@ func validNodeAgent(agent, platform string) bool {
 	return len(agent) > 0 && len(agent) <= 128 && len(platform) > 0 && len(platform) <= 128 && !strings.ContainsAny(agent+platform, "\x00\r\n")
 }
 func (s *Store) EnrollNode(ctx context.Context, hash, agent, platform string) (string, string, error) {
-	if !validNodeAgent(agent, platform) {
+	return s.EnrollNodeNamed(ctx, hash, agent, platform, "")
+}
+func (s *Store) EnrollNodeNamed(ctx context.Context, hash, agent, platform, name string) (string, string, error) {
+	if !validNodeAgent(agent, platform) || len(name) > 512 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return "", "", domain.ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -152,12 +185,27 @@ func (s *Store) EnrollNode(ctx context.Context, hash, agent, platform string) (s
 		return "", "", err
 	}
 	defer tx.Rollback(ctx)
-	n, err := scanNode(tx.QueryRow(ctx, "SELECT data,registered FROM ctl_nodes WHERE enrollment_hash=$1 AND enrollment_expires>now() FOR UPDATE", hash))
-	if errors.Is(err, domain.ErrNotFound) {
-		err = domain.ErrUnauthorized
+	// DELETE serializes concurrent redemption; node creation commits with consumption.
+	var consumed string
+	err = tx.QueryRow(ctx, "DELETE FROM ctl_node_enrollments WHERE hash=$1 AND expires_at>now() RETURNING hash", hash).Scan(&consumed)
+	discovered := err == nil
+	var n domain.Node
+	if errors.Is(err, pgx.ErrNoRows) {
+		n, err = scanNode(tx.QueryRow(ctx, "SELECT data,registered FROM ctl_nodes WHERE enrollment_hash=$1 AND enrollment_expires>now() FOR UPDATE", hash))
+		if errors.Is(err, domain.ErrNotFound) {
+			err = domain.ErrUnauthorized
+		}
 	}
 	if err != nil {
 		return "", "", err
+	}
+	if discovered {
+		n = domain.Node{ID: domain.NewID(), CreatedAt: time.Now().UTC(), PendingAuthorization: true}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			name = "node-" + n.ID[:8]
+		}
+		n.NodeInput = normalizeNode(domain.NodeInput{Name: name, Enabled: true})
 	}
 	raw, err := auth.NewToken()
 	if err != nil {
@@ -168,7 +216,15 @@ func (s *Store) EnrollNode(ctx context.Context, hash, agent, platform string) (s
 	n.Online = false
 	n.LastSeen = nil
 	data, _ := json.Marshal(n)
-	if _, err = tx.Exec(ctx, "UPDATE ctl_nodes SET data=$2,token_hash=$3,enrollment_hash=NULL,enrollment_expires=NULL,registered=true WHERE id=$1", n.ID, data, auth.HashToken(raw)); err != nil {
+	if discovered {
+		_, err = tx.Exec(ctx, "INSERT INTO ctl_nodes(id,data,token_hash,registered) VALUES($1,$2,$3,true)", n.ID, data, auth.HashToken(raw))
+	} else {
+		_, err = tx.Exec(ctx, "UPDATE ctl_nodes SET data=$2,token_hash=$3,enrollment_hash=NULL,enrollment_expires=NULL,registered=true WHERE id=$1", n.ID, data, auth.HashToken(raw))
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if err = audit(ctx, tx, n.ID, "node.enroll", "", "", nil); err != nil {
 		return "", "", err
 	}
 	return n.ID, raw, tx.Commit(ctx)

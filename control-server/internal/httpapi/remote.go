@@ -16,6 +16,7 @@ func (s *Server) remoteRoutes() {
 	m := s.mux
 	m.HandleFunc("GET /api/v1/nodes", s.wrap(s.nodes))
 	m.HandleFunc("POST /api/v1/nodes", s.wrap(s.createNode))
+	m.HandleFunc("POST /api/v1/node-enrollments", s.wrap(s.createNodeEnrollment))
 	m.HandleFunc("PATCH /api/v1/nodes/{id}", s.wrap(s.updateNode))
 	m.HandleFunc("POST /api/v1/nodes/{id}/enrollment", s.wrap(s.rotateNodeEnrollment))
 	m.HandleFunc("GET /api/v1/projects/{slug}/nodes", s.wrap(s.projectNodes))
@@ -44,6 +45,21 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request, p auth.Principal)
 		return err
 	}
 	reply(w, 200, nodes)
+	return nil
+}
+func (s *Server) createNodeEnrollment(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	if err := owner(p); err != nil {
+		return err
+	}
+	var in struct{}
+	if err := decode(w, r, &in); err != nil {
+		return err
+	}
+	token, expires, err := s.store.CreateNodeEnrollment(r.Context(), p.ID)
+	if err != nil {
+		return err
+	}
+	reply(w, 201, map[string]any{"enrollment_token": token, "expires_at": expires})
 	return nil
 }
 func (s *Server) createNode(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
@@ -190,11 +206,12 @@ func (s *Server) enrollNode(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
 		AgentVersion string `json:"agent_version"`
 		Platform     string `json:"platform"`
+		Name         string `json:"name"`
 	}
 	if err = decode(w, r, &in); err != nil {
 		return err
 	}
-	id, raw, err := s.store.EnrollNode(r.Context(), auth.HashToken(token), in.AgentVersion, in.Platform)
+	id, raw, err := s.store.EnrollNodeNamed(r.Context(), auth.HashToken(token), in.AgentVersion, in.Platform, in.Name)
 	if err != nil {
 		return err
 	}

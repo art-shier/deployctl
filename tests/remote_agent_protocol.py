@@ -76,10 +76,16 @@ def main():
 
         nodes = []
         for index in range(2):
-            created = owner.json('POST', '/api/v1/nodes', {'name': f'node-{index}', 'groups': ['default'],
-                'projects': [], 'excluded_projects': [], 'environments': ['prod']})
+            created = owner.json('POST', '/api/v1/node-enrollments', {})
+            assert len(owner.json('GET', '/api/v1/nodes')) == index
             home = base / f'node-{index}'
             node_id = enroll(identity['origin'], created['enrollment_token'], home)
+            discovered = next(n for n in owner.json('GET', '/api/v1/nodes') if n['id'] == node_id)
+            assert discovered['pending_authorization'] and not discovered['projects'] and not discovered['groups']
+            assert discovered['name']
+            granted = owner.json('PATCH', f'/api/v1/nodes/{node_id}', {'name': f'node-{index}', 'enabled': True,
+                'groups': ['default'], 'projects': [], 'excluded_projects': [], 'environments': ['prod']})
+            assert not granted['pending_authorization']
             credential = read_json(home / 'node.json')
             client = PlatformClient(Credentials(credential['server'], credential['token']))
             driver = DockerFixture()

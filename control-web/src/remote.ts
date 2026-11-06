@@ -4,6 +4,7 @@ export interface DeploymentNode {
   id: string;
   name: string;
   enabled: boolean;
+  pending_authorization?: boolean;
   groups: string[];
   projects: string[];
   excluded_projects: string[];

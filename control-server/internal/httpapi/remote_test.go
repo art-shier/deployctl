@@ -43,7 +43,7 @@ func TestRemoteHTTPEnrollmentIdentityBoundary(t *testing.T) {
 		s.ServeHTTP(w, r)
 		return w
 	}
-	w := call("POST", "/api/v1/nodes", "owner", `{"name":"host","groups":[],"projects":["notes"],"excluded_projects":[],"environments":["prod"]}`)
+	w := call("POST", "/api/v1/node-enrollments", "owner", `{}`)
 	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -53,7 +53,11 @@ func TestRemoteHTTPEnrollmentIdentityBoundary(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	w = call("POST", "/api/v1/node/enroll", created.EnrollmentToken, `{"agent_version":"test","platform":"linux"}`)
+	nodes, err := db.ListNodes(context.Background())
+	if err != nil || len(nodes) != 0 {
+		t.Fatal("credential created a node", nodes, err)
+	}
+	w = call("POST", "/api/v1/node/enroll", created.EnrollmentToken, `{"name":"discovered-host","agent_version":"test","platform":"linux"}`)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -61,6 +65,10 @@ func TestRemoteHTTPEnrollmentIdentityBoundary(t *testing.T) {
 		Token string `json:"token"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &identity)
+	w = call("POST", "/api/v1/node-enrollments", identity.Token, `{}`)
+	if w.Code != 401 {
+		t.Fatal("node minted enrollment credential", w.Code)
+	}
 	for _, path := range []string{"/api/v1/me", "/api/v1/nodes", "/api/v1/projects", "/api/v1/tokens"} {
 		w = call("GET", path, identity.Token, "")
 		if w.Code != 401 {
