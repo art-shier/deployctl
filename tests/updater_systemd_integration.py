@@ -25,7 +25,7 @@ BUNDLE=ROOT/'skills/team-deploy/assets/deployctl.pyz'
 sys.path.insert(0,str(BUNDLE))
 from deployctl import bootstrap
 from deployctl.node_agent import read_json
-from deployctl.updater import Host, Updater, private_directory
+from deployctl.updater import Host, Updater, private_directory, trusted
 
 
 class Center(BaseHTTPRequestHandler):
@@ -58,7 +58,32 @@ class Center(BaseHTTPRequestHandler):
 
 
 def command(*args):
-    return subprocess.run(args,check=True,capture_output=True,text=True,timeout=60)
+    try:
+        return subprocess.run(args,check=True,capture_output=True,text=True,timeout=60)
+    except subprocess.CalledProcessError as error:
+        print('Fixture child failed with exit code',error.returncode,file=sys.stderr)
+        print('Child stdout:',(error.stdout or '')[:4096],file=sys.stderr)
+        print('Child stderr:',(error.stderr or '')[:4096],file=sys.stderr)
+        selected_python=shutil.which('python3')
+        if selected_python:
+            print('Fixture child shebang Python:',selected_python,file=sys.stderr)
+            try:
+                trusted(Path(selected_python).resolve())
+            except (ValueError,OSError) as reason:
+                print('Fixture child Python trust check:',str(reason)[:512],file=sys.stderr)
+        # Only disposable unit names selected locally by this fixture are inspected.
+        for flag in ('--service-name','--updater-service'):
+            if flag not in args: continue
+            name=args[args.index(flag)+1]
+            for diagnostic in (['systemctl','show',name,'--property=FragmentPath,ActiveState,SubState,MainPID,ExecMainStatus,ExecStart'],
+                               ['journalctl','--unit',name,'--no-pager','--lines=30']):
+                try:
+                    result=subprocess.run(diagnostic,capture_output=True,text=True,timeout=15)
+                    print('Fixture service diagnostic:',name,diagnostic[0],
+                          result.stdout[:4096],result.stderr[:1024],file=sys.stderr)
+                except (OSError,subprocess.SubprocessError):
+                    print('Fixture service diagnostic unavailable:',name,file=sys.stderr)
+        raise
 
 
 def candidate(source,output,version,fail_agent=False):

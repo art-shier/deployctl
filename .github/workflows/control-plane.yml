@@ -41,6 +41,8 @@ jobs:
           python-version: '3.12'
       - name: Python Agent protocol dependencies
         run: python -m pip install PyYAML==6.0.3
+      - name: Independent updater with real systemd Agent restart and recovery
+        run: sudo env CTL_DISPOSABLE_SYSTEMD_FIXTURE=1 /usr/bin/python3 tests/updater_systemd_integration.py
       - name: Real PostgreSQL transactions, crypto and permissions
         working-directory: control-server
         env:
@@ -124,8 +126,6 @@ jobs:
           docker exec "$CTL_POSTGRES_CONTAINER" createdb -U postgres ctl_docker_e2e
           CTL_FIXTURE_DATABASE_URL='postgres://postgres:fixture-only@127.0.0.1:5432/ctl_docker_e2e?sslmode=disable' \
             python tests/control_plane_integration.py
-      - name: Independent updater with real systemd Agent restart and recovery
-        run: sudo env CTL_DISPOSABLE_SYSTEMD_FIXTURE=1 /usr/bin/python3 tests/updater_systemd_integration.py
       - name: Build and repeat actual platform bootstrap
         run: |
           docker build -f control-deploy/Dockerfile -t ctl-platform-ci .

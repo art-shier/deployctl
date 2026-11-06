@@ -83,8 +83,9 @@ def test_setup_rejects_saved_updater_path_mismatch_before_enrollment(tmp_path, m
 
 def test_setup_refuses_unfinished_journal_without_mutating_identity(tmp_path, monkeypatch):
     args = setup_fixture(tmp_path, monkeypatch)
-    journal = Path(args.home)/'jobs'/('c'*32)
-    updater.private_directory(journal)
+    home = updater.private_directory(args.home)
+    jobs = updater.private_directory(home/'jobs')
+    journal = updater.private_directory(jobs/('c'*32))
     updater.write_json(journal/'journal.json', {'stage':'installing'})
     with pytest.raises(ValueError, match='unfinished'):
         updater.setup(args)
@@ -276,7 +277,8 @@ def test_setup_contention_refuses_active_update_without_waiting(tmp_path, monkey
     from deployctl.runtime import service_lock
     setup_fixture(tmp_path, monkeypatch)
     home=updater.private_directory(tmp_path/'updater')
-    journal=updater.private_directory(home/'jobs'/('c'*32))
+    jobs=updater.private_directory(home/'jobs')
+    journal=updater.private_directory(jobs/('c'*32))
     updater.write_json(journal/'journal.json',{'stage':'installing'})
     with service_lock(home/'.setup.lock'):
         with pytest.raises(ValueError,match='unfinished'):
@@ -302,10 +304,29 @@ def test_agent_install_refuses_active_update_before_service_commands(tmp_path, m
     original_trusted=updater.trusted
     monkeypatch.setattr(updater,'trusted',lambda path,**kwargs:unit if str(path).replace('\\','/').endswith('/etc/systemd/system/ctl-agent.service') else original_trusted(path,**kwargs))
     monkeypatch.setattr(node_agent,'service_unit',lambda *args:'fixture service')
-    journal=updater.private_directory(Path(local.home)/'jobs'/('c'*32))
+    home=updater.private_directory(local.home)
+    jobs=updater.private_directory(home/'jobs')
+    journal=updater.private_directory(jobs/('c'*32))
     updater.write_json(journal/'journal.json',{'stage':'installing'})
     monkeypatch.setattr(updater.Host,'command',lambda *args,**kwargs:pytest.fail('changed Agent service during active update'))
     before=(Path(args.home)/'node.json').read_bytes()
     with pytest.raises(RuntimeError,match='Agent service not ready'):
         node_agent.install(args)
     assert (Path(args.home)/'node.json').read_bytes()==before
+
+
+def test_linux_fixture_command_preserves_bounded_child_failure_diagnostics(capsys, monkeypatch):
+    import importlib.util
+    import subprocess
+    import sys
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    path=Path(__file__).with_name('updater_systemd_integration.py')
+    spec=importlib.util.spec_from_file_location('updater_systemd_fixture',path)
+    fixture=importlib.util.module_from_spec(spec); spec.loader.exec_module(fixture)
+    script="import sys; print('child stdout evidence'); print('child stderr evidence'+ 'x'*10000,file=sys.stderr); raise SystemExit(7)"
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        fixture.command(sys.executable,'-c',script)
+    assert error.value.returncode==7
+    output=capsys.readouterr().err
+    assert 'child stdout evidence' in output and 'child stderr evidence' in output
+    assert len(output)<9000
