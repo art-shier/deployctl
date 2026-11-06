@@ -16,8 +16,6 @@ import sys
 import tempfile
 import threading
 import time
-import traceback
-from types import SimpleNamespace
 import uuid
 import zipfile
 
@@ -27,7 +25,7 @@ BUNDLE=ROOT/'skills/team-deploy/assets/deployctl.pyz'
 sys.path.insert(0,str(BUNDLE))
 from deployctl import bootstrap
 from deployctl.node_agent import read_json
-from deployctl.updater import Host, Updater, private_directory, trusted, setup
+from deployctl.updater import Host, Updater, private_directory
 
 
 class Center(BaseHTTPRequestHandler):
@@ -66,13 +64,6 @@ def command(*args):
         print('Fixture child failed with exit code',error.returncode,file=sys.stderr)
         print('Child stdout:',(error.stdout or '')[:4096],file=sys.stderr)
         print('Child stderr:',(error.stderr or '')[:4096],file=sys.stderr)
-        selected_python=shutil.which('python3')
-        if selected_python:
-            print('Fixture child shebang Python:',selected_python,file=sys.stderr)
-            try:
-                trusted(Path(selected_python).resolve())
-            except (ValueError,OSError) as reason:
-                print('Fixture child Python trust check:',str(reason)[:512],file=sys.stderr)
         # Only disposable unit names selected locally by this fixture are inspected.
         for flag in ('--service-name','--updater-service'):
             if flag not in args: continue
@@ -86,17 +77,6 @@ def command(*args):
                 except (OSError,subprocess.SubprocessError):
                     print('Fixture service diagnostic unavailable:',name,file=sys.stderr)
         raise
-
-
-def diagnose_setup(args):
-    # This runs only after the disposable install failed. Fixture credentials
-    # are synthetic, so retain the underlying cause hidden by public CLI output.
-    try:
-        setup(args)
-    except (ValueError,RuntimeError,OSError,subprocess.SubprocessError):
-        print('Fixture underlying updater setup failure:\n'+traceback.format_exc(limit=12)[-8192:],file=sys.stderr)
-    else:
-        print('Fixture diagnostic updater setup retry succeeded',file=sys.stderr)
 
 
 def candidate(source,output,version,fail_agent=False):
@@ -175,13 +155,7 @@ def main():
                 '--root',str(root/'apps'),'--config-root',str(root/'config'),'--executable',str(executable),
                 '--service-name',unit_name,'--updater-home',str(integrated_home),'--updater-service',updater_name]
             try:
-                try:
-                    command(*install_args,'--token-file',str(token_file))
-                except subprocess.CalledProcessError:
-                    diagnose_setup(SimpleNamespace(kind='node',home=str(integrated_home),cli_path=str(executable),
-                        agent_home=str(agent_home),agent_service=unit_name,server_home='/opt/ctl-platform',
-                        service_name=updater_name))
-                    raise
+                command(*install_args,'--token-file',str(token_file))
                 identity_before=(agent_home/'node.json').read_bytes()
                 updater_before=(integrated_home/'updater.json').read_bytes()
                 token_file.unlink()

@@ -332,15 +332,50 @@ def test_linux_fixture_command_preserves_bounded_child_failure_diagnostics(capsy
     assert len(output)<9000
 
 
-def test_linux_fixture_exposes_underlying_setup_exception(capsys, monkeypatch):
-    import importlib.util
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
-    path=Path(__file__).with_name('updater_systemd_integration.py')
-    spec=importlib.util.spec_from_file_location('updater_setup_diagnostic_fixture',path)
-    fixture=importlib.util.module_from_spec(spec); spec.loader.exec_module(fixture)
-    def fail(args): raise ValueError('fixture underlying private path ownership failure')
-    monkeypatch.setattr(fixture,'setup',fail)
-    fixture.diagnose_setup(SimpleNamespace())
-    output=capsys.readouterr().err
-    assert 'ValueError' in output and 'fixture underlying private path ownership failure' in output
-    assert 'Traceback' in output and len(output)<9000
+@pytest.mark.parametrize('kind', ['node','center'])
+@pytest.mark.parametrize('entry', ['setup','enroll'])
+@pytest.mark.parametrize('unsafe_actual', [False,True])
+def test_updater_validates_only_its_actual_role_home_before_credentials(tmp_path, monkeypatch, kind, entry, unsafe_actual):
+    args=setup_fixture(tmp_path,monkeypatch,kind)
+    unused=tmp_path/'unsafe-unused-role'
+    if kind=='node': args.server_home=str(unused)
+    else:
+        args.agent_home=str(unused)
+        center=updater.private_directory(args.server_home)
+        updater.write_json(center/'instance.json',{'origin':'https://center.test','api_port':8091,'external_database':False})
+        keys=updater.private_directory(center/'keys')
+        (keys/'owner.token').write_text('fixture_private_owner_credential'); (keys/'owner.token').chmod(0o600)
+        monkeypatch.setattr(updater.server_bundle,'private',lambda path:path)
+        monkeypatch.setattr(updater,'read_platform_key',updater.read_private)
+        monkeypatch.setattr(updater.Host,'center_state',lambda self:{'pending':None,'current':{'version':'v1.15.0'}})
+    actual=Path(args.agent_home if kind=='node' else args.server_home)
+    def trust(path,**kwargs):
+        path=Path(path).absolute()
+        if path==unused: raise ValueError('unused role directory must never be inspected')
+        if path==actual and unsafe_actual: raise ValueError('unsafe actual role home')
+        return path
+    monkeypatch.setattr(updater,'trusted',trust)
+    calls=[]
+    class Client:
+        def __init__(self,credentials): pass
+        def json(self,method,path,body):
+            calls.append(path)
+            if path=='/api/v1/updater/enroll':
+                return {'updater_id':'b'*32,'token':'dedicated_updater_credential','kind':kind,
+                    'target_id':'a'*32 if kind=='node' else 'center'}
+            return {'enrollment_token':'temporary_enrollment_credential'}
+    monkeypatch.setattr(updater,'PlatformClient',Client)
+    def run():
+        if entry=='setup': updater.setup(args)
+        else:
+            args.server='https://center.test'; args.target_id='a'*32 if kind=='node' else 'center'
+            updater.enroll(args,'temporary_enrollment_credential')
+    if unsafe_actual:
+        with pytest.raises(ValueError,match='unsafe actual role home'): run()
+        assert calls==[]
+    else:
+        run()
+        config=updater.read_json(Path(args.home)/'updater.json')
+        assert config['server_home' if kind=='node' else 'agent_home']==str(unused.absolute())
+        assert config['kind']==kind
+        assert config['target_id']==('a'*32 if kind=='node' else 'center')

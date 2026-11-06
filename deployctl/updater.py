@@ -546,9 +546,11 @@ def enroll(args,token, transport=None):
                 if not record.get('acknowledged') or record.get('report',{}).get('status') not in TERMINAL:
                     raise ValueError('unfinished updater journal prevents identity replacement')
         config=dict(kind=args.kind,target_id=args.target_id,cli_path=str(trusted(args.cli_path)),
-                    agent_home=str(trusted(args.agent_home,private=True)),agent_service=args.agent_service,
-                    server_home=str(trusted(args.server_home,private=True)),server=validate_origin(args.server),
+                    agent_home=str(Path(args.agent_home).absolute()),agent_service=args.agent_service,
+                    server_home=str(Path(args.server_home).absolute()),server=validate_origin(args.server),
                     python=str(trusted(Path(sys.executable).resolve())))
+        role_home = 'agent_home' if args.kind == 'node' else 'server_home'
+        config[role_home] = str(trusted(config[role_home], private=True))
         existing=home/'updater.json'
         if existing.exists():
             previous=read_json(existing)
@@ -621,16 +623,18 @@ def setup(args):
     name = args.service_name or 'ctl-updater-'+args.kind+'.service'
     validate_service_name(name)
     args.cli_path = str(trusted(args.cli_path))
-    args.agent_home = str(trusted(args.agent_home, private=True))
-    args.server_home = str(trusted(args.server_home, private=True))
+    args.agent_home = str(Path(args.agent_home).absolute())
+    args.server_home = str(Path(args.server_home).absolute())
     release_version(installer_identity(args.cli_path)['version'])
     # Validate locally fixed paths before requesting any credential.
     if args.kind == 'node':
+        args.agent_home = str(trusted(args.agent_home, private=True))
         identity = read_json(Path(args.agent_home)/'node.json')
         args.target_id = identity.get('node_id')
         validate_id(args.target_id)
         args.server = validate_origin(identity.get('server'))
     else:
+        args.server_home = str(trusted(args.server_home, private=True))
         instance = server_bundle.read_instance(Path(args.server_home))
         args.server = validate_origin(instance.get('origin'))
         args.target_id = 'center'
