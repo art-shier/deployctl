@@ -48,7 +48,7 @@ sudo systemctl status ctl-updater-center
 
 高级 `ctl updater enroll/service/install/run` 命令保留兼容，但不属于正常安装流程。以前手动配置过更新器的主机，修复时要明确指定原 home 和服务名，避免创建第二个更新服务。中心的内部自动升级过程不会递归安装或重启自己的更新器。
 
-## 版本清单与主动同步（1.16.0 起）
+## 版本清单与主动同步（1.16.1 起）
 
 中心从官方 Release 的 `update-index.json` 静态附件读取版本号、发布时间和安装包 SHA256，不再通过 GitHub REST API 查询版本列表。首次安装中心所用的 CLI 也通过静态清单发现最新正式版本；指定版本时使用固定版本的发布文件。
 
