@@ -6,6 +6,7 @@ test("actual API project, secret, conflict, credential and logout", async ({
   const token = process.env.CTL_OWNER_TOKEN;
   if (!token) throw new Error("temporary owner fixture required");
   await page.goto("/");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByLabel("管理员凭据").fill(token);
   await page.getByRole("button", { name: "进入管理台" }).click();
   await page.getByRole("link", { name: "全部项目", exact: true }).click();
@@ -164,6 +165,7 @@ test("actual API project, secret, conflict, credential and logout", async ({
   await page.getByRole("button", { name: "已保存，关闭展示" }).click();
   await expect(page.getByTestId("new-token")).toHaveCount(0);
   await page.getByRole("button", { name: "退出" }).click();
-  await expect(page.getByLabel("管理员凭据")).toBeVisible();
+  await expect(page.getByRole("button", { name: "登录", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   expect((await page.request.get("/api/v1/me")).status()).toBe(401);
 });

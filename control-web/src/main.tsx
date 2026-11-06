@@ -42,6 +42,7 @@ import {
   overrideVariable,
   type DraftRow,
 } from "./environmentForm";
+import { LandingPage } from "./LandingPage";
 import { CredentialForm } from "./CredentialForm";
 import { RemoveResource } from "./RemoveResource";
 import { ImagesView } from "./ImagesView";
@@ -219,6 +220,7 @@ function Modal({
 function App() {
   const [session, setSession] = useState<"loading" | "in" | "out">("loading"),
     [sessionError, setSessionError] = useState(""),
+    [loginOpen, setLoginOpen] = useState(false),
     [token, setToken] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -258,11 +260,14 @@ function App() {
   };
   const login = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError("");
     try {
       await api("/session", send("POST", { token }));
       setToken("");
+      setLoginOpen(false);
+      setSessionError("");
       setSession("in");
     } catch (e) {
       setError(message(e));
@@ -276,6 +281,8 @@ function App() {
     try {
       await api("/session", { method: "DELETE" });
       setSession("out");
+      setLoginOpen(false);
+      setSessionError("");
       setToken("");
       navigate("groups");
     } catch (e) {
@@ -290,41 +297,50 @@ function App() {
     );
   if (session === "out")
     return (
-      <div className="login-layout">
-        <div className="login-card">
-          <div className="brand">
-            <Terminal size={25} />
-            <span>
-              ctl<span className="brand-dot">.</span>
-            </span>
+      <>
+        <LandingPage login={() => setLoginOpen(true)} />
+        {sessionError && (
+          <div className="landing-session-error">
+            <ErrorMessage text={sessionError} />
           </div>
-          <p className="eyebrow">DEPLOYMENT CONTROL</p>
-          <h1>让部署回归简单。</h1>
-          <p className="muted">在一个地方管理项目、发布版本与环境配置。</p>
-          <form onSubmit={login}>
-            <label>
-              管理员凭据
-              <input
-                type="password"
-                autoComplete="off"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                required
-                placeholder="输入 owner token"
-              />
-            </label>
-            <ErrorMessage text={error || sessionError} />
-            <button className="primary wide" disabled={busy}>
-              {busy ? "正在登录…" : "进入管理台"}
-              <ChevronRight size={18} />
-            </button>
-          </form>
-          <p className="small muted">
-            <ShieldCheck size={14} />
-            凭据仅用于建立会话，不保存在浏览器。
-          </p>
-        </div>
-      </div>
+        )}
+        {loginOpen && (
+          <Modal
+            title="登录管理台"
+            close={() => {
+              if (busy) return;
+              setLoginOpen(false);
+              setToken("");
+              setError("");
+            }}
+          >
+            <p className="muted">使用管理员凭据，进入部署工作台。</p>
+            <form className="login-modal-form" onSubmit={login}>
+              <label>
+                管理员凭据
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  required
+                  disabled={busy}
+                  placeholder="输入 owner token"
+                />
+              </label>
+              <ErrorMessage text={error} />
+              <button className="primary wide" disabled={busy}>
+                {busy ? "正在登录…" : "进入管理台"}
+                <ChevronRight size={18} />
+              </button>
+            </form>
+            <p className="login-privacy">
+              <ShieldCheck size={14} />
+              凭据仅用于建立会话，不保存在浏览器。
+            </p>
+          </Modal>
+        )}
+      </>
     );
   const selected = page.startsWith("project/") ? page.split("/")[1] : null;
   const groupSlug = page.startsWith("group/") ? page.split("/")[1] : undefined;
@@ -364,7 +380,10 @@ function App() {
             <Terminal size={18} />
             Agent 接入
           </a>
-          <a href="#system-updates" className={page === "system-updates" ? "active" : ""}>
+          <a
+            href="#system-updates"
+            className={page === "system-updates" ? "active" : ""}
+          >
             <RefreshCw size={18} />
             系统更新
           </a>
@@ -975,7 +994,9 @@ function ProjectView({
       <div className="tabs" role="tablist" aria-label="项目内容">
         {tabs
           .filter(
-            ([id]) => project.deployment_type !== "static" || (id !== "images" && id !== "deployments"),
+            ([id]) =>
+              project.deployment_type !== "static" ||
+              (id !== "images" && id !== "deployments"),
           )
           .map(([id, label]) => (
             <button
@@ -998,7 +1019,14 @@ function ProjectView({
         ) : tab === "environments" ? (
           <EnvironmentsView project={project} />
         ) : tab === "deployments" ? (
-          project.deployment_type === "static" ? <p className="notice">静态项目请使用 ctl install / upgrade / rollback 部署；远程节点目前支持 Docker 项目。</p> : <ProjectDeployments project={project} />
+          project.deployment_type === "static" ? (
+            <p className="notice">
+              静态项目请使用 ctl install / upgrade / rollback
+              部署；远程节点目前支持 Docker 项目。
+            </p>
+          ) : (
+            <ProjectDeployments project={project} />
+          )
         ) : (
           <ReceiptsView slug={slug} />
         )}

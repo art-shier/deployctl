@@ -10,6 +10,7 @@ test("static project creation, release upload and directory inheritance through 
   if (!owner) throw new Error("disposable owner fixture required");
   const slug = `static-${Date.now().toString(36)}`;
   await page.goto("/");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByLabel("管理员凭据").fill(owner);
   await page.getByRole("button", { name: "进入管理台" }).click();
   await page.goto("/#group/default");
