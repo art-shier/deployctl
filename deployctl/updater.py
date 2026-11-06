@@ -353,12 +353,7 @@ class Host:
 
     def prepare(self,job,directory):
         tag=job['version']; release_version(tag)
-        # Independently reject a draft/prerelease even if catalog pins its digest.
-        raw=bootstrap.fetch(Request('https://api.github.com/repos/art-shier/deployctl/releases/tags/'+tag,
-            headers={'Accept':'application/vnd.github+json','User-Agent':'ctl-updater'}),1024*1024)
-        release=json.loads(raw)
-        if release.get('tag_name')!=tag or release.get('draft') is not False or release.get('prerelease') is not False:
-            raise ValueError('release is not an official stable publication')
+        # Validated center jobs carry catalog-pinned hashes, including cached releases.
         name='deployctl.pyz' if self.kind=='node' else 'ctl-platform-'+tag+'.tar.gz'
         limit=bootstrap.MAX_DOWNLOAD if self.kind=='node' else server_bundle.MAX_EXPANDED
         content=bootstrap.fetch(Request('https://github.com/art-shier/deployctl/releases/download/'+tag+'/'+name),limit)

@@ -12,6 +12,7 @@ fi
 """Standalone stdlib-only GitHub Release installer; embedded into install.sh."""
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -27,6 +28,10 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 DEFAULT_REPOSITORY = 'art-shier/deployctl'
 MAX_DOWNLOAD = 10 * 1024 * 1024
+MAX_INDEX_SIZE = 1024 * 1024
+MAX_INDEX_RELEASES = 1000
+INDEX_URL = 'https://github.com/art-shier/deployctl/releases/latest/download/update-index.json'
+STABLE_TAG = re.compile(r'v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z')
 TAG = re.compile(r'v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?\Z')
 
 
@@ -70,11 +75,79 @@ def artifact_version(path):
     return value.lstrip('v')
 
 
+def utc_timestamp(value):
+    if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z', value):
+        raise ValueError('invalid release index UTC timestamp')
+    try:
+        datetime.fromisoformat(value[:-1] + '+00:00')
+    except ValueError as exc:
+        raise ValueError('invalid release index UTC timestamp') from exc
+    return value
+
+
+def unique_json_fields(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError('duplicate release index JSON field')
+        value[key] = item
+    return value
+
+
+def parse_release_index(raw):
+    if len(raw) > MAX_INDEX_SIZE:
+        raise ValueError('release index exceeds size limit')
+    try:
+        value = json.loads(raw, object_pairs_hook=unique_json_fields)
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        raise ValueError('invalid release index JSON') from exc
+    if (not isinstance(value, dict) or set(value) != {'schema_version', 'generated_at', 'releases'}
+            or type(value['schema_version']) is not int or value['schema_version'] != 1):
+        raise ValueError('unsupported release index manifest')
+    utc_timestamp(value['generated_at'])
+    releases = value['releases']
+    if not isinstance(releases, list) or len(releases) > MAX_INDEX_RELEASES:
+        raise ValueError('invalid release index count')
+    seen = set()
+    for item in releases:
+        if (not isinstance(item, dict) or set(item) != {'version', 'published_at', 'cli_sha256', 'server_sha256'}
+                or not isinstance(item['version'], str) or not STABLE_TAG.fullmatch(item['version'])
+                or item['version'] in seen or len(item['version']) > 96):
+            raise ValueError('invalid or duplicate release index version')
+        if any(int(part) > 4294967295 for part in item['version'][1:].split('.')):
+            raise ValueError('release index version component exceeds uint32')
+        utc_timestamp(item['published_at'])
+        for field in ('cli_sha256', 'server_sha256'):
+            if not isinstance(item[field], str) or not re.fullmatch(r'[a-f0-9]{64}', item[field]):
+                raise ValueError('invalid release index SHA256')
+        seen.add(item['version'])
+    value['releases'] = sorted(releases, key=lambda item: tuple(map(int, item['version'][1:].split('.'))), reverse=True)
+    return value
+
+
+def official_release_index():
+    return parse_release_index(fetch(Request(INDEX_URL, headers={'User-Agent': 'deployctl-installer'}), MAX_INDEX_SIZE))
+
+
 def github_release(repository, version, token, release_id=None):
     if not re.fullmatch(r'[A-Za-z0-9-]+/[A-Za-z0-9_.-]+', repository):
         raise ValueError('repository must be owner/repository')
     if version != 'latest' and not TAG.fullmatch(version):
         raise ValueError('version must be latest or a semantic version tag')
+    if repository == DEFAULT_REPOSITORY and release_id is None:
+        if version == 'latest':
+            releases = official_release_index()['releases']
+            if not releases:
+                raise ValueError('official release index is empty')
+            tag, expected = releases[0]['version'], releases[0]['cli_sha256']
+        else:
+            tag = version if version.startswith('v') else 'v' + version
+            expected = None
+        base = f'https://github.com/{repository}/releases/download/{quote(tag, safe="")}/deployctl.pyz'
+        headers = {'User-Agent': 'deployctl-installer'}
+        if expected is None:
+            expected = digest_text(fetch(Request(base + '.sha256', headers=headers), 4096).decode('utf-8'))
+        return fetch(Request(base, headers=headers), MAX_DOWNLOAD), expected, tag
     if release_id is not None:
         if not re.fullmatch(r'[1-9][0-9]*', str(release_id)) or version == 'latest':
             raise ValueError('draft release verification requires a numeric release ID and exact version')

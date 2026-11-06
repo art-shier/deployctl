@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-11-06T09:13:48Z",
+  "releases": [
+    {
+      "cli_sha256": "1758d4f1ecd5f7c071460b3af32129e3e4c587d92bc7911fb85fb5cbbfd823cb",
+      "published_at": "2026-11-06T09:13:48Z",
+      "server_sha256": "b809133a7dc7fa5f235d32e2f789613f65dd629bbe60beba4a3c5a8049cf7374",
+      "version": "v1.15.1"
+    },
+    {
+      "cli_sha256": "2ed2fe0c6a16cf2b3f814ed86cd3447321f061e398336153a7494d0bb887a3c1",
+      "published_at": "2026-11-06T08:30:19Z",
+      "server_sha256": "86ef11371a97a34360c267623571a99d6bc87d8cabd4d43dd92342888ac54f1f",
+      "version": "v1.15.0"
+    }
+  ],
+  "schema_version": 1
+}

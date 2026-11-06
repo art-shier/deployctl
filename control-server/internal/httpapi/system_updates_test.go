@@ -145,26 +145,21 @@ func TestUpdaterHTTPIdentityAndFrozenCatalog(t *testing.T) {
 func TestSystemReleaseProviderFixedOfficialURLs(t *testing.T) {
 	var paths []string
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Scheme != "https" || (r.URL.Host != "api.github.com" && r.URL.Host != "github.com") {
+		if r.URL.String() != "https://github.com/art-shier/deployctl/releases/latest/download/update-index.json" {
 			t.Fatal("unofficial", r.URL)
 		}
 		paths = append(paths, r.URL.String())
-		body := `[{"tag_name":"v1.16.0","published_at":"2026-11-01T00:00:00Z","draft":false,"prerelease":false},{"tag_name":"v9.0.0","published_at":"2026-11-01T00:00:00Z"},{"tag_name":"v1.17.0-rc.1","published_at":"2026-11-01T00:00:00Z"},{"tag_name":"v1.15.0","published_at":"2026-11-01T00:00:00Z","draft":true}]`
-		if r.URL.Host == "github.com" {
-			body = strings.Repeat("a", 64) + "  deployctl.pyz\n" + strings.Repeat("b", 64) + "  ctl-platform-v1.16.0.tar.gz\n"
-		}
+		body := catalogFixture("2026-11-01T00:00:00Z", "v1.16.0")
 		return &http.Response{StatusCode: 200, Body: ioNopCloser{strings.NewReader(body)}, Header: make(http.Header)}, nil
 	})
-	p := &githubSystemReleases{client: &http.Client{Transport: transport}}
+	p := newSystemReleaseCatalog(t.TempDir(), "", &http.Client{Transport: transport})
+	p.Sync(context.Background())
 	releases, err := p.Releases(context.Background())
 	if err != nil || len(releases) != 1 || releases[0].Version != "v1.16.0" {
 		t.Fatal(releases, err)
 	}
-	if _, err = p.Releases(context.Background()); err != nil || len(paths) != 2 {
+	if _, err = p.Releases(context.Background()); err != nil || len(paths) != 1 {
 		t.Fatal("catalog cache", paths, err)
-	}
-	if paths[1] != "https://github.com/art-shier/deployctl/releases/download/v1.16.0/SHA256SUMS" {
-		t.Fatal(paths)
 	}
 }
 
@@ -208,7 +203,7 @@ func TestUpdaterOwnerOnlyAndNodeCredentialBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := New(db, Options{OwnerHash: auth.HashToken("owner"), SystemReleases: &fixedSystemReleases{}})
-	for _, route := range []struct{ method, path string }{{"GET", "/api/v1/system-updates"}, {"GET", "/api/v1/system-updates/releases"}, {"POST", "/api/v1/system-updates/enrollments"}, {"POST", "/api/v1/system-updates/jobs"}, {"POST", "/api/v1/system-updates/jobs/" + node.ID + "/cancel"}, {"POST", "/api/v1/system-updates/jobs/" + node.ID + "/resolve"}} {
+	for _, route := range []struct{ method, path string }{{"GET", "/api/v1/system-updates"}, {"GET", "/api/v1/system-updates/releases"}, {"GET", "/api/v1/system-updates/catalog"}, {"POST", "/api/v1/system-updates/catalog/sync"}, {"POST", "/api/v1/system-updates/enrollments"}, {"POST", "/api/v1/system-updates/jobs"}, {"POST", "/api/v1/system-updates/jobs/" + node.ID + "/cancel"}, {"POST", "/api/v1/system-updates/jobs/" + node.ID + "/resolve"}} {
 		r := httptest.NewRequest(route.method, route.path, strings.NewReader(`{}`))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Authorization", "Bearer "+raw)

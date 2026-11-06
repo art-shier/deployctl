@@ -25,6 +25,7 @@ RUN apk add --no-cache ca-certificates && addgroup -g 10001 ctl && adduser -D -H
 COPY --from=server /ctl-server /usr/local/bin/ctl-server
 COPY --from=web /src/control-web/dist /app/web
 COPY --from=agent /output /app/agent
+COPY control-deploy/update-index.seed.json /app/update-index.seed.json
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=6 CMD wget -q -O /dev/null http://127.0.0.1:8080/api/v1/health/ready || exit 1

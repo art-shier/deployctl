@@ -20,8 +20,9 @@ from urllib.request import Request, ProxyHandler, HTTPRedirectHandler, build_ope
 from urllib.error import URLError
 
 from . import __version__
+from .bootstrap import INDEX_URL, MAX_INDEX_SIZE, parse_release_index
 from .contract import DIGEST_IMAGE, load_yaml, version
-from .download import acquire_release, fetch
+from .download import acquire_release, checksum, fetch
 from .runtime_snapshot import reject_links
 
 FILES = {'server-release.json', 'control-deploy/bootstrap.sh',
@@ -33,28 +34,19 @@ LOCK_HOME = Path('/run/ctl-platform-cli')
 
 
 def resolve_server_release(requested='latest'):
-    if requested != 'latest':
-        requested = requested if requested.startswith('v') else 'v' + requested
-        version(requested)
-    route = 'latest' if requested == 'latest' else 'tags/' + quote(requested, safe='')
-    headers = {'User-Agent': 'team-deployctl', 'Accept': 'application/vnd.github+json'}
-    token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
-    if token: headers['Authorization'] = 'Bearer ' + token
-    release = json.loads(fetch(Request('https://api.github.com/repos/art-shier/deployctl/releases/' + route,
-                                      headers=headers), 1024 * 1024))
-    if not isinstance(release, dict): raise ValueError('invalid official server release metadata')
-    tag = release.get('tag_name'); version(tag)
-    if requested != 'latest' and tag != requested: raise ValueError('server release version does not match requested version')
-    if release.get('draft') is not False or (requested == 'latest' and release.get('prerelease') is not False):
-        raise ValueError('server release is not a published stable version')
-    assets = release.get('assets')
-    if not isinstance(assets, list) or any(not isinstance(item, dict) for item in assets):
-        raise ValueError('invalid official server release assets')
+    expected_sha256 = None
+    if requested == 'latest':
+        index = parse_release_index(fetch(Request(INDEX_URL, headers={'User-Agent': 'team-deployctl'}), MAX_INDEX_SIZE))
+        if not index['releases']:
+            raise ValueError('official release index is empty')
+        selected = index['releases'][0]
+        tag = selected['version']
+        expected_sha256 = selected['server_sha256']
+    else:
+        tag = requested if requested.startswith('v') else 'v' + requested
+        version(tag)
     name = 'ctl-platform-' + tag + '.tar.gz'
-    for expected in (name, name + '.sha256'):
-        if sum(item.get('name') == expected for item in assets) != 1:
-            raise ValueError('official Release must contain exactly one ' + expected)
-    return f'https://github.com/art-shier/deployctl/releases/download/{quote(tag, safe="")}/{name}', tag
+    return f'https://github.com/art-shier/deployctl/releases/download/{quote(tag, safe="")}/{name}', tag, expected_sha256
 
 
 def validate_manifest(value):
@@ -269,7 +261,11 @@ def deploy_server(source=None, home='/opt/ctl-platform', expected_sha256=None, u
             selected_version = None
             if source is None:
                 with progress.stage('Resolving official ctl server Release'):
-                    source, selected_version = resolve_server_release(release_version or 'latest')
+                    source, selected_version, catalog_sha256 = resolve_server_release(release_version or 'latest')
+                    if catalog_sha256 is not None:
+                        if expected_sha256 is not None and checksum(expected_sha256) != catalog_sha256:
+                            raise ValueError('explicit checksum does not match official catalog checksum')
+                        expected_sha256 = catalog_sha256
             with progress.stage('Downloading and verifying ctl server bundle'):
                 package = acquire_release(str(source), cache, expected_sha256, progress=progress)
             manifest, content = read_bundle(package)

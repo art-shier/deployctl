@@ -25,6 +25,7 @@ import (
 
 type Config struct {
 	DatabaseURL, Listen string
+	UpdateIndexSeed     string
 	Cipher              *secrets.Cipher
 	API                 httpapi.Options
 }
@@ -142,7 +143,7 @@ func Initialize(dir string) error {
 	return writeNew(filepath.Join(dir, "owner.token"), []byte(token+"\n"), 0600)
 }
 func Load() (Config, error) {
-	c := Config{DatabaseURL: os.Getenv("CTL_DATABASE_URL"), Listen: env("CTL_LISTEN", ":8080")}
+	c := Config{DatabaseURL: os.Getenv("CTL_DATABASE_URL"), Listen: env("CTL_LISTEN", ":8080"), UpdateIndexSeed: env("CTL_UPDATE_INDEX_SEED", "/app/update-index.seed.json")}
 	if file := os.Getenv("CTL_DATABASE_URL_FILE"); file != "" {
 		if c.DatabaseURL != "" {
 			return c, errors.New("use only one database configuration source")

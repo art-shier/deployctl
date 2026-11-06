@@ -2,14 +2,8 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/art-shier/deployctl/control-server/internal/auth"
 	"github.com/art-shier/deployctl/control-server/internal/domain"
@@ -22,100 +16,11 @@ type SystemReleaseProvider interface {
 	Releases(context.Context) ([]domain.SystemRelease, error)
 }
 
-type githubSystemReleases struct {
-	client *http.Client
-	mu     sync.Mutex
-	cached []domain.SystemRelease
-	until  time.Time
-}
-
-func officialSystemReleases() SystemReleaseProvider {
-	return &githubSystemReleases{client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(r *http.Request, via []*http.Request) error {
-		if len(via) > 5 || r.URL.Scheme != "https" || (r.URL.Host != "github.com" && r.URL.Host != "release-assets.githubusercontent.com") {
-			return errors.New("release redirect rejected")
-		}
-		return nil
-	}}}
-}
-func (p *githubSystemReleases) get(ctx context.Context, url string, limit int64) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "deployctl-system-updates")
-	res, err := p.client.Do(req)
-	if err != nil {
-		return nil, errors.New("official release catalog unavailable")
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("official release catalog returned HTTP %d", res.StatusCode)
-	}
-	b, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
-	if err != nil || int64(len(b)) > limit {
-		return nil, errors.New("official release response exceeds limit")
-	}
-	return b, nil
-}
-func (p *githubSystemReleases) Releases(ctx context.Context) ([]domain.SystemRelease, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if time.Now().Before(p.until) {
-		return append([]domain.SystemRelease{}, p.cached...), nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	b, err := p.get(ctx, "https://api.github.com/repos/art-shier/deployctl/releases?per_page=100", 2*1024*1024)
-	if err != nil {
-		return nil, err
-	}
-	var releases []struct {
-		Tag        string    `json:"tag_name"`
-		Published  time.Time `json:"published_at"`
-		Draft      bool      `json:"draft"`
-		Prerelease bool      `json:"prerelease"`
-	}
-	if json.Unmarshal(b, &releases) != nil {
-		return nil, errors.New("invalid official release catalog")
-	}
-	out := []domain.SystemRelease{}
-	for _, r := range releases {
-		if r.Draft || r.Prerelease || !domain.CompatibleUpdateVersion(r.Tag) {
-			continue
-		}
-		if len(out) == 10 {
-			break
-		}
-		sums, e := p.get(ctx, "https://github.com/art-shier/deployctl/releases/download/"+r.Tag+"/SHA256SUMS", 64*1024)
-		if e != nil {
-			return nil, e
-		}
-		assets := map[string]string{}
-		for _, line := range strings.Split(string(sums), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) != 2 {
-				continue
-			}
-			name := strings.TrimPrefix(fields[1], "*")
-			if _, exists := assets[name]; exists {
-				return nil, errors.New("duplicate official release checksum")
-			}
-			assets[name] = fields[0]
-		}
-		item := domain.SystemRelease{Version: r.Tag, PublishedAt: r.Published, CLISHA256: assets["deployctl.pyz"], ServerSHA256: assets["ctl-platform-"+r.Tag+".tar.gz"]}
-		if item.Validate() != nil {
-			return nil, errors.New("official release checksums missing or invalid")
-		}
-		out = append(out, item)
-	}
-	p.cached = out
-	p.until = time.Now().Add(30 * time.Second)
-	return append([]domain.SystemRelease{}, out...), nil
-}
 func (s *Server) systemUpdateRoutes() {
 	m := s.mux
 	m.HandleFunc("GET /api/v1/system-updates/releases", s.wrap(s.systemUpdateReleases))
+	m.HandleFunc("GET /api/v1/system-updates/catalog", s.wrap(s.systemUpdateCatalog))
+	m.HandleFunc("POST /api/v1/system-updates/catalog/sync", s.wrap(s.syncSystemUpdateCatalog))
 	m.HandleFunc("GET /api/v1/system-updates", s.wrap(s.systemUpdates))
 	m.HandleFunc("POST /api/v1/system-updates/enrollments", s.wrap(s.createUpdateEnrollment))
 	m.HandleFunc("POST /api/v1/node/updater-enrollment", s.nodeWrap(s.createNodeUpdateEnrollment))

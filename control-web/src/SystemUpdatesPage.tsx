@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useCallback,
   useRef,
   useState,
   type ComponentType,
@@ -11,13 +12,14 @@ import { remoteDate, type DeploymentNode } from "./remote";
 import {
   activeUpdate,
   blockedReason,
+  catalogErrorText,
   eligibility,
   UpdateSubmission,
   updateRequestStorage,
   type UpdateDraft,
   type UpdateJob,
   type Updater,
-  type SystemRelease,
+  type ReleaseCatalog,
   type UpdateState,
 } from "./systemUpdates";
 import "./systemUpdates.css";
@@ -136,10 +138,15 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [revision, reload] = useState(0);
-  const [releases, setReleases] = useState<SystemRelease[]>([]);
+  const [catalog, setCatalog] = useState<ReleaseCatalog | null>(null);
+  const releases = catalog?.releases || [];
   const [catalogBusy, setCatalogBusy] = useState(true);
+  const [catalogSyncing, setCatalogSyncing] = useState(false);
   const [catalogError, setCatalogError] = useState("");
-  const [catalogRevision, reloadCatalog] = useState(0);
+  const [catalogNotice, setCatalogNotice] = useState("");
+  const catalogRequest = useRef<AbortController | null>(null);
+  const manualCatalogRequest = useRef(false);
+  const catalogSelectionLocked = useRef(false);
   const [requestStore] = useState(updateRequestStorage);
   const [submission] = useState(() => new UpdateSubmission(requestStore));
   const [version, setVersion] = useState(() => submission.draft?.version || "");
@@ -195,29 +202,56 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
       clearTimeout(timer);
     };
   }, [revision]);
-  useEffect(() => {
+  const loadCatalog = useCallback(async (force: boolean) => {
+    if (manualCatalogRequest.current) return;
+    catalogRequest.current?.abort();
     const controller = new AbortController();
+    catalogRequest.current = controller;
+    manualCatalogRequest.current = force;
+    setCatalogSyncing(force);
     setCatalogBusy(true);
-    setCatalogError("");
-    api<SystemRelease[]>("/system-updates/releases", {
-      signal: controller.signal,
-    })
-      .then((result) => {
-        if (!controller.signal.aborted) {
-          setReleases(result);
-          setVersion((current) =>
-            result.some((item) => item.version === current) ? current : "",
-          );
-        }
-      })
-      .catch((cause) => {
-        if (!controller.signal.aborted) setCatalogError(errorText(cause));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setCatalogBusy(false);
-      });
-    return () => controller.abort();
-  }, [catalogRevision]);
+    if (force) setCatalogNotice("");
+    try {
+      const result = await api<ReleaseCatalog>(
+        force ? "/system-updates/catalog/sync" : "/system-updates/catalog",
+        { ...(force ? send("POST", {}) : {}), signal: controller.signal },
+      );
+      if (controller.signal.aborted) return;
+      setCatalog(result);
+      setCatalogError("");
+      if (force && !result.sync_error) setCatalogNotice("清单已同步");
+      if (result.sync_error) setCatalogNotice("");
+      if (!catalogSelectionLocked.current) {
+        setVersion((current) =>
+          result.releases.some((item) => item.version === current)
+            ? current
+            : "",
+        );
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setCatalogError(errorText(cause));
+        setCatalogNotice("");
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setCatalogBusy(false);
+        setCatalogSyncing(false);
+        manualCatalogRequest.current = false;
+        catalogRequest.current = null;
+      }
+    }
+  }, []);
+  useEffect(() => {
+    void loadCatalog(false);
+    const timer = setInterval(() => {
+      if (!catalogRequest.current) void loadCatalog(false);
+    }, 30000);
+    return () => {
+      clearInterval(timer);
+      catalogRequest.current?.abort();
+    };
+  }, [loadCatalog]);
   const centerUpdater = state.updaters.find((item) => item.kind === "center");
   const targets: Target[] = [
     {
@@ -238,6 +272,10 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
   ];
   const uncertain = submission.uncertain;
   const locked = busy || uncertain;
+  catalogSelectionLocked.current = locked || !!review;
+  const catalogUnavailable = !releases.some((item) => item.version === version);
+  const catalogFailure =
+    catalogError || catalogErrorText(catalog?.sync_error || "");
   const reason = (target: Target) =>
     target.updater
       ? eligibility(target.updater, version, state.jobs, target.node)
@@ -406,27 +444,67 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
         <div className="section-heading">
           <h2>官方版本</h2>
           <button
-            disabled={catalogBusy || locked}
-            onClick={() => reloadCatalog((value) => value + 1)}
+            disabled={catalogBusy || locked || !!review}
+            onClick={() => void loadCatalog(true)}
           >
-            刷新官方版本
+            {catalogSyncing ? "正在同步…" : "立即同步清单"}
           </button>
         </div>
         <p className="muted small">
           版本来自 art-shier/deployctl 官方稳定发布，仅支持协议 1 的 1.15.0 至
           2.0.0 之前版本。建议先选择一个节点试点，再分批更新。
         </p>
-        {catalogBusy && <p role="status">正在加载官方版本…</p>}
-        {catalogError && (
-          <div className="notice error" role="alert">
-            {catalogError}
-            <button onClick={() => reloadCatalog((value) => value + 1)}>
-              重试官方版本
-            </button>
+        {catalogBusy && !catalog && <p role="status">正在加载版本清单…</p>}
+        {catalog && (
+          <div className="muted small">
+            <p>
+              清单来源：
+              <span>
+                {
+                  {
+                    bundled: "镜像内置清单",
+                    cache: "本地缓存",
+                    remote: "在线同步",
+                    none: "暂无清单",
+                  }[catalog.source]
+                }
+              </span>
+              {catalog.generated_at && (
+                <> · 清单生成于 {remoteDate(catalog.generated_at)}</>
+              )}
+            </p>
+            <p>
+              {catalog.last_success_at ? (
+                <>上次成功同步：{remoteDate(catalog.last_success_at)}</>
+              ) : (
+                <span>尚未完成在线同步</span>
+              )}
+              {catalog.last_attempt_at && (
+                <> · 上次尝试：{remoteDate(catalog.last_attempt_at)}</>
+              )}
+            </p>
+            {catalog.stale && releases.length > 0 && (
+              <p>
+                当前使用已有清单，可能不是最新版本。中心会自动重试，也可立即同步。
+              </p>
+            )}
           </div>
         )}
-        {!catalogBusy && !catalogError && !releases.length && (
-          <p className="notice">暂无兼容的官方发布版本。</p>
+        {catalogNotice && (
+          <p className="notice" role="status">
+            {catalogNotice}
+          </p>
+        )}
+        {catalogFailure && (
+          <div className="notice error" role="alert">
+            {catalogFailure}
+            {releases.length > 0 && (
+              <p>已保留现有版本清单，可继续选择已知版本。</p>
+            )}
+          </div>
+        )}
+        {!catalogBusy && !releases.length && (
+          <p className="notice">暂无可用的兼容版本，请点击「立即同步清单」。</p>
         )}
         <div className="form-two">
           <label>
@@ -434,7 +512,7 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
             <select
               aria-label="目标版本"
               value={version}
-              disabled={locked || catalogBusy || !!catalogError}
+              disabled={locked || catalogBusy || !releases.length}
               onChange={(event) => {
                 setVersion(event.target.value);
                 setSelected([]);
@@ -535,7 +613,7 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
                           (!selected.includes(updater.id) &&
                             (!!disabledReason ||
                               catalogBusy ||
-                              !!catalogError ||
+                              catalogUnavailable ||
                               !!loadError ||
                               selected.length >= 50))
                         }
@@ -557,7 +635,7 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
                         locked ||
                         !!disabledReason ||
                         catalogBusy ||
-                        !!catalogError ||
+                        catalogUnavailable ||
                         !!loadError
                       }
                       onClick={() => startReview("center")}
@@ -578,7 +656,7 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
               locked ||
               !validSelection ||
               catalogBusy ||
-              !!catalogError ||
+              catalogUnavailable ||
               !!loadError
             }
             onClick={() => startReview("node")}

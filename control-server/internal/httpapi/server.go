@@ -45,7 +45,7 @@ type handler func(http.ResponseWriter, *http.Request, auth.Principal) error
 
 func New(s *store.Store, o Options) *Server {
 	if o.SystemReleases == nil {
-		o.SystemReleases = officialSystemReleases()
+		o.SystemReleases = NewSystemReleaseCatalog(o.ArtifactsDir, "")
 	}
 	server := &Server{store: s, options: o, mux: http.NewServeMux(), imageUpload: make(chan struct{}, 1)}
 	m := server.mux

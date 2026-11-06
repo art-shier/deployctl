@@ -259,16 +259,9 @@ def test_center_pending_reconciliation_does_not_reinstall(tmp_path):
 
 
 def test_download_rejects_prerelease_before_artifact_fetch(tmp_path,monkeypatch):
-    import json
-    config=dict(IDENTITY,cli_path=str(tmp_path/'ctl'))
-    host=updater.Host(config)
-    calls=[]
-    def fetch(request,limit):
-        calls.append(request.full_url)
-        return json.dumps(dict(tag_name='v1.16.0',draft=False,prerelease=True)).encode()
-    monkeypatch.setattr(updater.bootstrap,'fetch',fetch)
-    with pytest.raises(ValueError): host.prepare(JOB,tmp_path)
-    assert len(calls)==1
+    host=updater.Host(dict(IDENTITY,cli_path=str(tmp_path/'ctl')))
+    monkeypatch.setattr(updater.bootstrap,'fetch',lambda *args:pytest.fail('prerelease must be rejected before network access'))
+    with pytest.raises(ValueError): host.prepare(dict(JOB,version='v1.16.0-rc1'),tmp_path)
 
 
 def test_download_uses_only_fixed_official_url_and_pinned_digest(tmp_path,monkeypatch):
@@ -277,12 +270,10 @@ def test_download_uses_only_fixed_official_url_and_pinned_digest(tmp_path,monkey
     calls=[]
     def fetch(request,limit):
         calls.append(request.full_url)
-        if len(calls)==1: return json.dumps(dict(tag_name='v1.16.0',draft=False,prerelease=False)).encode()
         return b'tampered artifact'
     monkeypatch.setattr(updater.bootstrap,'fetch',fetch)
     with pytest.raises(ValueError): host.prepare(dict(JOB,url='https://evil',command='rm -rf /'),tmp_path)
-    assert calls==['https://api.github.com/repos/art-shier/deployctl/releases/tags/v1.16.0',
-        'https://github.com/art-shier/deployctl/releases/download/v1.16.0/deployctl.pyz']
+    assert calls==['https://github.com/art-shier/deployctl/releases/download/v1.16.0/deployctl.pyz']
     assert not (tmp_path/'deployctl.pyz').exists()
 
 

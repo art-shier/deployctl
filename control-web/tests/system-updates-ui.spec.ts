@@ -20,6 +20,109 @@ const updater = (id: string, kind = "node") => ({
   online: true,
   last_seen: "2026-11-06T00:00:00Z",
 });
+
+test("manual catalog sync retains bundled versions on failure and retries immediately", async ({
+  page,
+}) => {
+  await fixture(page, {
+    catalog: {
+      source: "bundled",
+      stale: true,
+      last_success_at: null,
+      sync_error: "network_error",
+    },
+  });
+  let calls = 0;
+  await page.route("**/api/v1/system-updates/catalog/sync", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({});
+    calls++;
+    await route.fulfill({
+      json: {
+        releases,
+        source: calls === 1 ? "bundled" : "remote",
+        stale: calls === 1,
+        sync_error: calls === 1 ? "timeout" : "",
+        generated_at: "2026-11-06T00:00:00Z",
+        last_success_at: calls === 1 ? null : "2026-11-06T02:00:00Z",
+        last_attempt_at: "2026-11-06T02:00:00Z",
+        next_sync_at: null,
+      },
+    });
+  });
+  await page.goto("/#system-updates");
+  await expect(page.getByText("镜像内置清单", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("尚未完成在线同步", { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("目标版本", { exact: true }).selectOption("v1.16.0");
+  await page.getByRole("button", { name: "立即同步清单" }).click();
+  await expect(page.getByRole("alert")).toContainText("同步超时");
+  await expect(page.getByLabel("目标版本", { exact: true })).toHaveValue(
+    "v1.16.0",
+  );
+  await expect(page.getByLabel("目标版本", { exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "立即同步清单" }).click();
+  await expect(page.getByText("清单已同步", { exact: true })).toBeVisible();
+  await expect(page.getByText("在线同步", { exact: true })).toBeVisible();
+  expect(calls).toBe(2);
+});
+
+test("manual catalog sync disables repeated clicks and keeps cache on API failure", async ({
+  page,
+}) => {
+  await fixture(page, { catalog: { source: "cache", stale: true } });
+  let calls = 0;
+  let complete: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  await page.route("**/api/v1/system-updates/catalog/sync", async (route) => {
+    calls++;
+    await gate;
+    await route.fulfill({
+      status: 503,
+      json: { message: "管理服务暂时不可用" },
+    });
+  });
+  await page.goto("/#system-updates");
+  await page.getByLabel("目标版本", { exact: true }).selectOption("v1.16.0");
+  await page.getByRole("button", { name: "立即同步清单" }).click();
+  await expect(page.getByRole("button", { name: "正在同步…" })).toBeDisabled();
+  complete!();
+  await expect(page.getByRole("alert")).toContainText("管理服务暂时不可用");
+  await expect(page.getByLabel("目标版本", { exact: true })).toHaveValue(
+    "v1.16.0",
+  );
+  await expect(page.getByLabel("目标版本", { exact: true })).toBeEnabled();
+  expect(calls).toBe(1);
+});
+
+test("empty offline catalog explains failure and cannot submit an update", async ({
+  page,
+}) => {
+  await fixture(page, {
+    catalog: {
+      releases: [],
+      source: "none",
+      stale: true,
+      last_success_at: null,
+      sync_error: "invalid_manifest",
+    },
+  });
+  await page.goto("/#system-updates");
+  await expect(page.getByRole("alert")).toContainText("清单校验失败");
+  await expect(
+    page.getByText("暂无可用的兼容版本，请点击「立即同步清单」。"),
+  ).toBeVisible();
+  await expect(page.getByLabel("目标版本", { exact: true })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "审阅中心更新" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "立即同步清单" }),
+  ).toBeEnabled();
+});
 async function fixture(
   page: Page,
   options: {
@@ -28,6 +131,7 @@ async function fixture(
     uncertain?: boolean;
     role?: string;
     jobs?: any[];
+    catalog?: Record<string, unknown>;
   } = {},
 ) {
   const requests: any[] = [];
@@ -61,11 +165,26 @@ async function fixture(
           },
         ],
       });
-    if (path === "/api/v1/system-updates/releases")
+    if (
+      path === "/api/v1/system-updates/catalog" ||
+      path === "/api/v1/system-updates/catalog/sync"
+    )
       return route.fulfill(
         failed
           ? { status: 503, json: { message: "官方版本目录暂时不可用" } }
-          : { json: releases },
+          : {
+              json: {
+                releases,
+                source: "remote",
+                stale: false,
+                sync_error: "",
+                generated_at: "2026-11-06T00:00:00Z",
+                last_success_at: "2026-11-06T01:00:00Z",
+                last_attempt_at: "2026-11-06T01:00:00Z",
+                next_sync_at: null,
+                ...options.catalog,
+              },
+            },
       );
     if (path === "/api/v1/system-updates/enrollments") {
       requests.push(route.request().postDataJSON());
@@ -200,7 +319,7 @@ test("catalog error has explicit recovery and disabled update submission", async
     page.getByRole("button", { name: "审阅节点更新" }),
   ).toBeDisabled();
   f.recover();
-  await page.getByRole("button", { name: "重试官方版本" }).click();
+  await page.getByRole("button", { name: "立即同步清单" }).click();
   await expect(
     page.getByLabel("目标版本", { exact: true }).locator("option"),
   ).toHaveCount(2);

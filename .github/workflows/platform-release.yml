@@ -53,6 +53,16 @@ jobs:
           if os.environ['TAG'] != 'v' + __version__ or metadata['project']['version'] != __version__:
               raise SystemExit('Tag, deployctl version and pyproject version must match')
           PY
+      - name: Refresh published-only image catalog seed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          # Current image/package hashes do not exist yet. Seed only prior publications.
+          # Seed chronology is derived from publication metadata, never image build time.
+          python scripts/build_update_index.py --refresh-history --repo "$GITHUB_REPOSITORY" \
+            --exclude-version "$TAG" --generated-at "$(date -u +%FT%TZ)" \
+            --output control-deploy/update-index.seed.json
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -98,6 +108,15 @@ jobs:
           docker cp "$AGENT_ASSET_CONTAINER:/app/agent/assets/deployctl.pyz" "$RUNNER_TEMP/image-cli.pyz"
           cmp "$RUNNER_TEMP/image-skill.zip" "dist/team-deploy-skill-${TAG}.zip"
           cmp "$RUNNER_TEMP/image-cli.pyz" dist/deployctl.pyz
+      - name: Assemble completed candidate catalog
+        env:
+          TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          CATALOG_TIME=$(date -u +%FT%TZ)
+          # Candidate publication metadata is fixed at assembly time, after both packages exist.
+          python scripts/build_update_index.py --history control-deploy/update-index.seed.json \
+            --candidate-version "$TAG" --published-at "$CATALOG_TIME" --generated-at "$CATALOG_TIME" \
+            --artifacts dist --output dist/update-index.json --checksum
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: deployctl-${{ inputs.version || github.ref_name }}
@@ -110,6 +129,7 @@ jobs:
         run: |
           gh release create "$TAG" dist/deployctl.pyz dist/deployctl.pyz.sha256 \
             dist/install.sh dist/install.sh.sha256 dist/SHA256SUMS \
+            dist/update-index.json dist/update-index.json.sha256 \
             dist/team-deploy-skill-*.zip dist/team-deploy-skill-*.zip.sha256 \
             dist/ctl-platform-*.tar.gz dist/ctl-platform-*.tar.gz.sha256 \
             dist/*.whl dist/*.whl.sha256 \
@@ -129,6 +149,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.version || github.ref_name }}
         run: |
+          mkdir "$RUNNER_TEMP/draft-catalog"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'update-index.json*' --dir "$RUNNER_TEMP/draft-catalog"
+          (cd "$RUNNER_TEMP/draft-catalog" && sha256sum --check update-index.json.sha256)
+          cmp "$RUNNER_TEMP/draft-catalog/update-index.json" dist/update-index.json
           bash dist/install.sh --repo "$GITHUB_REPOSITORY" --version "$TAG" --release-id "$RELEASE_ID" --install-dir "$RUNNER_TEMP/installed"
           test "$("$RUNNER_TEMP/installed/ctl" --version)" = "${TAG#v}"
           test "$("$RUNNER_TEMP/installed/deployctl" --version)" = "${TAG#v}"
@@ -160,8 +184,34 @@ jobs:
           TAG: ${{ inputs.version || github.ref_name }}
         run: |
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          env -u GH_TOKEN -u GITHUB_TOKEN python - <<'PY'
+          import hashlib, os, time
+          from pathlib import Path
+          from urllib.request import Request
+          from deployctl.bootstrap import MAX_INDEX_SIZE, digest_text, fetch, parse_release_index
+          expected = Path('dist/update-index.json').read_bytes()
+          base = 'https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/releases/'
+          urls = [base + 'download/' + os.environ['TAG'] + '/update-index.json',
+                  base + 'latest/download/update-index.json']
+          for url in urls:
+              for attempt in range(12):
+                  try:
+                      raw = fetch(Request(url), MAX_INDEX_SIZE)
+                      checksum = digest_text(fetch(Request(url + '.sha256'), 4096).decode('ascii'))
+                      if raw != expected or hashlib.sha256(raw).hexdigest() != checksum:
+                          raise ValueError('public catalog or checksum has not converged')
+                      index = parse_release_index(raw)
+                      if index['releases'][0]['version'] != os.environ['TAG']:
+                          raise ValueError('public catalog does not contain the published latest version')
+                      break
+                  except (ValueError, RuntimeError):
+                      if attempt == 11:
+                          raise
+                      time.sleep(5)
+          print('Verified public fixed-tag/latest catalog and SHA256')
+          PY
           env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$RUNNER_TEMP/anonymous-gh" \
-            bash dist/install.sh --repo "$GITHUB_REPOSITORY" --version "$TAG" --install-dir "$RUNNER_TEMP/published"
+            bash dist/install.sh --repo "$GITHUB_REPOSITORY" --version latest --install-dir "$RUNNER_TEMP/published"
           test "$("$RUNNER_TEMP/published/ctl" --version)" = "${TAG#v}"
           env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$RUNNER_TEMP/anonymous-gh" PATH="$RUNNER_TEMP/published:$PATH" ctl self-update
           test "$("$RUNNER_TEMP/published/ctl" --version)" = "${TAG#v}"
