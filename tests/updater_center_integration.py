@@ -17,6 +17,7 @@ def main():
     if sys.platform!='linux' or os.geteuid()!=0 or os.environ.get('CTL_DISPOSABLE_CENTER_FIXTURE')!='1':
         raise SystemExit('requires explicit disposable Linux root center fixture')
     home=Path('/root/ctl-ci-platform')
+    executable='/root/ctl-ci-bin/ctl'
     instance=server_bundle.read_instance(home)
     if instance.get('origin')!='http://127.0.0.1:8091':
         raise SystemExit('unexpected fixture instance')
@@ -26,14 +27,16 @@ def main():
     config_path=Path('/var/lib/ctl-updater-center/updater.json')
     config_before=config_path.read_bytes()
     config=read_json(config_path)
-    if config['server']!=instance['origin'] or config['kind']!='center' or config['target_id']!='center':
+    if (config['server']!=instance['origin'] or config['kind']!='center'
+            or config['target_id']!='center' or config['cli_path']!=executable):
         raise RuntimeError('automatic center updater identity mismatch')
-    subprocess.run(['/usr/local/bin/ctl','updater','setup','--kind','center','--server-home',str(home)],check=True,timeout=60)
+    subprocess.run([executable,'updater','setup','--kind','center','--server-home',str(home),
+                    '--cli-path',executable],check=True,timeout=60)
     if config_path.read_bytes()!=config_before:raise RuntimeError('center repair rotated updater identity')
     subprocess.run(['systemctl','is-active','--quiet','ctl-updater-center.service'],check=True,timeout=30)
     before=hashlib.sha256((home/'keys/encryption.key').read_bytes()).hexdigest()
     host=Host({'kind':'center','target_id':'center','server':instance['origin'],
-               'server_home':str(home),'cli_path':'/usr/local/bin/ctl'})
+               'server_home':str(home),'cli_path':executable})
     with tempfile.TemporaryDirectory(dir='/root',prefix='ctl-center-update-fixture-') as temp:
         jobdir=private_directory(Path(temp))
         package=jobdir/source.name;package.write_bytes(content);package.chmod(0o600)

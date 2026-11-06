@@ -43,6 +43,54 @@ jobs:
         run: python -m pip install PyYAML==6.0.3
       - name: Independent updater with real systemd Agent restart and recovery
         run: sudo env CTL_DISPOSABLE_SYSTEMD_FIXTURE=1 /usr/bin/python3 tests/updater_systemd_integration.py
+      - name: Build and repeat actual platform bootstrap
+        run: |
+          docker build -f control-deploy/Dockerfile -t ctl-platform-ci .
+          docker run -d --name ctl-bundle-fixture -p 127.0.0.1:5002:5000 registry:2.8.3
+          trap 'sudo docker compose --project-name ctl-platform --env-file /root/ctl-ci-platform/compose.env -f control-deploy/compose.yaml --profile database down || true; docker rm -f -v ctl-bundle-fixture >/dev/null 2>&1 || true' EXIT
+          docker tag ctl-platform-ci 127.0.0.1:5002/ctl-server:fixture
+          docker push 127.0.0.1:5002/ctl-server:fixture
+          IMAGE=$(docker inspect --format '{{index .RepoDigests 0}}' 127.0.0.1:5002/ctl-server:fixture)
+          python scripts/build_server_bundle.py --image "$IMAGE" --version v1.8.1
+          python scripts/build_release_assets.py
+          sudo install -d -m 0700 /root/ctl-ci-bin
+          sudo /usr/bin/python3 scripts/install_deployctl.py dist/deployctl.pyz --install-dir /root/ctl-ci-bin
+          if ! sudo /root/ctl-ci-bin/ctl server install --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform \
+            --cli-path /root/ctl-ci-bin/ctl \
+            --origin http://127.0.0.1:8091 --registry-host 127.0.0.1:5091 --api-port 8091 --registry-port 5091; then
+            echo 'Disposable center updater setup diagnostic'
+            sudo /root/ctl-ci-bin/ctl updater setup --kind center --server-home /root/ctl-ci-platform \
+              --cli-path /root/ctl-ci-bin/ctl || true
+            sudo stat --format='%a %u %g %n' / /usr /usr/local /usr/local/bin \
+              /root/ctl-ci-bin /root/ctl-ci-bin/ctl /root/ctl-ci-bin/.deployctl-install.json /usr/bin/python3 /usr/bin/python3.12 \
+              /root /root/ctl-ci-platform /root/ctl-ci-platform/instance.json /root/ctl-ci-platform/keys \
+              /root/ctl-ci-platform/keys/owner.token /var /var/lib /var/lib/ctl-updater-center 2>&1 | head -c 4096 || true
+            exit 1
+          fi
+          KEY_SUM=$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)
+          UPDATER_SUM=$(sudo sha256sum /var/lib/ctl-updater-center/updater.json | cut -d ' ' -f1)
+          sudo /root/ctl-ci-bin/ctl server upgrade --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform \
+            --cli-path /root/ctl-ci-bin/ctl
+          test "$UPDATER_SUM" = "$(sudo sha256sum /var/lib/ctl-updater-center/updater.json | cut -d ' ' -f1)"
+          sudo systemctl is-active --quiet ctl-updater-center.service
+          test "$KEY_SUM" = "$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
+          curl --fail --silent http://127.0.0.1:8091/api/v1/health/ready >/dev/null
+          sudo docker exec ctl-platform-database-1 psql -U ctl -d ctl -c 'CREATE TABLE ctl_lifecycle_fixture(value integer); INSERT INTO ctl_lifecycle_fixture VALUES (42)' >/dev/null
+          sudo sh -c 'printf lifecycle > /root/ctl-ci-platform/registry/.lifecycle-fixture'
+          sudo python3 dist/deployctl.pyz server-status --home /root/ctl-ci-platform
+          sudo python3 dist/deployctl.pyz server-restart --home /root/ctl-ci-platform
+          sudo python3 dist/deployctl.pyz server-stop --home /root/ctl-ci-platform
+          test "$(sudo docker inspect --format '{{.State.Running}}' ctl-platform-api-1)" = false
+          sudo python3 dist/deployctl.pyz server-start --home /root/ctl-ci-platform
+          curl --fail --silent http://127.0.0.1:8091/api/v1/health/ready >/dev/null
+          sudo python3 dist/deployctl.pyz server-logs --home /root/ctl-ci-platform --tail 5 > "$RUNNER_TEMP/server-lifecycle.log"
+          test "$KEY_SUM" = "$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
+          test "$(sudo docker exec ctl-platform-database-1 psql -U ctl -d ctl -Atc 'SELECT value FROM ctl_lifecycle_fixture')" = 42
+          test "$(sudo cat /root/ctl-ci-platform/registry/.lifecycle-fixture)" = lifecycle
+          python scripts/build_server_bundle.py --image "$IMAGE" --version v1.16.0
+          sudo env CTL_DISPOSABLE_CENTER_FIXTURE=1 /usr/bin/python3 tests/updater_center_integration.py
+          sudo docker compose --project-name ctl-platform --env-file /root/ctl-ci-platform/compose.env \
+            -f control-deploy/compose.yaml --profile database down
       - name: Real PostgreSQL transactions, crypto and permissions
         working-directory: control-server
         env:
@@ -126,39 +174,3 @@ jobs:
           docker exec "$CTL_POSTGRES_CONTAINER" createdb -U postgres ctl_docker_e2e
           CTL_FIXTURE_DATABASE_URL='postgres://postgres:fixture-only@127.0.0.1:5432/ctl_docker_e2e?sslmode=disable' \
             python tests/control_plane_integration.py
-      - name: Build and repeat actual platform bootstrap
-        run: |
-          docker build -f control-deploy/Dockerfile -t ctl-platform-ci .
-          docker run -d --name ctl-bundle-fixture -p 127.0.0.1:5002:5000 registry:2.8.3
-          trap 'sudo docker compose --project-name ctl-platform --env-file /root/ctl-ci-platform/compose.env -f control-deploy/compose.yaml --profile database down || true; docker rm -f -v ctl-bundle-fixture >/dev/null 2>&1 || true' EXIT
-          docker tag ctl-platform-ci 127.0.0.1:5002/ctl-server:fixture
-          docker push 127.0.0.1:5002/ctl-server:fixture
-          IMAGE=$(docker inspect --format '{{index .RepoDigests 0}}' 127.0.0.1:5002/ctl-server:fixture)
-          python scripts/build_server_bundle.py --image "$IMAGE" --version v1.8.1
-          python scripts/build_release_assets.py
-          sudo /usr/bin/python3 scripts/install_deployctl.py dist/deployctl.pyz --install-dir /usr/local/bin
-          sudo /usr/local/bin/ctl server install --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform \
-            --origin http://127.0.0.1:8091 --registry-host 127.0.0.1:5091 --api-port 8091 --registry-port 5091
-          KEY_SUM=$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)
-          UPDATER_SUM=$(sudo sha256sum /var/lib/ctl-updater-center/updater.json | cut -d ' ' -f1)
-          sudo /usr/local/bin/ctl server upgrade --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform
-          test "$UPDATER_SUM" = "$(sudo sha256sum /var/lib/ctl-updater-center/updater.json | cut -d ' ' -f1)"
-          sudo systemctl is-active --quiet ctl-updater-center.service
-          test "$KEY_SUM" = "$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
-          curl --fail --silent http://127.0.0.1:8091/api/v1/health/ready >/dev/null
-          sudo docker exec ctl-platform-database-1 psql -U ctl -d ctl -c 'CREATE TABLE ctl_lifecycle_fixture(value integer); INSERT INTO ctl_lifecycle_fixture VALUES (42)' >/dev/null
-          sudo sh -c 'printf lifecycle > /root/ctl-ci-platform/registry/.lifecycle-fixture'
-          sudo python3 dist/deployctl.pyz server-status --home /root/ctl-ci-platform
-          sudo python3 dist/deployctl.pyz server-restart --home /root/ctl-ci-platform
-          sudo python3 dist/deployctl.pyz server-stop --home /root/ctl-ci-platform
-          test "$(sudo docker inspect --format '{{.State.Running}}' ctl-platform-api-1)" = false
-          sudo python3 dist/deployctl.pyz server-start --home /root/ctl-ci-platform
-          curl --fail --silent http://127.0.0.1:8091/api/v1/health/ready >/dev/null
-          sudo python3 dist/deployctl.pyz server-logs --home /root/ctl-ci-platform --tail 5 > "$RUNNER_TEMP/server-lifecycle.log"
-          test "$KEY_SUM" = "$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
-          test "$(sudo docker exec ctl-platform-database-1 psql -U ctl -d ctl -Atc 'SELECT value FROM ctl_lifecycle_fixture')" = 42
-          test "$(sudo cat /root/ctl-ci-platform/registry/.lifecycle-fixture)" = lifecycle
-          python scripts/build_server_bundle.py --image "$IMAGE" --version v1.16.0
-          sudo env CTL_DISPOSABLE_CENTER_FIXTURE=1 /usr/bin/python3 tests/updater_center_integration.py
-          sudo docker compose --project-name ctl-platform --env-file /root/ctl-ci-platform/compose.env \
-            -f control-deploy/compose.yaml --profile database down
