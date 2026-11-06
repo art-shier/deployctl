@@ -1,5 +1,6 @@
 """Independent protocol-1 host updater. Remote jobs select releases, never commands."""
 import getpass
+from contextlib import contextmanager, ExitStack
 import hashlib
 import json
 import os
@@ -582,10 +583,39 @@ def enroll(args,token, transport=None):
         return response['updater_id']
 
 
+def check_setup_journals(home):
+    jobs = trusted(Path(home)/'jobs', private=True)
+    if jobs.exists():
+        for directory in jobs.iterdir():
+            trusted(directory, private=True)
+            if directory.name.startswith('.stage-'): continue
+            record = read_json(directory/'journal.json')
+            if not record.get('acknowledged') or record.get('report', {}).get('status') not in TERMINAL:
+                raise ValueError('unfinished updater journal prevents setup')
+
+
+@contextmanager
+def setup_lock(home):
+    """Wait briefly for a heartbeat iteration, refuse executing update work."""
+    from .runtime import service_lock
+    path = trusted(Path(home)/'.setup.lock')
+    deadline = time.monotonic()+5
+    with ExitStack() as stack:
+        while True:
+            try:
+                stack.enter_context(service_lock(path))
+                break
+            except RuntimeError:
+                check_setup_journals(home)
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('updater is busy; retry setup when its current operation finishes') from None
+                time.sleep(.1)
+        yield
+
+
 def setup(args):
     """Derive a dedicated updater identity from an installed local role."""
     require_root()
-    from .runtime import service_lock
     args = SimpleNamespace(**vars(args))
     args.home = str(trusted(args.home or '/var/lib/ctl-updater-'+args.kind, private=True))
     name = args.service_name or 'ctl-updater-'+args.kind+'.service'
@@ -605,17 +635,8 @@ def setup(args):
         args.server = validate_origin(instance.get('origin'))
         args.target_id = 'center'
     home = private_directory(args.home)
-    trusted(home/'.setup.lock')
-    with service_lock(home/'.setup.lock'):
-        jobs = home/'jobs'
-        trusted(jobs, private=True)
-        if jobs.exists():
-            for directory in jobs.iterdir():
-                trusted(directory, private=True)
-                if directory.name.startswith('.stage-'): continue
-                record = read_json(directory/'journal.json')
-                if not record.get('acknowledged') or record.get('report', {}).get('status') not in TERMINAL:
-                    raise ValueError('unfinished updater journal prevents setup')
+    with setup_lock(home):
+        check_setup_journals(home)
         existing = home/'updater.json'
         if existing.exists():
             config = read_json(existing)
@@ -712,7 +733,10 @@ def dispatch(args):
         client=PlatformClient(Credentials(config['server'],config['token']))
         worker=Updater(home,config,client,Host(config))
         while not stop.is_set():
-            try: worker.run_once()
+            try:
+                trusted(home/'.setup.lock')
+                with service_lock(home/'.setup.lock'):
+                    worker.run_once()
             except (ValueError,RuntimeError,OSError,subprocess.SubprocessError):
                 print('Updater unavailable; retained private journal for recovery.',file=sys.stderr)
             if args.once: break

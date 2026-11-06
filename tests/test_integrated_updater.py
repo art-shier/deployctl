@@ -22,7 +22,7 @@ def setup_fixture(tmp_path, monkeypatch, kind='node'):
     import zipfile
     monkeypatch.setattr(updater, 'require_root', lambda: None)
     monkeypatch.setattr(updater, 'trusted', lambda path, **kwargs: Path(path).absolute())
-    agent = tmp_path/'agent'; agent.mkdir()
+    agent = tmp_path/'agent'; agent.mkdir(mode=0o700)
     node_agent.write_json(agent/'node.json', dict(server='https://center.test', node_id='a'*32, token='node_private_credential'))
     home = tmp_path/'updater'
     executable = tmp_path/'ctl'
@@ -132,7 +132,8 @@ def test_agent_install_keeps_existing_identity_and_repairs_without_prompt(tmp_pa
 
 def test_agent_installed_partial_failure_retains_identity_and_unit(tmp_path, monkeypatch):
     args = setup_fixture(tmp_path, monkeypatch)
-    args = cli.parser().parse_args(['agent','install','--home',args.agent_home,'--executable',args.cli_path])
+    args = cli.parser().parse_args(['agent','install','--home',args.agent_home,'--executable',args.cli_path,
+        '--updater-home',args.home])
     unit = tmp_path/'ctl-agent.service'
     original_trusted = updater.trusted
     monkeypatch.setattr(updater,'trusted',lambda path,**kwargs: unit if str(path).replace('\\','/').endswith('/etc/systemd/system/ctl-agent.service') else original_trusted(path,**kwargs))
@@ -151,9 +152,10 @@ def test_center_setup_enrolls_over_loopback_and_never_persists_owner(tmp_path, m
     import zipfile
     args = setup_fixture(tmp_path, monkeypatch, kind='center')
     monkeypatch.setattr(updater.server_bundle, 'private', lambda path: path)
-    center = Path(args.server_home); center.mkdir()
+    monkeypatch.setattr(updater, 'read_platform_key', updater.read_private)
+    center = Path(args.server_home); center.mkdir(mode=0o700)
     updater.write_json(center/'instance.json', {'origin':'https://public-dns-unavailable.test','api_port':8091,'external_database':False})
-    keys = center/'keys'; keys.mkdir()
+    keys = center/'keys'; keys.mkdir(mode=0o700)
     (keys/'owner.token').write_text('private_local_owner_credential'); (keys/'owner.token').chmod(0o600)
     with zipfile.ZipFile(args.cli_path,'w') as archive: archive.writestr('payload','trusted installed bytes')
     monkeypatch.setattr(updater, 'installer_identity', lambda *args: {'version':'v1.15.0'})
@@ -180,7 +182,7 @@ def test_center_setup_enrolls_over_loopback_and_never_persists_owner(tmp_path, m
 def test_new_agent_install_prompts_original_token_once_then_recovers_setup(tmp_path, monkeypatch):
     local = setup_fixture(tmp_path, monkeypatch)
     args = cli.parser().parse_args(['agent','install','--server','https://center.test',
-        '--home',local.agent_home,'--executable',local.cli_path])
+        '--home',local.agent_home,'--executable',local.cli_path,'--updater-home',local.home])
     identity_path=Path(args.home)/'node.json'; identity_path.unlink()
     unit=tmp_path/'ctl-agent.service'
     original_trusted=updater.trusted
@@ -214,3 +216,96 @@ def test_agent_install_requires_root_before_creating_state(tmp_path, monkeypatch
     monkeypatch.setattr(updater,'require_root',refuse)
     with pytest.raises(ValueError,match='root'): node_agent.install(args)
     assert not Path(args.home).exists()
+
+
+@pytest.mark.parametrize('old_marker', ['missing','old_version','old_pid','matching'])
+def test_agent_install_migrates_running_process_and_preserves_healthy_repeat(tmp_path, monkeypatch, old_marker):
+    import time
+    local=setup_fixture(tmp_path, monkeypatch)
+    args=cli.parser().parse_args(['agent','install','--home',local.agent_home,'--executable',local.cli_path,
+        '--updater-home',local.home])
+    unit=tmp_path/'ctl-agent.service'; unit.write_text('fixture service')
+    original_trusted=updater.trusted
+    monkeypatch.setattr(updater,'trusted',lambda path,**kwargs: unit if str(path).replace('\\','/').endswith('/etc/systemd/system/ctl-agent.service') else original_trusted(path,**kwargs))
+    monkeypatch.setattr(node_agent,'service_unit',lambda *args:'fixture service')
+    monkeypatch.setattr(updater,'setup',lambda args:None)
+    state={'ActiveState':'active','MainPID':'101'}
+    monkeypatch.setattr(updater.Host,'service_info',lambda self:dict(state))
+    def marker(version='v1.15.0',pid=101):
+        updater.write_json(Path(args.home)/'readiness.json',{'node_id':'a'*32,'version':version,
+            'pid':pid,'heartbeat_ns':time.time_ns(),'enabled':False})
+    if old_marker!='missing': marker('v1.14.0' if old_marker=='old_version' else 'v1.15.0',100 if old_marker=='old_pid' else 101)
+    commands=[]
+    def command(self,argv,timeout=30,**kwargs):
+        commands.append((argv,timeout))
+        if argv[:2]==['systemctl','stop']:
+            state.update(ActiveState='inactive',MainPID='0')
+        if argv[:2]==['systemctl','enable'] and state['ActiveState']=='inactive':
+            time.sleep(.02)
+            state.update(ActiveState='active',MainPID='202'); marker(pid=202)
+        return ''
+    monkeypatch.setattr(updater.Host,'command',command)
+    identity_before=(Path(args.home)/'node.json').read_bytes()
+    node_agent.install(args)
+    stops=[timeout for argv,timeout in commands if argv[:2]==['systemctl','stop']]
+    assert stops==([] if old_marker=='matching' else [930])
+    assert state['MainPID']==('101' if old_marker=='matching' else '202')
+    assert (Path(args.home)/'node.json').read_bytes()==identity_before
+
+
+def test_setup_waits_for_brief_updater_iteration_contention(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from deployctl import runtime
+    setup_fixture(tmp_path, monkeypatch)
+    original_lock=runtime.service_lock
+    attempts=[]
+    @contextmanager
+    def busy_then_available(path):
+        attempts.append(path)
+        if len(attempts)<3: raise RuntimeError('another deployment operation is running')
+        with original_lock(path): yield
+    monkeypatch.setattr(runtime,'service_lock',busy_then_available)
+    home=updater.private_directory(tmp_path/'updater')
+    with updater.setup_lock(home):
+        updater.write_json(home/'guarded.json',{'acquired':True})
+    assert updater.read_json(home/'guarded.json')=={'acquired':True}
+    assert len(attempts)==3
+
+
+def test_setup_contention_refuses_active_update_without_waiting(tmp_path, monkeypatch):
+    from deployctl.runtime import service_lock
+    setup_fixture(tmp_path, monkeypatch)
+    home=updater.private_directory(tmp_path/'updater')
+    journal=updater.private_directory(home/'jobs'/('c'*32))
+    updater.write_json(journal/'journal.json',{'stage':'installing'})
+    with service_lock(home/'.setup.lock'):
+        with pytest.raises(ValueError,match='unfinished'):
+            with updater.setup_lock(home): pytest.fail('entered active updater lock')
+
+
+def test_setup_contention_has_bounded_wait(tmp_path, monkeypatch):
+    from deployctl.runtime import service_lock
+    setup_fixture(tmp_path, monkeypatch)
+    home=updater.private_directory(tmp_path/'updater')
+    with service_lock(home/'.setup.lock'):
+        ticks=iter([0,6])
+        monkeypatch.setattr(updater.time,'monotonic',lambda:next(ticks))
+        with pytest.raises(RuntimeError,match='updater is busy'):
+            with updater.setup_lock(home): pytest.fail('entered busy updater lock')
+
+
+def test_agent_install_refuses_active_update_before_service_commands(tmp_path, monkeypatch):
+    local=setup_fixture(tmp_path, monkeypatch)
+    args=cli.parser().parse_args(['agent','install','--home',local.agent_home,'--executable',local.cli_path,
+        '--updater-home',local.home])
+    unit=tmp_path/'ctl-agent.service'; unit.write_text('fixture service')
+    original_trusted=updater.trusted
+    monkeypatch.setattr(updater,'trusted',lambda path,**kwargs:unit if str(path).replace('\\','/').endswith('/etc/systemd/system/ctl-agent.service') else original_trusted(path,**kwargs))
+    monkeypatch.setattr(node_agent,'service_unit',lambda *args:'fixture service')
+    journal=updater.private_directory(Path(local.home)/'jobs'/('c'*32))
+    updater.write_json(journal/'journal.json',{'stage':'installing'})
+    monkeypatch.setattr(updater.Host,'command',lambda *args,**kwargs:pytest.fail('changed Agent service during active update'))
+    before=(Path(args.home)/'node.json').read_bytes()
+    with pytest.raises(RuntimeError,match='Agent service not ready'):
+        node_agent.install(args)
+    assert (Path(args.home)/'node.json').read_bytes()==before

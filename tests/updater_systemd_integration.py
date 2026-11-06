@@ -141,6 +141,14 @@ def main():
                 identity_before=(agent_home/'node.json').read_bytes()
                 updater_before=(integrated_home/'updater.json').read_bytes()
                 token_file.unlink()
+                config={'kind':'node','target_id':node_id,'server':origin,'cli_path':str(executable),
+                        'agent_home':str(agent_home),'agent_service':unit_name}
+                host=Host(config,runner=host_command)
+                deadline=time.monotonic()+60
+                while not host.readiness()[1]:
+                    if time.monotonic()>deadline: raise RuntimeError('fixture Agent did not become ready')
+                    time.sleep(1)
+                original_pid=host.service_info()['MainPID']
                 command(*install_args)
                 if (agent_home/'node.json').read_bytes()!=identity_before or (integrated_home/'updater.json').read_bytes()!=updater_before:
                     raise RuntimeError('repeat integrated install rotated identity')
@@ -149,24 +157,32 @@ def main():
                 command('systemctl','is-active','--quiet',updater_name)
                 if read_json(integrated_home/'updater.json')['target_id']!=node_id:
                     raise RuntimeError('integrated updater target mismatch')
-                config={'kind':'node','target_id':node_id,'server':origin,'cli_path':str(executable),
-                        'agent_home':str(agent_home),'agent_service':unit_name}
-                host=Host(config,runner=host_command)
-                deadline=time.monotonic()+60
-                while not host.readiness()[1]:
-                    if time.monotonic()>deadline: raise RuntimeError('fixture Agent did not become ready')
-                    time.sleep(1)
+                if host.service_info()['MainPID']!=original_pid:
+                    raise RuntimeError('healthy repeat unnecessarily restarted the Agent')
+                migration=root/'migration.pyz';candidate(BUNDLE,migration,'1.16.0')
+                bootstrap.install(artifact=migration,install_dir=install)
+                if read_json(agent_home/'readiness.json')['version']!='v1.15.0':
+                    raise RuntimeError('fixture did not preserve old running Agent after CLI replacement')
+                command(*install_args)
+                marker=read_json(agent_home/'readiness.json')
+                if (not host.readiness()[1] or marker['version']!='v1.16.0'
+                        or str(marker['pid'])!=host.service_info()['MainPID'] or str(marker['pid'])==original_pid):
+                    raise RuntimeError('existing-node migration did not activate a fresh matching Agent')
+                if (agent_home/'node.json').read_bytes()!=identity_before or (integrated_home/'updater.json').read_bytes()!=updater_before:
+                    raise RuntimeError('existing-node migration rotated identity')
+                if (Center.node_enrollments,Center.updater_invitations,Center.updater_enrollments)!=(1,1,1):
+                    raise RuntimeError('existing-node migration re-enrolled')
                 jobdir=private_directory(root/'job')
-                digest=candidate(BUNDLE,jobdir/'deployctl.pyz','1.16.0')
-                job={'kind':'node','version':'v1.16.0','from_version':'v1.15.0','cli_sha256':digest}
+                digest=candidate(BUNDLE,jobdir/'deployctl.pyz','1.17.0')
+                job={'kind':'node','version':'v1.17.0','from_version':'v1.16.0','cli_sha256':digest}
                 host.backup(job,jobdir)
                 host.install(job,jobdir,lambda stage:None)
-                if not host.verify('v1.16.0',jobdir): raise RuntimeError('new Agent heartbeat not verified')
+                if not host.verify('v1.17.0',jobdir): raise RuntimeError('new Agent heartbeat not verified')
                 host.restore(job,jobdir,lambda stage:None)
-                if not host.verify('v1.15.0',jobdir): raise RuntimeError('restored Agent heartbeat not verified')
-                bad=root/'broken.pyz';bad_digest=candidate(BUNDLE,bad,'1.17.0',fail_agent=True)
+                if not host.verify('v1.16.0',jobdir): raise RuntimeError('restored Agent heartbeat not verified')
+                bad=root/'broken.pyz';bad_digest=candidate(BUNDLE,bad,'1.18.0',fail_agent=True)
                 identity={'updater_id':uuid.uuid4().hex,'kind':'node','target_id':node_id}
-                broken_job={**identity,'id':uuid.uuid4().hex,'version':'v1.17.0','from_version':'v1.15.0',
+                broken_job={**identity,'id':uuid.uuid4().hex,'version':'v1.18.0','from_version':'v1.16.0',
                             'cli_sha256':bad_digest,'server_sha256':'b'*64}
                 control=ControlFixture(broken_job)
                 worker=Updater(root/'updater',identity,control,LocalReleaseHost(config,bad))
@@ -174,7 +190,7 @@ def main():
                 if not control.result or control.result['status']!='rolled_back':
                     raise RuntimeError('failed Agent startup did not automatically restore old Agent')
                 if not host.readiness()[1]:raise RuntimeError('old Agent not ready after failed candidate')
-                print('PASS: integrated node installation and credential-free repeat, independent active updater, real systemd graceful stop, installer replacement, fresh Agent heartbeat, manual restore and failed-candidate automatic rollback')
+                print('PASS: integrated node install/repeat and running old-Agent migration, independent active updater, real systemd graceful stop, installer replacement, fresh Agent heartbeat, manual restore and failed-candidate automatic rollback')
             finally:
                 subprocess.run(['systemctl','disable','--now',updater_name],capture_output=True,timeout=180)
                 subprocess.run(['systemctl','stop',unit_name],capture_output=True,timeout=180)

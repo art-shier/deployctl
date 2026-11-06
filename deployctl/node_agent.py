@@ -554,6 +554,20 @@ def service_unit(executable, home, root, config_root):
             'TimeoutStopSec=900\nKillMode=mixed\n\n[Install]\nWantedBy=multi-user.target\n')
 
 
+def agent_process_matches(host, node_id, version, after_ns=0):
+    try:
+        info = host.service_info()
+        marker = read_json(host.agent_home/'readiness.json')
+        heartbeat = marker.get('heartbeat_ns')
+        return (info.get('ActiveState') == 'active' and int(info.get('MainPID', '0')) > 0
+            and marker.get('node_id') == node_id and marker.get('version') == version
+            and marker.get('pid') == int(info['MainPID'])
+            and type(heartbeat) is int and after_ns < heartbeat <= time.time_ns()
+            and time.time_ns()-heartbeat < 90*1_000_000_000)
+    except (ValueError, RuntimeError, OSError):
+        return False
+
+
 def install(args):
     """Install a node and its independent updater using the original identity."""
     import re
@@ -588,11 +602,30 @@ def install(args):
             token = read_private(updater.trusted(args.token_file, private=True)).decode('ascii').strip() if args.token_file else getpass.getpass('Enrollment token: ')
             enroll(args.server, token, home)
         if not unit.exists(): bootstrap.atomic_write(unit, content, 0o644)
-        host = updater.Host({'cli_path':str(executable),'kind':'node','agent_service':args.service_name})
+        host = updater.Host({'cli_path':str(executable),'kind':'node','agent_service':args.service_name,
+            'agent_home':str(home)})
         try:
-            host.command(['systemctl','daemon-reload'])
-            host.command(['systemctl','enable','--now',args.service_name], timeout=60)
-            host.command(['systemctl','is-active','--quiet',args.service_name])
+            updater_home = private_directory(updater.trusted(args.updater_home, private=True))
+            # The helper takes this lock for each complete protocol iteration.
+            # Never restart the Agent while an updater is executing or recovering.
+            with updater.setup_lock(updater_home):
+                updater.check_setup_journals(updater_home)
+                version = updater.installer_identity(executable)['version']
+                node_id = read_json(identity_path)['node_id']
+                host.command(['systemctl','daemon-reload'])
+                refresh = (host.service_info().get('ActiveState') == 'active'
+                    and not agent_process_matches(host, node_id, version))
+                if refresh:
+                    host.stop_agent()
+                after_ns = time.time_ns()
+                host.command(['systemctl','enable','--now',args.service_name], timeout=60)
+                host.command(['systemctl','is-active','--quiet',args.service_name])
+                if refresh:
+                    deadline = time.monotonic()+120
+                    while not agent_process_matches(host, node_id, version, after_ns):
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError('new Agent process has no fresh heartbeat')
+                        time.sleep(1)
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError):
             raise RuntimeError('Agent installed; Agent service not ready and automatic updates not configured. '
                 'Repair by repeating ctl agent install with the same local paths.') from None
