@@ -100,3 +100,11 @@
 - [x] Python full suite: 301 tests, OK, 35 Windows/platform skips. Web: 30 unit tests, build, 33 mocked browser cases passed; mobile onboarding inspected. Independent review found no actionable issues.
 - [x] Rebuilt bundled CLI and local preview Agent assets; restarted API with original keys/database and retained Vite preview at http://127.0.0.1:5174/#nodes. Live proxy smoke verified readiness and successful credential generation with unchanged node count; no fake nodes added. git diff --check passed.
 - Remaining environment limit unchanged: actual Linux Docker deployment was not run locally; protocol Docker operations are simulated, and real Docker coverage remains in CI.
+
+## Release integration (2026-11-06)
+
+- User authorized publishing installation assets, without upgrading a production server. Release target: CLI 1.14.0 / Web 0.7.0.
+- Integrated origin/main 9205c9a (v1.13.0 static deployment support). Rebuilt conflicting bundled CLI from merged sources using pinned PyYAML 6.0.3. Static projects retain local CLI deployment and are excluded from Docker-only remote tasks and the remote deployment tab.
+- Full Python suite: 340 tests, 57 platform skips, passed. Full Go suite with real PostgreSQL/Python protocol and go vet passed. Web 33 unit tests and production build passed. Independent integration/release review found no must-fix findings.
+- Browser verification on an isolated API/database passed 38 of 39 local cases initially; the remaining test incorrectly hardcoded development port 5174. Corrected it to use the current page origin and its focused rerun passed. The Docker image upload browser case requires Linux Registry and is left to CI. Earlier missing-credential failures were fixture setup errors, resolved with isolated owner credentials.
+- Upstream directory fsync failed on Windows; retained file fsync and Linux directory fsync, skipping only unsupported Windows directory fsync. Existing static publication regressions now pass.

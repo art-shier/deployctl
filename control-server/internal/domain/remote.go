@@ -47,6 +47,9 @@ func (n NodeInput) Validate() error {
 	return nil
 }
 func (n Node) Allows(p Project, env string) bool {
+	if p.DeploymentType != "" && p.DeploymentType != "docker" {
+		return false
+	}
 	return n.Enabled && !n.PendingAuthorization && !slices.Contains(n.ExcludedProjects, p.Slug) && (slices.Contains(n.Projects, p.Slug) || slices.Contains(n.Groups, p.Group)) && slices.Contains(n.Environments, env)
 }
 

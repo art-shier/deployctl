@@ -227,7 +227,7 @@ test("onboarding creates a credential before discovery, then assigns grants to t
   await expect(dialog.getByLabel("允许环境")).toHaveCount(0);
   await expect(dialog.getByRole("checkbox")).toHaveCount(0);
   await expect(dialog).toContainText(
-    "sudo ctl agent enroll --server http://127.0.0.1:5174",
+    `sudo ctl agent enroll --server ${new URL(page.url()).origin}`,
   );
   await page
     .getByRole("button", { name: "生成一次性注册凭据", exact: true })

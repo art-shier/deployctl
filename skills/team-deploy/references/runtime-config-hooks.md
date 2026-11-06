@@ -1,5 +1,7 @@
 # 运行时配置与安装钩子（ctl / 平台 >=1.5.0）
 
+下文镜像、Compose、--release与Docker构建/运行参数适用于Docker项目；静态项目使用[静态部署](static-deployment.md)的模板、目录和统一命令。
+
 `--env production` 继续选择部署环境。构建参数仍是 `build.args` / `build-args`，只交给 Dockerfile ARG；以下参数在服务器安装、升级时生效。
 
 | 参数 | 用途 | 是否保留到下一次升级 |

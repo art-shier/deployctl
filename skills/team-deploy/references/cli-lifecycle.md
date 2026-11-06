@@ -25,7 +25,7 @@ ctl --version
 
 自定义目录用其真实路径替换，不盲目重新安装或修改shell启动文件。命令存在但启动失败时，检查Python版本及安装时绑定的解释器是否仍存在；用有效Python重新执行安装器可修复解释器路径。
 
-CLI安装要求Linux/Bash、Python>=3.10。工具自身安装与更新不需要Docker；业务服务运行另需Docker Engine、Compose>=2.30。本地Windows接入可以用`python "$SKILL_DIR/assets/deployctl.pyz" init/validate/package`，不用Linux安装器在Windows创建系统命令。
+CLI安装要求Linux/Bash、Python>=3.10。工具自身安装与更新不需要Docker；Docker业务服务另需Docker Engine、Compose>=2.30，静态项目无需Docker。本地Windows可使用随附pyz访问平台；init/validate/package为Docker接入，静态见[静态部署](static-deployment.md)。
 
 ## 在线首次安装与旧版更新
 

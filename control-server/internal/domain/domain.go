@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ type Change struct {
 	Value     *string `json:"value,omitempty"`
 }
 type DeploymentDefaults struct {
+	TargetDir   string  `json:"target_dir,omitempty"`
 	HostPort    int     `json:"host_port,omitempty"`
 	BindAddress string  `json:"bind_address,omitempty"`
 	MemoryLimit string  `json:"memory_limit,omitempty"`
@@ -53,6 +55,7 @@ type ConfigurationPatch struct {
 	TargetVersion      *string             `json:"target_version"`
 }
 type Project struct {
+	DeploymentType     string    `json:"deployment_type,omitempty"`
 	Slug               string    `json:"slug"`
 	Group              string    `json:"group"`
 	Name               string    `json:"name"`
@@ -93,15 +96,19 @@ type Revision struct {
 	GroupSource            *GroupSource  `json:"-"`
 }
 type Release struct {
-	ID        string    `json:"id"`
-	Project   string    `json:"project"`
-	Version   string    `json:"version"`
-	Commit    string    `json:"commit"`
-	Image     string    `json:"image"`
-	SHA256    string    `json:"sha256"`
-	Size      int64     `json:"size"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	DeploymentType string    `json:"deployment_type,omitempty"`
+	ArchiveFormat  string    `json:"archive_format,omitempty"`
+	ExpandedSize   int64     `json:"expanded_size,omitempty"`
+	EntryCount     int       `json:"entry_count,omitempty"`
+	ID             string    `json:"id"`
+	Project        string    `json:"project"`
+	Version        string    `json:"version"`
+	Commit         string    `json:"commit"`
+	Image          string    `json:"image"`
+	SHA256         string    `json:"sha256"`
+	Size           int64     `json:"size"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 type Receipt struct {
 	ID          string    `json:"id"`
@@ -235,6 +242,9 @@ func ApplyChanges(old map[string]Variable, changes []Change, runtime bool) (map[
 	return out, nil
 }
 func ValidateDeploymentDefaults(d DeploymentDefaults) error {
+	if ValidateTargetDir(d.TargetDir) != nil {
+		return ErrInvalid
+	}
 	if d.HostPort < 0 || d.HostPort > 65535 {
 		return ErrInvalid
 	}
@@ -264,4 +274,29 @@ func Values(vars map[string]Variable) map[string]string {
 		out[k] = v.Value
 	}
 	return out
+}
+
+func DeploymentType(kind string) (string, error) {
+	if kind == "" {
+		return "docker", nil
+	}
+	if kind != "docker" && kind != "static" {
+		return "", ErrInvalid
+	}
+	return kind, nil
+}
+
+func ValidateTargetDir(value string) error {
+	if value == "" {
+		return nil
+	}
+	if !utf8.ValidString(value) || len(value) > 4096 || !strings.HasPrefix(value, "/") || value == "/" || path.Clean(value) != value || strings.Contains(value, "\\") {
+		return ErrInvalid
+	}
+	for _, r := range value {
+		if r < 32 || r >= 127 && r <= 159 || r == 0x2028 || r == 0x2029 {
+			return ErrInvalid
+		}
+	}
+	return nil
 }

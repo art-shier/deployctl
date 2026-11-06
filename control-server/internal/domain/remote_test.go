@@ -27,6 +27,11 @@ func TestRemoteNodeGrantIntersection(t *testing.T) {
 	if !n.Allows(p, "prod") || n.Allows(p, "test") {
 		t.Fatal("group/environment intersection")
 	}
+	p.DeploymentType = "static"
+	if n.Allows(p, "prod") {
+		t.Fatal("Docker agent accepted a static project")
+	}
+	p.DeploymentType = "docker"
 	n.ExcludedProjects = []string{"notes"}
 	if n.Allows(p, "prod") {
 		t.Fatal("exclusion ignored")

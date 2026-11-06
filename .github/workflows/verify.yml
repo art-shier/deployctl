@@ -34,6 +34,9 @@ jobs:
       - run: python scripts/build_install_script.py --check
       - run: python scripts/build_release_assets.py
       - run: python -m unittest discover -s tests -v
+      - name: Static deployment transactions on Linux
+        if: runner.os == 'Linux'
+        run: python -m unittest discover -s tests -p 'test_static_runtime.py' -v
       - run: python -I -S dist/deployctl.pyz validate templates/deployment.yaml
       - run: bash -n install.sh
       - name: Real local installation

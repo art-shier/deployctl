@@ -39,7 +39,9 @@ export const send = (method: string, body: unknown): RequestInit => ({
   method,
   body: JSON.stringify(body),
 });
+export type DeploymentType = "docker" | "static";
 export interface Project {
+  deployment_type?: DeploymentType;
   slug: string;
   group: string;
   name: string;
@@ -56,6 +58,10 @@ export interface Group {
   created_at: string;
 }
 export interface Release {
+  deployment_type?: DeploymentType;
+  archive_format?: "zip" | "tar.gz";
+  expanded_size?: number;
+  entry_count?: number;
   id: string;
   project: string;
   version: string;
@@ -73,6 +79,7 @@ export interface MaskedVariable {
   value?: string;
 }
 export interface Defaults {
+  target_dir?: string;
   host_port?: number;
   bind_address?: string;
   memory_limit?: string;
@@ -89,6 +96,7 @@ export interface Environment {
   created_at: string;
   inherited_runtime_env?: MaskedVariable[];
   inherited_install_params?: MaskedVariable[];
+  inherited_deployment_defaults?: Defaults;
   group_source?: { slug: string; id: string; revision: number } | null;
 }
 export interface Token {

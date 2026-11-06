@@ -1,16 +1,18 @@
 # deployctl：团队标准部署
 
-业务项目通过 GitHub Actions 构建 Docker 镜像和标准发布包，Linux 云服务器用 `ctl install/upgrade/rollback` 统一部署。`ctl` 与 `deployctl` 是同一个工具。
+业务项目通过 GitHub Actions 构建 Docker 镜像或静态文件压缩包，Linux 云服务器用 `ctl install/upgrade/rollback` 统一部署。`ctl` 与 `deployctl` 是同一个工具。
+
+CLI 1.13.0 新增静态项目：创建时选择 static，首次安装可 `ctl install project-a --prod --target-dir /var/www/project-a`，后续升级完整替换，回滚可离线执行。模板、目录配置和 Web 入口对接见 [静态部署指南](docs/static-deployment.md)。本功能需配套管理服务，源码版本不代表已发布标签。
 
 平台仓库：[art-shier/deployctl](https://github.com/art-shier/deployctl) · [版本与安装资产](https://github.com/art-shier/deployctl/releases) · [构建流水线](https://github.com/art-shier/deployctl/actions)
 
-本版本包含**管理服务与管理台0.5.1及CLI1.12.1**：按权限管理项目/项目组、读写配置、托管镜像/发布包和访问凭据；服务器登录后可直接 `ctl install notes --prod`。侧栏新增「Agent 接入」，从当前服务下载完整skill及CLI、查看接入说明和权限，见[Agent接入说明](docs/agent-access.md)。管理服务支持 `ctl server-install` 自动获取官方最新正式Release，或 `ctl server install` 等价写法；仍可指定 `--version` 或 `--release`。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)，项目与配置命令见[项目管理说明](docs/project-management.md)。
+本版本包含**管理服务与管理台0.7.0及CLI1.14.0**：按权限管理项目/项目组、读写配置、托管镜像/发布包和访问凭据；服务器登录后可直接 `ctl install notes --prod`。侧栏新增「Agent 接入」，从当前服务下载完整skill及CLI、查看接入说明和权限，见[Agent接入说明](docs/agent-access.md)。管理服务支持 `ctl server-install` 自动获取官方最新正式Release，或 `ctl server install` 等价写法；仍可指定 `--version` 或 `--release`。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)，项目与配置命令见[项目管理说明](docs/project-management.md)。
 
 v1.8.1完善**项目组工作台与组授权**：登录先进入项目组，点组查看项目列表，在组内注册、加入或移出项目，并直接管理该组的发布/部署凭据。新凭据只授权项目组，项目详情不再提供凭据入口。旧 Token 保留原项目权限，owner 为全局超级管理员。CLI 提供 `whoami` / `projects`。详见 [项目组和共享部署凭据](docs/control-plane.md#项目组和共享部署凭据v181)。
 
 支持单个无状态 HTTP 服务、Docker Compose、私有 GitHub Release 下载、升级失败恢复、人工回滚和状态/日志查询。单机更新可能短暂中断；数据库迁移、多机滚动发布、HTTPS 入口和持久化存储需另行配置。
 
-源码新增**远程部署节点**：Linux 主机运行出站 Agent，管理台按项目组/项目/环境授权节点，项目中选择节点执行安装、升级和回滚。同一项目环境可部署到多台节点，任务冻结版本与配置并记录各实例状态；负载均衡先手动配置。功能需配套构建的新管理服务与 CLI，接入和恢复方法见 [远程部署与节点运维](docs/remote-deployment.md)。
+CLI 1.14.0 新增**远程部署节点**：Linux 主机运行出站 Agent，管理台按项目组/项目/环境授权节点，项目中选择节点执行安装、升级和回滚。同一项目环境可部署到多台节点，任务冻结版本与配置并记录各实例状态；负载均衡先手动配置。功能需配套的 v1.14.0 管理服务与 CLI，接入和恢复方法见 [远程部署与节点运维](docs/remote-deployment.md)。
 
 v1.8.2简化登录：`ctl login` 默认连接 `https://ctl.shier.art`。可用 `ctl config set server <地址>` 修改默认服务，`ctl config get server` 查看当前地址；切换服务后重新登录。管理服务无需为此升级。
 
@@ -24,17 +26,17 @@ v1.9.0支持项目组按环境配置启动变量与安装参数，项目同名�
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.12.1/install.sh \
-  | bash -s -- --user --version v1.12.1
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.14.0/install.sh \
+  | bash -s -- --user --version v1.14.0
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```
 
 安装器下载 CLI、检查 SHA256 和版本，安装 `ctl` 与 `deployctl` 到 `~/.local/bin`。CLI 内置依赖，无需服务器 pip 安装。再次执行可升级本安装器管理的命令；已有其他同名工具会保留并报告冲突。
 
-安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.12.1`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
+安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.14.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
 
-要求 Python >=3.10；服务部署另需 Docker Engine、Docker Compose >=2.30。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
+要求 Python >=3.10；Docker 项目部署另需 Docker Engine、Docker Compose >=2.30，静态项目部署无需 Docker。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
 
 ## 安装中心服务（管理台 + 镜像仓库）
 
@@ -61,7 +63,7 @@ sudo "$(command -v ctl)" server-status
 
 已有中心实例使用 `server-upgrade` 升级。固定版本、外部数据库、反向代理要求、备份和故障处理见 [中心服务完整安装与运维指南](docs/control-plane.md#引导管理服务)。
 
-**本分支的远程部署功能尚需配套的新服务端和 CLI 构建**，上述正式 Release 安装不保证包含这些未发布改动。测试本分支可按完整指南的源码构建方式安装中心服务，并使用当前服务提供的新 CLI。
+远程部署节点需配套升级中心服务和 CLI 到 v1.14.0；仅升级 CLI 不会升级中心服务。
 
 ## 接入远程部署节点
 

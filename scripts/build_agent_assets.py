@@ -13,7 +13,7 @@ import zipfile
 ASSETS = ('assets/deployctl.pyz', 'assets/deployctl.pyz.sha256',
           'assets/install.sh', 'assets/LICENSE', 'assets/THIRD_PARTY_NOTICES.txt',
           'assets/templates/release.yml', 'assets/templates/deploy.yml',
-          'assets/templates/deployment.yaml')
+          'assets/templates/deployment.yaml', 'assets/templates/static-release.yml')
 
 
 def read_version(source):

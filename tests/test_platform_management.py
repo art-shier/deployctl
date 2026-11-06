@@ -25,6 +25,14 @@ GROUP = {'slug':'team','name':'Team','description':'retain group description','c
 
 
 class ManagementTests(unittest.TestCase):
+    def test_configuration_preserves_inherited_directory(self):
+        value=self.assert_success('project-config','get','notes','--env','prod')
+        self.assertEqual(value['inherited_deployment_defaults'], {'target_dir':'/var/www/shared'})
+    def test_docker_management_remains_compatible_with_legacy_server_fields(self):
+        self.legacy_project_fields=True
+        self.assert_success('project','create','notes','--group','team')
+        self.assert_success('project','update','notes','--name','Changed')
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -39,6 +47,7 @@ class ManagementTests(unittest.TestCase):
         self.malformed_defaults = False
         self.environment_missing = False
         self.delete_status = 204
+        self.legacy_project_fields = False
         fixture = self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args): pass
@@ -57,6 +66,8 @@ class ManagementTests(unittest.TestCase):
                 if self.command == 'DELETE': return self.send(fixture.delete_status)
                 if self.path in ('/api/v1/projects','/api/v1/projects/notes'):
                     if self.command in ('POST','PATCH'):
+                        if fixture.legacy_project_fields and 'deployment_type' in body:
+                            return self.send(400,{'code':'invalid_input'})
                         fixture.project.update(body)
                     return self.send(200 if self.command != 'POST' else 201,
                         [fixture.project] if self.path.endswith('/projects') and self.command=='GET' else fixture.project)
@@ -79,7 +90,7 @@ class ManagementTests(unittest.TestCase):
                                        {'key':'DB_HOST','secret':False,'configured':True,'value':'db.test'}],
                         'install_params':[],'created_at':'2026-10-09T00:00:00Z'}
                     if '/projects/' in self.path:
-                        value.update(target_version='stable',deployment_defaults={},
+                        value.update(target_version='stable',deployment_defaults={},inherited_deployment_defaults={'target_dir':'/var/www/shared'},
                             inherited_runtime_env=[{'key':'GROUP_SECRET','secret':True,'configured':True,'value':SECRET}],
                             inherited_install_params=[],group_source={'slug':'team','id':'b'*32,'revision':2})
                         if fixture.malformed_defaults: value['deployment_defaults']={SECRET:SECRET}

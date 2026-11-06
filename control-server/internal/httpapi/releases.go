@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -49,10 +49,19 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, p auth.Principa
 	if err := permitted(p, "release.publish", slug, ""); err != nil {
 		return err
 	}
-	if _, err := s.store.GetProject(r.Context(), slug); err != nil {
+	project, err := s.store.GetProject(r.Context(), slug)
+	if err != nil {
 		return err
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, artifacts.MaxPackage+65536)
+	if !p.CanInGroup("release.publish", slug, project.Group, "") {
+		return errForbidden
+	}
+	static := project.DeploymentType == "static"
+	limit := int64(artifacts.MaxPackage)
+	if static {
+		limit = artifacts.MaxStaticPackage
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit+65536)
 	reader, err := r.MultipartReader()
 	if err != nil {
 		return domain.ErrInvalid
@@ -60,6 +69,13 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, p auth.Principa
 	fields := map[string]string{}
 	seen := map[string]bool{}
 	var pack *artifacts.ValidatedPackage
+	var staticRelease domain.Release
+	var temporary string
+	defer func() {
+		if temporary != "" {
+			os.Remove(temporary)
+		}
+	}()
 	for {
 		part, e := reader.NextPart()
 		if e == io.EOF {
@@ -77,14 +93,36 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, p auth.Principa
 			if pack != nil {
 				return domain.ErrInvalid
 			}
-			validated, e := artifacts.Validate(part, "", slug)
-			part.Close()
-			if e != nil {
-				return e
+			if static {
+				if err = os.MkdirAll(s.options.ArtifactsDir, 0700); err != nil {
+					return err
+				}
+				file, e := os.CreateTemp(s.options.ArtifactsDir, ".static-upload-")
+				if e != nil {
+					return e
+				}
+				temporary = file.Name()
+				n, e := io.Copy(file, io.LimitReader(part, limit+1))
+				closeErr := file.Close()
+				part.Close()
+				if e != nil || closeErr != nil || n > limit {
+					return domain.ErrInvalid
+				}
+				staticRelease, e = artifacts.ValidateStaticFile(temporary, "")
+				if e != nil {
+					return e
+				}
+				pack = &artifacts.ValidatedPackage{Release: staticRelease}
+			} else {
+				validated, e := artifacts.Validate(part, "", slug)
+				part.Close()
+				if e != nil {
+					return e
+				}
+				pack = &validated
 			}
-			pack = &validated
 		} else {
-			if name != "version" && name != "channel" && name != "sha256" {
+			if name != "version" && name != "channel" && name != "sha256" && name != "commit" {
 				return domain.ErrInvalid
 			}
 			raw, e := io.ReadAll(io.LimitReader(part, 1025))
@@ -95,19 +133,36 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, p auth.Principa
 			fields[name] = string(raw)
 		}
 	}
-	if pack == nil || fields["version"] != pack.Release.Version || fields["sha256"] != pack.Release.SHA256 || (fields["channel"] != "" && fields["channel"] != "stable") {
+	if static && pack != nil {
+		pack.Release.Project = slug
+		pack.Release.Version = fields["version"]
+		pack.Release.Commit = fields["commit"]
+	}
+	if pack == nil || fields["version"] != pack.Release.Version || fields["sha256"] != pack.Release.SHA256 || (fields["channel"] != "" && fields["channel"] != "stable") || fields["commit"] != "" && !regexp.MustCompile(`^[a-f0-9]{40,64}$`).MatchString(fields["commit"]) {
 		return domain.ErrInvalid
 	}
-	if s.options.Verifier == nil {
+	if !static && seen["commit"] && fields["commit"] != pack.Release.Commit {
+		return domain.ErrInvalid
+	}
+	if !static && s.options.Verifier == nil {
 		return domain.ErrInvalid
 	}
 	proof := r.Header.Get("X-Registry-Verification-Token")
+	if static && proof != "" {
+		return domain.ErrInvalid
+	}
 	if registry.ValidateVerificationToken(proof) != nil {
 		return domain.ErrInvalid
 	}
-	check := func(project domain.Project) error {
+	authorize := func(project domain.Project) error {
 		if !p.CanInGroup("release.publish", project.Slug, project.Group, "") {
 			return errForbidden
+		}
+		return nil
+	}
+	check := func(project domain.Project) error {
+		if project.DeploymentType == "static" {
+			return artifacts.PublishTempFile(s.options.ArtifactsDir, temporary, pack.Release)
 		}
 		var err error
 		if proof != "" {
@@ -124,7 +179,7 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, p auth.Principa
 		}
 		return artifacts.PublishFile(s.options.ArtifactsDir, *pack)
 	}
-	release, err := s.store.PublishReleaseChecked(r.Context(), pack.Release, fields["channel"] == "stable", p.ID, check)
+	release, err := s.store.PublishReleaseAuthorized(r.Context(), pack.Release, fields["channel"] == "stable", p.ID, authorize, check)
 	if err != nil {
 		return err
 	}
@@ -171,6 +226,13 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request, p auth.Principa
 		return errForbidden
 	}
 	release, rev := result.Release, result.Revision
+	if result.Project.DeploymentType == "static" {
+		reply(w, 200, map[string]any{"schema_version": 2, "minimum_client_version": "1.13.0", "deployment_type": "static", "project": slug, "environment": body.Environment,
+			"release":       map[string]any{"id": release.ID, "version": release.Version, "package_path": "/api/v1/projects/" + slug + "/artifacts/" + release.ID, "sha256": release.SHA256, "archive_format": release.ArchiveFormat, "size": release.Size, "expanded_size": release.ExpandedSize, "entry_count": release.EntryCount, "commit": release.Commit},
+			"configuration": map[string]any{"id": rev.ID, "revision": rev.Revision, "deployment_defaults": domain.DeploymentDefaults{TargetDir: rev.Configuration.DeploymentDefaults.TargetDir}},
+		})
+		return nil
+	}
 	reply(w, 200, map[string]any{"schema_version": 1, "minimum_client_version": "1.7.0", "project": slug, "environment": body.Environment,
 		"release":       map[string]any{"id": release.ID, "version": release.Version, "image": release.Image, "package_path": "/api/v1/projects/" + slug + "/artifacts/" + release.ID, "sha256": release.SHA256},
 		"configuration": map[string]any{"id": rev.ID, "revision": rev.Revision, "runtime_env": domain.Values(rev.Configuration.RuntimeEnv), "install_params": domain.Values(rev.Configuration.InstallParams), "deployment_defaults": rev.Configuration.DeploymentDefaults},
@@ -186,12 +248,19 @@ func (s *Server) artifact(w http.ResponseWriter, r *http.Request, p auth.Princip
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(s.options.ArtifactsDir, release.SHA256+".tar.gz")
+	path, err := artifacts.ArtifactPath(s.options.ArtifactsDir, release)
+	if err != nil {
+		return err
+	}
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return domain.ErrNotFound
 	}
-	w.Header().Set("Content-Type", "application/gzip")
+	if release.ArchiveFormat == "zip" {
+		w.Header().Set("Content-Type", "application/zip")
+	} else {
+		w.Header().Set("Content-Type", "application/gzip")
+	}
 	w.Header().Set("ETag", `"`+release.SHA256+`"`)
 	http.ServeFile(w, r, path)
 	return nil

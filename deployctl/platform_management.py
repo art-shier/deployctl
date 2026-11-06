@@ -10,6 +10,7 @@ from .platform_client import PlatformClient, PlatformError, validate_defaults as
 from .platform_credentials import Credentials
 from .runtime_config import MAX_INPUT, validate_key, validate_values
 from .runtime_snapshot import reject_links, validate_id
+from .static_state import validate_deployment_type, validate_target_dir
 
 PROJECT_FIELDS = ('name','description','repository','image_repository','default_environment')
 GROUP_FIELDS = ('name','description')
@@ -30,6 +31,8 @@ def add_commands(sub):
                     operation.add_argument(flag, dest=field)
             if scope=='project' and name in ('create','move'):
                 operation.add_argument('--group', required=True)
+            if scope=='project' and name=='create':
+                operation.add_argument('--deployment-type', choices=('docker','static'), default='docker')
             if name=='delete': operation.add_argument('--confirm', required=True, metavar='SLUG', help='must exactly match the archived slug')
         config = sub.add_parser(scope+'-config', help=f'read or edit platform {scope} configuration')
         operations = config.add_subparsers(dest='management_operation', required=True)
@@ -70,14 +73,17 @@ def metadata(value, scope, slug=None):
     validate_name(value.get('slug'),scope)
     if slug is not None and value['slug']!=slug: raise ValueError('platform metadata target mismatch')
     result={'slug':value['slug']}
+    kind=validate_deployment_type(value.get('deployment_type')) if scope=='project' else None
+    if scope=='project': result['deployment_type']=kind
     fields=PROJECT_FIELDS if scope=='project' else GROUP_FIELDS
     limits={'name':512,'description':8192,'repository':1024,'image_repository':1024}
     for field in fields:
         if field=='default_environment': result[field]=validate_name(value.get(field),'environment',32)
-        else: result[field]=text(value.get(field),field,limits[field],field in ('name','image_repository'))
+        else: result[field]=text(value.get(field),field,limits[field],field=='name' or field=='image_repository' and kind=='docker')
     if scope=='project':
         result['group']=validate_name(value.get('group'),'group')
-        if not IMAGE_REPOSITORY.fullmatch(result['image_repository']): raise ValueError('invalid image repository')
+        if kind=='docker' and not IMAGE_REPOSITORY.fullmatch(result['image_repository']): raise ValueError('invalid image repository')
+        if kind=='static' and result['image_repository']: raise ValueError('static projects do not have an image repository')
     if 'created_at' in value: result['created_at']=text(value['created_at'],'created_at',96)
     return result
 
@@ -105,8 +111,11 @@ def defaults(value):
     # The management API uses zero/empty fields to clear defaults and caps CPU
     # at 64. Deployment manifests have a different resource range.
     try:
-        if not isinstance(value,dict) or set(value)-{'host_port','bind_address','memory_limit','cpus'}: raise ValueError()
+        if not isinstance(value,dict) or set(value)-{'host_port','bind_address','memory_limit','cpus','target_dir'}: raise ValueError()
         check=dict(value)
+        if 'target_dir' in check:
+            target=check.pop('target_dir')
+            if target!='': validate_target_dir(target)
         for field,empty,types in [('host_port',0,(int,)),('cpus',0,(int,float)),('bind_address','',(str,)),('memory_limit','',(str,))]:
             if field in check:
                 if type(check[field]) not in types: raise ValueError()
@@ -122,6 +131,7 @@ def configuration(value, scope, environment, reveal=False):
         raise ValueError('invalid or mismatched platform environment')
     validate_id(value.get('id')); integer(value.get('revision'),1,2**63-1,'configuration revision')
     result={k:value[k] for k in ('id','environment','revision')}
+    if scope=='group': result['deployment_defaults']=defaults(value.get('deployment_defaults',{}))
     for field in ('runtime_env','install_params'):
         result[field]=variable_rows(value.get(field),field=='runtime_env',reveal)
     if 'created_at' in value: result['created_at']=text(value['created_at'],'created_at',96)
@@ -130,6 +140,8 @@ def configuration(value, scope, environment, reveal=False):
         if target!='stable': version(target)
         result['target_version']=target
         result['deployment_defaults']=defaults(value.get('deployment_defaults'))
+        if 'inherited_deployment_defaults' in value:
+            result['inherited_deployment_defaults']=defaults(value['inherited_deployment_defaults'])
         for field in ('inherited_runtime_env','inherited_install_params'):
             result[field]=variable_rows(value.get(field,[]),field=='inherited_runtime_env',reveal)
         source=value.get('group_source')
@@ -159,7 +171,8 @@ def private_input(path):
 
 def changes_payload(value, scope):
     allowed={'expected_revision','runtime_env','install_params'}
-    if scope=='project': allowed.update(('deployment_defaults','target_version'))
+    allowed.add('deployment_defaults')
+    if scope=='project': allowed.add('target_version')
     if not isinstance(value,dict) or set(value)-allowed or not set(value).intersection(allowed-{'expected_revision'}):
         raise ValueError('invalid configuration changes shape')
     result={}
@@ -186,6 +199,7 @@ def changes_payload(value, scope):
             result[field].append(dict(row))
         validate_values(values,'configuration',field=='runtime_env')
     if 'deployment_defaults' in value: result['deployment_defaults']=defaults(value['deployment_defaults'])
+    if scope=='group' and set(result.get('deployment_defaults',{}))-{'target_dir'}: raise ValueError('group defaults only support target_dir')
     if 'target_version' in value:
         if value['target_version']!='stable': version(value['target_version'])
         result['target_version']=value['target_version']
@@ -261,10 +275,14 @@ def handle(args):
             body={'slug':args.slug,'name':args.name if args.name is not None else args.slug,'description':args.description or ''}
             if scope=='project':
                 body.update(group=args.group,repository=args.repository or '',default_environment=args.default_environment or 'prod')
+                if args.deployment_type=='static':body['deployment_type']='static'
                 if args.image_repository is not None: body['image_repository']=args.image_repository
         # Validate outgoing metadata without requiring a server-default repository.
         check=dict(body)
-        if scope=='project': check.setdefault('group',current['group'] if operation=='update' else args.group);check.setdefault('image_repository','check.test/check')
+        if scope=='project':
+            check['deployment_type']=current['deployment_type'] if operation=='update' else args.deployment_type
+            check.setdefault('group',current['group'] if operation=='update' else args.group)
+            check.setdefault('image_repository','' if check['deployment_type']=='static' else 'check.test/check')
         metadata(check,scope,args.slug)
         return metadata(client.json('POST' if operation=='create' else 'PATCH',base if operation=='create' else path,body),scope,args.slug)
     path=base+'/'+args.slug+'/environments'
