@@ -330,3 +330,17 @@ def test_linux_fixture_command_preserves_bounded_child_failure_diagnostics(capsy
     output=capsys.readouterr().err
     assert 'child stdout evidence' in output and 'child stderr evidence' in output
     assert len(output)<9000
+
+
+def test_linux_fixture_exposes_underlying_setup_exception(capsys, monkeypatch):
+    import importlib.util
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    path=Path(__file__).with_name('updater_systemd_integration.py')
+    spec=importlib.util.spec_from_file_location('updater_setup_diagnostic_fixture',path)
+    fixture=importlib.util.module_from_spec(spec); spec.loader.exec_module(fixture)
+    def fail(args): raise ValueError('fixture underlying private path ownership failure')
+    monkeypatch.setattr(fixture,'setup',fail)
+    fixture.diagnose_setup(SimpleNamespace())
+    output=capsys.readouterr().err
+    assert 'ValueError' in output and 'fixture underlying private path ownership failure' in output
+    assert 'Traceback' in output and len(output)<9000
