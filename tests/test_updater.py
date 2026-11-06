@@ -399,13 +399,26 @@ def test_unsafe_symlink_and_writable_managed_path_rejected(tmp_path):
     path.unlink(); path.write_bytes(b'file'); path.chmod(0o666)
     with pytest.raises(ValueError): updater.trusted(path)
 
-def center_host(tmp_path,monkeypatch,external=False,fail=False):
+def center_host(tmp_path,monkeypatch,external=False,fail=False,keys_owner=0,keys_mode=None):
+    import os
     from types import SimpleNamespace
     home=tmp_path/'center'; home.mkdir(mode=0o700); (home/'keys').mkdir(mode=0o700)
     state=dict(schema_version=1,current=dict(version='v1.15.0',sha256='1'*64,image='ghcr.io/art-shier/ctl-server@sha256:'+'2'*64),pending=None)
     for name,value in [('server-state.json',state),('instance.json',{'external_database':external,'api_port':8080,'origin':'https://example.com'})]: updater.write_json(home/name,value)
     for path,raw in [(home/'compose.env',b'PRIVATE=secret'),(home/'keys'/'database.url',b'postgresql://user:private-password@db/ctl')]:
         path.write_bytes(raw); path.chmod(0o600)
+    # A non-root CI runner cannot chown its fixture to the production key owner.
+    # Override only this one directory's owner; retain real metadata everywhere
+    # else, and retain its real mode unless a permission-negative case overrides it.
+    original_stat=Path.stat
+    def fixture_stat(path,*args,**kwargs):
+        info=original_stat(path,*args,**kwargs)
+        if path==home/'keys':
+            values=list(info); values[4]=keys_owner
+            if keys_mode is not None: values[0]=keys_mode
+            return os.stat_result(values)
+        return info
+    monkeypatch.setattr(Path,'stat',fixture_stat)
     monkeypatch.setattr(updater,'trusted',lambda path,**kwargs:Path(path))
     monkeypatch.setattr(updater,'read_platform_key',updater.read_private)
     monkeypatch.setattr(updater.server_bundle,'read_state',updater.read_json)
@@ -448,6 +461,21 @@ def test_database_dump_failure_leaves_evidence_without_complete_marker(tmp_path,
     jobdir=tmp_path/'job'; jobdir.mkdir(mode=0o700)
     with pytest.raises(RuntimeError): host.backup(dict(JOB,kind='center'),jobdir)
     assert (jobdir/'backup'/'server-state.json').exists()
+    assert not (jobdir/'backup'/'complete.json').exists()
+
+
+@pytest.mark.parametrize('owner,mode',[(1001,0o40700),(0,0o40720),(10001,0o40702)])
+def test_center_backup_rejects_untrusted_key_directory_before_dump(tmp_path,monkeypatch,owner,mode):
+    from types import SimpleNamespace
+    host,calls=center_host(tmp_path,monkeypatch,keys_owner=owner,keys_mode=mode)
+    # Exercise the production POSIX guard on Windows too. The rejected branch
+    # must not reach any later OS operation or database command.
+    monkeypatch.setattr(updater,'os',SimpleNamespace(name='posix'))
+    jobdir=tmp_path/'job'; jobdir.mkdir(mode=0o700)
+    with pytest.raises(ValueError,match='unsafe center keys directory'):
+        host.backup(dict(JOB,kind='center'),jobdir)
+    assert calls==[]
+    assert not (jobdir/'backup'/'database.dump').exists()
     assert not (jobdir/'backup'/'complete.json').exists()
 
 @pytest.mark.parametrize('field',['command','url','cli_path','agent_service'])
