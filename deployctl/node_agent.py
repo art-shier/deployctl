@@ -639,6 +639,7 @@ def install(args):
 
 
 def add_commands(sub):
+    from .cli_location import invoking_cli
     command = sub.add_parser('agent', help='enroll or run the outbound deployment node agent')
     operations = command.add_subparsers(dest='agent_command', required=True)
     for name in ('enroll', 'run', 'service', 'install'):
@@ -651,7 +652,7 @@ def add_commands(sub):
             operation.add_argument('--root', default='/opt/deployments')
             operation.add_argument('--config-root', default='/etc/deployctl')
         if name in ('service', 'install'):
-            operation.add_argument('--executable', default='/usr/local/bin/ctl')
+            operation.add_argument('--executable', default=invoking_cli(), help='managed CLI path; default: this invoking CLI')
         if name == 'install':
             operation.add_argument('--service-name', default='ctl-agent.service')
             operation.add_argument('--updater-home', default='/var/lib/ctl-updater-node')

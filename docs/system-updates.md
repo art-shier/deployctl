@@ -6,7 +6,7 @@
 
 更新服务随中心或节点的正常安装一起配置，不需要在控制台再生成更新器凭据、重复登记或单独安装服务。更新器仍是宿主机上的独立 systemd 服务：升级时即使 Agent 或中心容器停止，它也能继续执行并保存结果。
 
-Linux 宿主机需要 root、Python >=3.10 和 systemd。使用官方安装器管理的系统级 ctl（通常 `/usr/local/bin/ctl`）；用户可写目录、软链接或手工修改过的命令不满足自动更新要求。节点还需要 Docker / Compose，中心沿用现有管理服务安装要求。
+Linux 宿主机需要 root、Python >=3.10 和 systemd。使用官方安装器管理且由 root 控制的 ctl。1.15.1 起默认识别当前运行的 CLI 路径，兼容 `/usr/local/bin/ctl`、root 的 `/root/.local/bin/ctl` 及自定义目录；用户可写目录、软链接或手工修改过的命令不满足自动更新要求。节点还需要 Docker / Compose，中心沿用现有管理服务安装要求。
 
 ### 新节点
 
@@ -31,7 +31,7 @@ sudo ctl agent install --server https://ctl.example.com
 节点：
 
 ```bash
-sudo ctl agent install --executable /usr/local/bin/ctl
+sudo ctl agent install
 sudo systemctl status ctl-agent ctl-updater-node
 ```
 

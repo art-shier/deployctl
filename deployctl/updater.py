@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from urllib.request import Request
 
 from . import __version__, bootstrap, server_bundle
+from .cli_location import invoking_cli
 from .node_agent import read_json, write_json, read_private, private_directory
 from .platform_client import PlatformClient, validate_origin, validate_token
 from .platform_credentials import Credentials
@@ -678,7 +679,7 @@ def add_commands(sub):
         command=commands.add_parser(name); command.add_argument('--home',default=None if name=='setup' else DEFAULT_HOME)
         if name in ('enroll','setup'):
             command.add_argument('--kind',choices=('node','center'),required=True)
-            command.add_argument('--cli-path',default='/usr/local/bin/ctl')
+            command.add_argument('--cli-path',default=invoking_cli(),help='managed CLI path; default: this invoking CLI')
             command.add_argument('--agent-home',default='/var/lib/ctl-agent')
             command.add_argument('--agent-service',default='ctl-agent.service')
             command.add_argument('--server-home',default='/opt/ctl-platform')
