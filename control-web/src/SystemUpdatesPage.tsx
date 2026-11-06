@@ -6,6 +6,11 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
+import {
+  RegisterSystemRelease,
+  VersionRegistrationAccess,
+  SystemReleaseDetails,
+} from "./SystemReleaseRegistration";
 import { RefreshCw } from "lucide-react";
 import { api, send } from "./api";
 import { remoteDate, type DeploymentNode } from "./remote";
@@ -20,6 +25,8 @@ import {
   type UpdateJob,
   type Updater,
   type ReleaseCatalog,
+  type SystemRelease,
+  isNewerRelease,
   type UpdateState,
 } from "./systemUpdates";
 import "./systemUpdates.css";
@@ -133,6 +140,11 @@ function Setup({
 }
 
 export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [registrationAccess, setRegistrationAccess] = useState(false);
+  const [releaseDetails, setReleaseDetails] = useState<SystemRelease | null>(
+    null,
+  );
   const [state, setState] = useState<UpdateState>({ updaters: [], jobs: [] });
   const [nodes, setNodes] = useState<DeploymentNode[]>([]);
   const [loading, setLoading] = useState(true);
@@ -276,10 +288,24 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
   const catalogUnavailable = !releases.some((item) => item.version === version);
   const catalogFailure =
     catalogError || catalogErrorText(catalog?.sync_error || "");
-  const reason = (target: Target) =>
-    target.updater
+  const reason = (target: Target) => {
+    const release = releases.find((item) => item.version === version);
+    const base = `https://github.com/art-shier/deployctl/releases/download/${version}/`;
+    const custom =
+      release &&
+      ((release.cli_url && release.cli_url !== base + "deployctl.pyz") ||
+        (release.server_url &&
+          release.server_url !== base + `ctl-platform-${version}.tar.gz`));
+    if (
+      custom &&
+      target.updater &&
+      isNewerRelease("v1.17.0", target.updater.helper_version)
+    )
+      return "自定义下载地址需要先将更新器升级至 1.17.0";
+    return target.updater
       ? eligibility(target.updater, version, state.jobs, target.node)
-      : "等待更新服务自动接入";
+      : "尚未配置更新服务";
+  };
   const chosen = targets.filter(
     (target) =>
       target.kind === "node" &&
@@ -440,28 +466,67 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
           </button>
         </div>
       )}
+      {registerOpen && (
+        <RegisterSystemRelease
+          Dialog={Dialog}
+          close={() => setRegisterOpen(false)}
+          saved={() => {
+            setRegisterOpen(false);
+            setCatalogNotice("版本已登记");
+            void loadCatalog(false);
+          }}
+        />
+      )}
+      {registrationAccess && (
+        <VersionRegistrationAccess
+          Dialog={Dialog}
+          close={() => setRegistrationAccess(false)}
+        />
+      )}
+      {releaseDetails && (
+        <SystemReleaseDetails
+          release={releaseDetails}
+          Dialog={Dialog}
+          close={() => setReleaseDetails(null)}
+        />
+      )}
       <section className="panel form-stack">
         <div className="section-heading">
-          <h2>官方版本</h2>
+          <h2>可用版本</h2>
+          {catalog?.source === "registered" && (
+            <div className="actions">
+              <button
+                onClick={() => setRegisterOpen(true)}
+                disabled={locked || !!review}
+              >
+                登记版本
+              </button>
+              <button
+                onClick={() => setRegistrationAccess(true)}
+                disabled={locked || !!review}
+              >
+                流水线登记接入
+              </button>
+            </div>
+          )}
           <button
             disabled={catalogBusy || locked || !!review}
-            onClick={() => void loadCatalog(true)}
+            onClick={() => void loadCatalog(catalog?.source !== "registered")}
           >
-            {catalogSyncing ? "正在同步…" : "立即同步清单"}
+            {catalog?.source === "registered"
+              ? "刷新版本"
+              : catalogSyncing
+                ? "正在同步…"
+                : "立即同步清单"}
           </button>
         </div>
         <p className="muted small">
-          版本来自 art-shier/deployctl 官方稳定发布，仅支持协议 1 的 1.15.0 至
-          2.0.0 之前版本。建议先选择一个节点试点，再分批更新。
+          版本由发布流水线或管理员登记，登记不会执行更新，也不验证下载地址可达性。支持协议
+          1 的 1.15.0 至 2.0.0 之前版本。建议先选择一个节点试点，再分批更新。
         </p>
         {catalogBusy && !catalog && <p role="status">正在加载版本清单…</p>}
         {catalog && (
           <div className="muted small">
-            {catalog.update_source && (
-              <p style={{ overflowWrap: "anywhere" }}>
-                更新源：{catalog.update_source}
-              </p>
-            )}
             <p>
               清单来源：
               <span>
@@ -471,6 +536,7 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
                     cache: "本地缓存",
                     remote: "在线同步",
                     none: "暂无清单",
+                    registered: "中心版本记录",
                   }[catalog.source]
                 }
               </span>
@@ -478,21 +544,57 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
                 <> · 清单生成于 {remoteDate(catalog.generated_at)}</>
               )}
             </p>
-            <p>
-              {catalog.last_success_at ? (
-                <>上次成功同步：{remoteDate(catalog.last_success_at)}</>
-              ) : (
-                <span>尚未完成在线同步</span>
-              )}
-              {catalog.last_attempt_at && (
-                <> · 上次尝试：{remoteDate(catalog.last_attempt_at)}</>
-              )}
-            </p>
+            {catalog.source !== "registered" && (
+              <p>
+                {catalog.last_success_at ? (
+                  <>上次成功同步：{remoteDate(catalog.last_success_at)}</>
+                ) : (
+                  <span>尚未完成在线同步</span>
+                )}
+                {catalog.last_attempt_at && (
+                  <> · 上次尝试：{remoteDate(catalog.last_attempt_at)}</>
+                )}
+              </p>
+            )}
             {catalog.stale && releases.length > 0 && (
               <p>
                 当前使用已有清单，可能不是最新版本。中心会自动重试，也可立即同步。
               </p>
             )}
+          </div>
+        )}
+        {catalog?.source === "registered" && releases.length > 0 && (
+          <div className="table-wrap">
+            <table aria-label="登记版本列表">
+              <thead>
+                <tr>
+                  <th>版本</th>
+                  <th>发布时间</th>
+                  <th>来源</th>
+                  <th>详情</th>
+                </tr>
+              </thead>
+              <tbody>
+                {releases.map((release) => (
+                  <tr key={release.version}>
+                    <td>{release.version}</td>
+                    <td>{remoteDate(release.published_at)}</td>
+                    <td>
+                      {{
+                        pipeline: "流水线登记",
+                        manual: "手动登记",
+                        imported: "历史清单导入",
+                      }[release.registration_source || "imported"] || "已登记"}
+                    </td>
+                    <td>
+                      <button onClick={() => setReleaseDetails(release)}>
+                        查看 {release.version}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
         {catalogNotice && (
@@ -509,7 +611,11 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
           </div>
         )}
         {!catalogBusy && !releases.length && (
-          <p className="notice">暂无可用的兼容版本，请点击「立即同步清单」。</p>
+          <p className="notice">
+            {catalog?.source === "registered"
+              ? "暂无可用的兼容版本，请登记版本或等待发布流水线登记。"
+              : "暂无可用的兼容版本，请点击「立即同步清单」。"}
+          </p>
         )}
         <div className="form-two">
           <label>

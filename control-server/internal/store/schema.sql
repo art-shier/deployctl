@@ -95,3 +95,11 @@ CREATE TABLE IF NOT EXISTS ctl_update_jobs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ctl_update_updater_active ON ctl_update_jobs(updater_id) WHERE status IN ('queued','leased','running');
 CREATE INDEX IF NOT EXISTS ctl_update_jobs_recent ON ctl_update_jobs(created_at DESC);
+
+-- Release registration is independent of project publication and deployment credentials.
+CREATE TABLE IF NOT EXISTS ctl_system_releases (
+ version text PRIMARY KEY, data jsonb NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ctl_release_registration_credential (
+ singleton boolean PRIMARY KEY CHECK(singleton), token_hash text NOT NULL, created_at timestamptz NOT NULL
+);

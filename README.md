@@ -75,7 +75,7 @@ sudo "$(command -v ctl)" server-status
 
 源码中的 CLI 1.15.0 / Web 0.8.0 新增“系统更新”：管理员可以选择官方稳定版本，逐台或分批更新节点 ctl / Agent，也可以更新中心服务。更新服务随中心或节点安装自动配置，无需再次登记；它作为宿主机独立服务，在 Agent 或中心容器重启时继续运行。节点支持失败恢复旧版本，中心在数据库与配置备份成功后升级，保留失败诊断而不自动回滚数据库。
 
-源码中的 CLI 1.16.1 / Web 0.9.0 进一步支持静态版本清单、首次启动的内置清单、持久化缓存和「立即同步清单」。同步失败保留现有版本，并显示来源、同步时间与错误原因。
+源码中的 CLI 1.17.0 / Web 0.10.0 支持发布流水线主动登记版本及管理端手动登记；中心查询版本列表只读数据库。配置方法见 [版本登记指南](docs/version-registration.md)。
 
 此功能的版本号不代表已经发布，旧 v1.14.0 不包含更新器。安装接入、备份范围、任务取消和人工恢复见 [系统更新操作指南](docs/system-updates.md)。
 
@@ -163,5 +163,3 @@ python scripts/docker_integration.py
 CI 在 Linux Python 3.10/3.12 和 Windows Python 3.12 检查 CLI；Linux 另跑真实安装和 Docker 生命周期。版本发布先验证草稿 Release 中的真实资产，再公开已验证的版本。详见 [构建与发布](docs/release-pipeline.md)、[验证记录](docs/verification.md)。
 
 `init/validate/package` 可在 Windows 执行，服务运行命令面向 Linux。固定镜像 digest；包版本不覆盖；快照回滚恢复版本和配置，数据库或hook外部副作用需独立恢复。默认仅监听 `127.0.0.1`，外部访问通过服务器网关或显式配置的绑定地址。
-
-源码 CLI 1.17.0 / Web 0.10.0 增加 [独立更新源与发布同步](docs/update-source.md)：S3 兼容下载源、OCI 镜像仓库和中心转发节点更新包。配置完成后发版自动同步，无需每次手动搬运文件。

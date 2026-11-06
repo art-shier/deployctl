@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -188,7 +189,7 @@ func (s *Server) pollUpdater(w http.ResponseWriter, r *http.Request, id string) 
 	if err != nil {
 		return err
 	}
-	reply(w, 200, map[string]any{"job": job})
+	reply(w, 200, map[string]any{"job": updaterJobResponse(job)})
 	return nil
 }
 func (s *Server) startUpdaterJob(w http.ResponseWriter, r *http.Request, id string) error {
@@ -200,7 +201,7 @@ func (s *Server) startUpdaterJob(w http.ResponseWriter, r *http.Request, id stri
 	if err != nil {
 		return err
 	}
-	reply(w, 200, job)
+	reply(w, 200, updaterJobResponse(&job))
 	return nil
 }
 func (s *Server) reportUpdaterJob(w http.ResponseWriter, r *http.Request, id string) error {
@@ -251,4 +252,17 @@ func (s *Server) updaterPackage(w http.ResponseWriter, r *http.Request, id strin
 	w.WriteHeader(200)
 	_, err = w.Write(raw)
 	return err
+}
+
+// Old updater protocols reject unknown fields. Download addresses stay center-side.
+func updaterJobResponse(job *domain.UpdateJob) any {
+	if job == nil {
+		return nil
+	}
+	raw, _ := json.Marshal(job)
+	var out map[string]any
+	json.Unmarshal(raw, &out)
+	delete(out, "cli_url")
+	delete(out, "server_url")
+	return out
 }

@@ -15,11 +15,12 @@ import tarfile
 import tempfile
 import threading
 import time
+from urllib.parse import quote
 from urllib.request import Request, ProxyHandler, HTTPRedirectHandler, build_opener
 from urllib.error import URLError
 
 from . import __version__
-from .bootstrap import MAX_INDEX_SIZE, parse_release_index, update_source, release_index_url, release_asset_url
+from .bootstrap import INDEX_URL, MAX_INDEX_SIZE, parse_release_index
 from .contract import DIGEST_IMAGE, load_yaml, version
 from .download import acquire_release, checksum, fetch
 from .runtime_snapshot import reject_links
@@ -32,10 +33,10 @@ BOOTSTRAP_TIMEOUT = 1800
 LOCK_HOME = Path('/run/ctl-platform-cli')
 
 
-def resolve_server_release(requested='latest', source=None):
+def resolve_server_release(requested='latest'):
     expected_sha256 = None
     if requested == 'latest':
-        index = parse_release_index(fetch(Request(release_index_url(source), headers={'User-Agent': 'team-deployctl'}), MAX_INDEX_SIZE))
+        index = parse_release_index(fetch(Request(INDEX_URL, headers={'User-Agent': 'team-deployctl'}), MAX_INDEX_SIZE))
         if not index['releases']:
             raise ValueError('official release index is empty')
         selected = index['releases'][0]
@@ -45,7 +46,7 @@ def resolve_server_release(requested='latest', source=None):
         tag = requested if requested.startswith('v') else 'v' + requested
         version(tag)
     name = 'ctl-platform-' + tag + '.tar.gz'
-    return release_asset_url(tag, name, source), tag, expected_sha256
+    return f'https://github.com/art-shier/deployctl/releases/download/{quote(tag, safe="")}/{name}', tag, expected_sha256
 
 
 def validate_manifest(value):
@@ -256,19 +257,11 @@ def deploy_server(source=None, home='/opt/ctl-platform', expected_sha256=None, u
         raise ValueError('instance directory must be a plain absolute path without parent traversal')
     home.mkdir(parents=True, exist_ok=True, mode=0o700); trusted_parents(home); private(home, True)
     with locked(LOCK_HOME/'operation.lock'), locked(home/'.server.lock'):
-        configured_source = options.get('update_source')
-        if configured_source is None:
-            configured_source = os.environ.get('CTL_UPDATE_SOURCE')
-        if configured_source is None and (home/'instance.json').exists():
-            configured_source = read_instance(home).get('update_source', '')
-        configured_source = update_source(configured_source or '')
-        if configured_source or options.get('update_source') is not None:
-            options['update_source'] = configured_source
         with tempfile.TemporaryDirectory(prefix='ctl-server-download-') as cache:
             selected_version = None
             if source is None:
                 with progress.stage('Resolving official ctl server Release'):
-                    source, selected_version, catalog_sha256 = resolve_server_release(release_version or 'latest', configured_source) if configured_source or 'CTL_UPDATE_SOURCE' in os.environ else resolve_server_release(release_version or 'latest')
+                    source, selected_version, catalog_sha256 = resolve_server_release(release_version or 'latest')
                     if catalog_sha256 is not None:
                         if expected_sha256 is not None and checksum(expected_sha256) != catalog_sha256:
                             raise ValueError('explicit checksum does not match official catalog checksum')
@@ -331,13 +324,13 @@ def preserve_archive(bundle, package, expected):
     return path
 
 
-def installed_content(bundle, active, update_source=None):
+def installed_content(bundle, active):
     archive = bundle/'.verified-release.tar.gz'; reject_links(archive)
     if not archive.exists():
         # Older CLI versions cached only expanded files. Verify the exact recorded
         # archive once; custom bundles can be anchored by upgrading their original URL.
         tag = active['version']
-        source = release_asset_url(tag, f"ctl-platform-{tag}.tar.gz", update_source)
+        source = f'https://github.com/art-shier/deployctl/releases/download/{quote(tag, safe="")}/ctl-platform-{tag}.tar.gz'
         from .progress import Progress
         progress = Progress()
         with progress.stage('Verifying legacy ctl server cache against its recorded SHA256'):
@@ -396,8 +389,7 @@ def operate_server(action, home='/opt/ctl-platform', tail=100):
         if not isinstance(active, dict) or not re.fullmatch('[a-f0-9]{64}', str(active.get('sha256'))):
             raise ValueError('ctl server is not installed; use server-install')
         bundle = private(home/'server-releases'/active['sha256'], True)
-        configured_source=read_instance(home).get("update_source", "")
-        manifest = installed_content(bundle, active, configured_source) if configured_source else installed_content(bundle, active)
+        manifest = installed_content(bundle, active)
         if manifest['version'] != active.get('version') or manifest['image'] != active.get('image'):
             raise ValueError('cached server manifest differs from installed state')
         cfg = read_instance(home)

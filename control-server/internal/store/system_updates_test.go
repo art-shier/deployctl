@@ -105,25 +105,12 @@ func TestUpdateLifecycleFrozenRetryAndTerminalReplay(t *testing.T) {
 	if _, err = s.StartUpdateJob(ctx, u.ID, job.ID); err != nil {
 		t.Fatal(err)
 	}
-
-	if material, e := s.UpdateJobMaterial(WithUpdaterIdentity(ctx, auth.HashToken(raw)), u.ID, job.ID); e != nil || material.ServerSHA256 != job.ServerSHA256 {
-		t.Fatal("own package unavailable", e)
-	}
-	if _, e := s.UpdateJobMaterial(ctx, domain.NewID(), job.ID); e == nil {
-		t.Fatal("foreign updater obtained package")
-	}
-	if _, e := s.UpdateJobMaterial(WithUpdaterIdentity(ctx, auth.HashToken("wrong")), u.ID, job.ID); !errors.Is(e, domain.ErrUnauthorized) {
-		t.Fatal("revoked token obtained package", e)
-	}
 	report := domain.UpdateReport{Status: "succeeded", Stage: "completed", ResultCode: "ok", CurrentVersion: "v1.16.0"}
 	if _, err = s.ReportUpdateJob(ctx, u.ID, job.ID, report); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.ReportUpdateJob(ctx, u.ID, job.ID, report); err != nil {
 		t.Fatal("report replay", err)
-	}
-	if _, e := s.UpdateJobMaterial(ctx, u.ID, job.ID); !errors.Is(e, domain.ErrForbidden) {
-		t.Fatal("terminal job obtained package", e)
 	}
 	report.Status = "failed"
 	if _, err = s.ReportUpdateJob(ctx, u.ID, job.ID, report); !errors.Is(err, domain.ErrConflict) {

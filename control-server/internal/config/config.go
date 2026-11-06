@@ -26,7 +26,6 @@ import (
 type Config struct {
 	DatabaseURL, Listen string
 	UpdateIndexSeed     string
-	UpdateSource        string
 	Cipher              *secrets.Cipher
 	API                 httpapi.Options
 }
@@ -157,10 +156,6 @@ func Load() (Config, error) {
 	}
 	if c.DatabaseURL == "" {
 		return c, errors.New("CTL_DATABASE_URL required")
-	}
-	c.UpdateSource = strings.TrimRight(os.Getenv("CTL_UPDATE_SOURCE"), "/")
-	if err := httpapi.ValidateUpdateSource(c.UpdateSource); err != nil {
-		return c, errors.New("CTL_UPDATE_SOURCE must be a plain HTTPS base URL")
 	}
 	dir := env("CTL_KEYS_DIR", "/run/ctl-keys")
 	if err := normal(dir, true); err != nil {

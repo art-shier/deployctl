@@ -29,7 +29,7 @@ def write(path,raw):
     with os.fdopen(fd,'w',encoding='utf-8') as handle: handle.write(raw);handle.flush();os.fsync(handle.fileno())
 
 
-def prepare(home, image, origin=None, registry_host=None, api_port=None, registry_port=None, database_url_file=None, update_source=None):
+def prepare(home, image, origin=None, registry_host=None, api_port=None, registry_port=None, database_url_file=None):
     home=plain(home)
     if any(c in str(home) for c in '\n\r$# \\'): raise ValueError('instance directory must be a plain absolute POSIX path')
     home.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -50,17 +50,6 @@ def prepare(home, image, origin=None, registry_host=None, api_port=None, registr
     for key in ('api_port','registry_port'):
         if type(cfg[key])!=int or not 1<=cfg[key]<=65535: raise ValueError('ports must be 1..65535')
     if cfg['api_port']==cfg['registry_port']: raise ValueError('API and Registry ports must differ')
-    configured_source=update_source if update_source is not None else cfg.get('update_source','')
-    configured_source=configured_source.rstrip('/')
-    if configured_source:
-        source_url=urlsplit(configured_source)
-        if (source_url.scheme!='https' or not source_url.hostname or source_url.username or source_url.password
-            or source_url.query or source_url.fragment or any(c in configured_source for c in '\\$#%?')
-            or any(ord(c)<=32 or ord(c)>=127 for c in configured_source)
-            or any(part in ('.','..') for part in source_url.path.split('/'))):
-            raise ValueError('update source must be a plain HTTPS base URL')
-    source_changed=cfg.get('update_source','')!=configured_source
-    if configured_source or update_source is not None: cfg['update_source']=configured_source
     keys=plain(home/'keys');keys.mkdir(mode=0o700,exist_ok=True)
     for name in ('artifacts','registry'):
         plain(home/name).mkdir(mode=0o700,exist_ok=True)
@@ -78,11 +67,9 @@ def prepare(home, image, origin=None, registry_host=None, api_port=None, registr
         database=f"postgres://ctl:{cfg['postgres_password']}@database:5432/ctl?sslmode=disable"
     if not dsn.exists(): write(dsn,database+'\n')
     if not previous: write(path,json.dumps(cfg,indent=2)+'\n')
-    elif source_changed:
-        temporary=home/('.instance-'+secrets.token_hex(8));write(temporary,json.dumps(cfg,indent=2)+'\n');os.replace(temporary,path)
     # Only non-user-generated fields and random hex secrets enter Compose interpolation.
     environment={'CTL_HOME':str(home),'CTL_IMAGE':image,'CTL_PUBLIC_ORIGIN':cfg['origin'],'CTL_REGISTRY_HOST':cfg['registry_host'],
-                 'CTL_UPDATE_SOURCE':configured_source,'CTL_API_PORT':str(cfg['api_port']),'CTL_REGISTRY_PORT':str(cfg['registry_port']),
+                 'CTL_API_PORT':str(cfg['api_port']),'CTL_REGISTRY_PORT':str(cfg['registry_port']),
                  'CTL_POSTGRES_PASSWORD':cfg['postgres_password'],'CTL_REGISTRY_HTTP_SECRET':cfg['registry_secret']}
     env_path=plain(home/'compose.env')
     temporary=home/('.compose-'+secrets.token_hex(8));write(temporary,''.join(f'{k}={v}\n' for k,v in environment.items()));os.replace(temporary,env_path)
@@ -92,7 +79,7 @@ def prepare(home, image, origin=None, registry_host=None, api_port=None, registr
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--home',default='/opt/ctl-platform');parser.add_argument('--image',default='ctl-control:local')
-    parser.add_argument('--origin');parser.add_argument('--registry-host');parser.add_argument('--api-port',type=int);parser.add_argument('--registry-port',type=int);parser.add_argument('--database-url-file');parser.add_argument('--update-source')
+    parser.add_argument('--origin');parser.add_argument('--registry-host');parser.add_argument('--api-port',type=int);parser.add_argument('--registry-port',type=int);parser.add_argument('--database-url-file')
     try:
         cfg=prepare(**vars(parser.parse_args()))
         print('external' if cfg['external_database'] else 'database')

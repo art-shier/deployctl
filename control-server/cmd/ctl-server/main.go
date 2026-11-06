@@ -52,9 +52,11 @@ func main() {
 		log.Fatal("database migration failed")
 	}
 	done()
-	catalog := httpapi.NewSystemReleaseCatalog(c.API.ArtifactsDir, c.UpdateIndexSeed, c.UpdateSource)
-	c.API.SystemReleases = catalog
-	catalog.Start(ctx)
+	catalog := httpapi.NewSystemReleaseCatalog(c.API.ArtifactsDir, c.UpdateIndexSeed)
+	if err = db.SeedSystemReleases(ctx, catalog.Snapshot().Releases); err != nil {
+		log.Fatal("version catalog import failed")
+	}
+	c.API.SystemReleases = httpapi.NewRegisteredSystemCatalog(db, c.API.ArtifactsDir)
 	server := &http.Server{Addr: c.Listen, Handler: httpapi.New(db, c.API), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 60 * time.Minute, WriteTimeout: 61 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

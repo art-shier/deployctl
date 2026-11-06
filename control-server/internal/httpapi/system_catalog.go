@@ -3,14 +3,11 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -32,7 +29,6 @@ const (
 )
 
 type CatalogSnapshot struct {
-	UpdateSource  string                 `json:"update_source"`
 	Releases      []domain.SystemRelease `json:"releases"`
 	Source        string                 `json:"source"`
 	GeneratedAt   *time.Time             `json:"generated_at"`
@@ -109,76 +105,32 @@ type catalogFlight struct {
 // SystemReleaseCatalog serves local snapshots. Only Sync and the explicitly
 // started lifecycle worker contact the official static manifest endpoint.
 type SystemReleaseCatalog struct {
-	source         string
-	assetMu        sync.Mutex
-	artifactClient *http.Client
-	client         *http.Client
-	cachePath      string
-	mu             sync.Mutex
-	snapshot       CatalogSnapshot
-	manifest       releaseManifest
-	flight         *catalogFlight
-	started        bool
-	lifecycle      context.Context
-	wake           chan struct{}
+	client    *http.Client
+	cachePath string
+	mu        sync.Mutex
+	snapshot  CatalogSnapshot
+	manifest  releaseManifest
+	flight    *catalogFlight
+	started   bool
+	lifecycle context.Context
+	wake      chan struct{}
 }
 
-func ValidateUpdateSource(source string) error {
-	if source == "" {
-		return nil
+func NewSystemReleaseCatalog(artifactsDir, seedPath string) *SystemReleaseCatalog {
+	if seedPath == "" {
+		seedPath = "/app/update-index.seed.json"
 	}
-	u, err := url.Parse(source)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
-		return domain.ErrInvalid
-	}
-	for _, c := range source {
-		if c <= 32 || c >= 127 || strings.ContainsRune("\\$#%", c) {
-			return domain.ErrInvalid
-		}
-	}
-	for _, part := range strings.Split(u.Path, "/") {
-		if part == "." || part == ".." {
-			return domain.ErrInvalid
-		}
-	}
-	return nil
-}
-func sourceHTTPClient(source string, timeout time.Duration) *http.Client {
-	allowedHost := ""
-	if u, err := url.Parse(source); err == nil {
-		allowedHost = u.Host
-	}
-	return &http.Client{Timeout: timeout, CheckRedirect: func(r *http.Request, via []*http.Request) error {
-		allowed := r.URL.Host == "github.com" || r.URL.Host == "release-assets.githubusercontent.com"
-		if allowedHost != "" {
-			allowed = r.URL.Host == allowedHost
-		}
-		if len(via) > 5 || r.URL.Scheme != "https" || r.URL.User != nil || !allowed {
+	client := &http.Client{Timeout: catalogTimeout, CheckRedirect: func(r *http.Request, via []*http.Request) error {
+		if len(via) > 5 || r.URL.Scheme != "https" || r.URL.User != nil || (r.URL.Host != "github.com" && r.URL.Host != "release-assets.githubusercontent.com") {
 			return errors.New("release redirect rejected")
 		}
 		return nil
 	}}
-}
-func NewSystemReleaseCatalog(artifactsDir, seedPath string, sources ...string) *SystemReleaseCatalog {
-	if seedPath == "" {
-		seedPath = "/app/update-index.seed.json"
-	}
-	source := ""
-	if len(sources) > 0 {
-		source = strings.TrimRight(sources[0], "/")
-	}
-	p := newSystemReleaseCatalog(artifactsDir, seedPath, sourceHTTPClient(source, catalogTimeout))
-	p.source = source
-	p.artifactClient = sourceHTTPClient(source, 60*time.Second)
-	p.snapshot.UpdateSource = officialCatalogURL
-	if source != "" {
-		p.snapshot.UpdateSource = source + "/update-index.json"
-	}
-	return p
+	return newSystemReleaseCatalog(artifactsDir, seedPath, client)
 }
 
 func newSystemReleaseCatalog(artifactsDir, seedPath string, client *http.Client) *SystemReleaseCatalog {
-	p := &SystemReleaseCatalog{client: client, artifactClient: client, wake: make(chan struct{}, 1), snapshot: CatalogSnapshot{Releases: []domain.SystemRelease{}, Source: "none", Stale: true}}
+	p := &SystemReleaseCatalog{client: client, wake: make(chan struct{}, 1), snapshot: CatalogSnapshot{Releases: []domain.SystemRelease{}, Source: "none", Stale: true}}
 	if artifactsDir != "" {
 		p.cachePath = filepath.Join(artifactsDir, "update-index.cache.json")
 	}
@@ -439,7 +391,7 @@ func (p *SystemReleaseCatalog) acceptManifest(manifest releaseManifest, generate
 	return true
 }
 func (p *SystemReleaseCatalog) fetch(ctx context.Context) ([]byte, string) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.indexURL(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, officialCatalogURL, nil)
 	if err != nil {
 		return nil, "network_error"
 	}
@@ -511,6 +463,11 @@ type systemCatalogProvider interface {
 }
 
 func (s *Server) releaseCatalog(ctx context.Context, force bool) CatalogSnapshot {
+	if provider, ok := s.options.SystemReleases.(interface {
+		Catalog(context.Context) CatalogSnapshot
+	}); ok {
+		return provider.Catalog(ctx)
+	}
 	if provider, ok := s.options.SystemReleases.(systemCatalogProvider); ok {
 		if force {
 			return provider.Sync(ctx)
@@ -542,83 +499,4 @@ func (s *Server) syncSystemUpdateCatalog(w http.ResponseWriter, r *http.Request,
 	}
 	reply(w, http.StatusOK, s.releaseCatalog(r.Context(), true))
 	return nil
-}
-
-func (p *SystemReleaseCatalog) indexURL() string {
-	if p.source != "" {
-		return p.source + "/update-index.json"
-	}
-	return officialCatalogURL
-}
-
-// Artifact only accepts a persisted task identity and its frozen checksum.
-func (p *SystemReleaseCatalog) Artifact(ctx context.Context, job domain.UpdateJob) ([]byte, error) {
-	name := "deployctl.pyz"
-	digest := job.CLISHA256
-	limit := int64(10 * 1024 * 1024)
-	if job.Kind == "center" {
-		name = "ctl-platform-" + job.Version + ".tar.gz"
-		digest = job.ServerSHA256
-		limit = 512 * 1024
-	}
-	if !domain.StableUpdateVersion(job.Version) || !catalogDigest(digest) || (job.Kind != "node" && job.Kind != "center") {
-		return nil, domain.ErrInvalid
-	}
-	p.assetMu.Lock()
-	defer p.assetMu.Unlock()
-	cache := ""
-	valid := func(raw []byte) bool {
-		return int64(len(raw)) <= limit && fmt.Sprintf("%x", sha256.Sum256(raw)) == digest
-	}
-	if p.cachePath != "" {
-		dir := filepath.Join(filepath.Dir(p.cachePath), "system-update-packages")
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return nil, err
-		}
-		cache = filepath.Join(dir, digest)
-		if raw, err := readCatalogFile(cache, limit); err == nil && valid(raw) {
-			return raw, nil
-		}
-	}
-	address := "https://github.com/art-shier/deployctl/releases/download/" + job.Version + "/" + name
-	if p.source != "" {
-		address = p.source + "/" + job.Version + "/" + name
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
-	if err != nil {
-		return nil, err
-	}
-	response, err := p.artifactClient.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != 200 {
-		return nil, errSystemReleasesUnavailable
-	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if !valid(raw) {
-		return nil, domain.ErrInvalid
-	}
-	if cache != "" {
-		tmp, err := os.CreateTemp(filepath.Dir(cache), ".package-")
-		if err != nil {
-			return nil, err
-		}
-		defer os.Remove(tmp.Name())
-		if _, err = tmp.Write(raw); err != nil {
-			tmp.Close()
-			return nil, err
-		}
-		if err = tmp.Close(); err != nil {
-			return nil, err
-		}
-		if err = os.Rename(tmp.Name(), cache); err != nil {
-			return nil, err
-		}
-	}
-	return raw, nil
 }

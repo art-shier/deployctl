@@ -306,6 +306,13 @@ func (s *Store) CreateUpdateJobs(ctx context.Context, in domain.UpdateRequest, a
 	if rel.Version != in.Version || rel.Validate() != nil {
 		return nil, domain.ErrInvalid
 	}
+	if rel.RequiresPackageProxy() {
+		for _, u := range updaters {
+			if domain.UpdateVersionNewer("v1.17.0", u.HelperVersion) {
+				return nil, domain.ErrInvalid
+			}
+		}
+	}
 	batch := domain.NewID()
 	if _, err = tx.Exec(ctx, "INSERT INTO ctl_update_requests(request_id,request_hash,batch_id) VALUES($1,$2,$3)", in.RequestID, hash, batch); err != nil {
 		return nil, mapped(err)
@@ -313,7 +320,7 @@ func (s *Store) CreateUpdateJobs(ctx context.Context, in domain.UpdateRequest, a
 	jobs := []domain.UpdateJob{}
 	for _, u := range updaters {
 		now := time.Now().UTC()
-		j := domain.UpdateJob{ID: domain.NewID(), RequestID: in.RequestID, BatchID: batch, UpdaterID: u.ID, Kind: u.Kind, TargetID: u.TargetID, Version: in.Version, FromVersion: u.CurrentVersion, CLISHA256: rel.CLISHA256, ServerSHA256: rel.ServerSHA256, Status: "queued", Stage: "queued", CurrentVersion: u.CurrentVersion, CreatedAt: now, UpdatedAt: now, Parallelism: in.Parallelism}
+		j := domain.UpdateJob{ID: domain.NewID(), RequestID: in.RequestID, BatchID: batch, UpdaterID: u.ID, Kind: u.Kind, TargetID: u.TargetID, Version: in.Version, FromVersion: u.CurrentVersion, CLISHA256: rel.CLISHA256, ServerSHA256: rel.ServerSHA256, CLIURL: rel.CLIURL, ServerURL: rel.ServerURL, Status: "queued", Stage: "queued", CurrentVersion: u.CurrentVersion, CreatedAt: now, UpdatedAt: now, Parallelism: in.Parallelism}
 		b, _ = json.Marshal(j)
 		_, err = tx.Exec(ctx, "INSERT INTO ctl_update_jobs(id,request_id,updater_id,kind,target_id,batch_id,status,created_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", j.ID, j.RequestID, j.UpdaterID, j.Kind, j.TargetID, j.BatchID, j.Status, j.CreatedAt, b)
 		if err != nil {

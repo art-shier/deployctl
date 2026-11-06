@@ -18,6 +18,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  register:
+    needs: publish
+    if: ${{ vars.CTL_CENTER_URL != '' }}
+    uses: ./.github/workflows/register-release.yml
+    with:
+      version: ${{ inputs.version || github.ref_name }}
+    secrets:
+      CTL_VERSION_REGISTRATION_TOKEN: ${{ secrets.CTL_VERSION_REGISTRATION_TOKEN }}
   verify:
     uses: ./.github/workflows/verify.yml
     with:
@@ -63,18 +71,6 @@ jobs:
           python scripts/build_update_index.py --refresh-history --repo "$GITHUB_REPOSITORY" \
             --exclude-version "$TAG" --generated-at "$(date -u +%FT%TZ)" \
             --output control-deploy/update-index.seed.json
-      - name: Validate configured update mirror
-        env:
-          MIRROR_URL: ${{ vars.CTL_UPDATE_MIRROR_URL }}
-          MIRROR_REPOSITORY: ${{ vars.CTL_SERVER_MIRROR_REPOSITORY }}
-          DESTINATION: ${{ vars.CTL_UPDATE_S3_DESTINATION }}
-          ACCESS_KEY: ${{ secrets.CTL_UPDATE_S3_ACCESS_KEY_ID }}
-          SECRET_KEY: ${{ secrets.CTL_UPDATE_S3_SECRET_ACCESS_KEY }}
-        run: |
-          if [ -n "$MIRROR_URL" ]; then
-            test -n "$MIRROR_REPOSITORY" && test -n "$DESTINATION" && test -n "$ACCESS_KEY" && test -n "$SECRET_KEY"
-            python -c 'import os; from deployctl.bootstrap import update_source; update_source(os.environ["MIRROR_URL"])'
-          fi
       - name: Generate shared CLI and skill assets before image build
         run: python scripts/build_release_assets.py
       - uses: docker/setup-qemu-action@v3
@@ -99,30 +95,9 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=ctl API and management console
-      - name: Copy image to configured primary mirror
-        id: delivery-image
-        env:
-          SOURCE: ${{ steps.server-repository.outputs.image }}@${{ steps.server-image.outputs.digest }}
-          MIRROR: ${{ vars.CTL_SERVER_MIRROR_REPOSITORY }}
-          MIRROR_USER: ${{ secrets.CTL_SERVER_MIRROR_USERNAME }}
-          MIRROR_PASSWORD: ${{ secrets.CTL_SERVER_MIRROR_PASSWORD }}
-          TAG: ${{ inputs.version || github.ref_name }}
-        run: |
-          IMAGE="$SOURCE"
-          if [ -n "$MIRROR" ]; then
-            python -c 'import os,re; assert re.fullmatch(r"[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+",os.environ["MIRROR"])'
-            test -n "$MIRROR_USER" && test -n "$MIRROR_PASSWORD"
-            printf '%s' "$MIRROR_PASSWORD" | docker login "${MIRROR%%/*}" --username "$MIRROR_USER" --password-stdin
-            sudo apt-get update -qq && sudo apt-get install -y skopeo
-            skopeo copy --all --preserve-digests --authfile "$HOME/.docker/config.json" "docker://$SOURCE" "docker://$MIRROR:$TAG"
-            IMAGE="$MIRROR@${SOURCE##*@}"
-            skopeo inspect --raw "docker://$IMAGE" > mirror-manifest.json
-            test "sha256:$(sha256sum mirror-manifest.json | cut -d ' ' -f 1)" = "${SOURCE##*@}"
-          fi
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
       - name: Verify public image and build server bundle
         env:
-          IMAGE: ${{ steps.delivery-image.outputs.image }}
+          IMAGE: ${{ steps.server-repository.outputs.image }}@${{ steps.server-image.outputs.digest }}
           TAG: ${{ inputs.version || github.ref_name }}
         run: |
           mkdir -m 700 "$RUNNER_TEMP/anonymous-docker"
@@ -130,7 +105,7 @@ jobs:
           python scripts/build_server_bundle.py --image "$IMAGE" --version "$TAG"
       - name: Build wheel and release assets
         env:
-          IMAGE: ${{ steps.delivery-image.outputs.image }}
+          IMAGE: ${{ steps.server-repository.outputs.image }}@${{ steps.server-image.outputs.digest }}
           TAG: ${{ inputs.version || github.ref_name }}
         run: |
           python -m build --wheel
@@ -266,11 +241,3 @@ jobs:
           PY
           echo "Server bundle: $RELEASE_URL" >> "$GITHUB_STEP_SUMMARY"
           echo "Published $TAG after real GitHub asset download and installer verification" >> "$GITHUB_STEP_SUMMARY"
-
-  sync-update-source:
-    needs: publish
-    if: vars.CTL_UPDATE_MIRROR_URL != ''
-    uses: ./.github/workflows/sync-update-source.yml
-    with:
-      version: ${{ inputs.version || github.ref_name }}
-    secrets: inherit
