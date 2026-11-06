@@ -7,6 +7,7 @@ test("real Agent access packages match checksums and page exposes no credential 
   const owner = process.env.CTL_OWNER_TOKEN;
   if (!owner) throw new Error("disposable owner fixture required");
   await page.goto("/#agent");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByLabel("管理员凭据").fill(owner);
   await page.getByRole("button", { name: "进入管理台" }).click();
   const paths: string[] = [];

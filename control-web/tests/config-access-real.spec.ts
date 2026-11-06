@@ -11,6 +11,7 @@ test("real group configuration inheritance, credential edits, reveal and revoke"
     project = `service-${suffix}`,
     future = `future-${suffix}`;
   await page.goto("/");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByLabel("管理员凭据").fill(owner);
   await page.getByRole("button", { name: "进入管理台" }).click();
   await expect(

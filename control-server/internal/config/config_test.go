@@ -32,8 +32,16 @@ func TestInitializePreservesKeysAndLoadFailsClosed(t *testing.T) {
 	}
 	t.Setenv("CTL_PUBLIC_ORIGIN", "http://127.0.0.1:8080")
 	t.Setenv("CTL_AGENT_DIR", "")
+	t.Setenv("CTL_UPDATE_INDEX_SEED", "")
 	if c, err := Load(); err != nil || c.API.AgentDir != "/app/agent" {
 		t.Fatal("default Agent directory missing", err)
+	}
+	if c, err := Load(); err != nil || c.UpdateIndexSeed != "/app/update-index.seed.json" {
+		t.Fatal("default update index seed missing", err)
+	}
+	t.Setenv("CTL_UPDATE_INDEX_SEED", filepath.Join(t.TempDir(), "seed.json"))
+	if c, err := Load(); err != nil || c.UpdateIndexSeed != os.Getenv("CTL_UPDATE_INDEX_SEED") {
+		t.Fatal("custom update index seed missing", err)
 	}
 	// A missing public resource directory is reported by Agent endpoints, not startup.
 	t.Setenv("CTL_AGENT_DIR", filepath.Join(t.TempDir(), "missing-agent"))

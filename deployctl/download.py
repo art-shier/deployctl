@@ -79,7 +79,8 @@ def resolve_asset(url):
     token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
     parts = parsed.path.strip('/').split('/')
     if (token and parsed.hostname == 'github.com' and len(parts) == 6
-            and parts[2:4] == ['releases', 'download']):
+            and parts[2:4] == ['releases', 'download']
+            and parts[:2] != ['art-shier', 'deployctl']):
         owner, repo, _, _, tag, filename = map(unquote, parts)
         api = f'https://api.github.com/repos/{quote(owner, safe="")}/{quote(repo, safe="")}/releases/tags/{quote(tag, safe="")}'
         auth = dict(headers, Authorization=f'Bearer {token}', Accept='application/vnd.github+json',

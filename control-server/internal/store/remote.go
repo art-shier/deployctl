@@ -215,6 +215,8 @@ func (s *Store) EnrollNodeNamed(ctx context.Context, hash, agent, platform, name
 	n.Platform = platform
 	n.Online = false
 	n.LastSeen = nil
+	n.Metrics = nil
+	n.MetricsAt = nil
 	data, _ := json.Marshal(n)
 	if discovered {
 		_, err = tx.Exec(ctx, "INSERT INTO ctl_nodes(id,data,token_hash,registered) VALUES($1,$2,$3,true)", n.ID, data, auth.HashToken(raw))
@@ -317,7 +319,15 @@ func observe(ctx context.Context, tx pgx.Tx, node string, o domain.Observation) 
 	_, err = tx.Exec(ctx, "UPDATE ctl_instances SET data=$2 WHERE id=$1", i.ID, b)
 	return err
 }
-func (s *Store) HeartbeatNode(ctx context.Context, id, agent, platform string, docker bool, observations []domain.Observation) (bool, []domain.Instance, error) {
+func (s *Store) HeartbeatNode(ctx context.Context, id, agent, platform string, docker bool, observations []domain.Observation, metrics ...*domain.NodeMetrics) (bool, []domain.Instance, error) {
+	if len(metrics) > 1 {
+		return false, nil, domain.ErrInvalid
+	}
+	if len(metrics) == 1 && metrics[0] != nil {
+		if err := metrics[0].Validate(); err != nil {
+			return false, nil, err
+		}
+	}
 	if !validNodeAgent(agent, platform) || len(observations) > 1000 {
 		return false, nil, domain.ErrInvalid
 	}
@@ -337,6 +347,10 @@ func (s *Store) HeartbeatNode(ctx context.Context, id, agent, platform string, d
 	}
 	now := time.Now().UTC()
 	n.LastSeen = &now
+	if len(metrics) == 1 && metrics[0] != nil {
+		n.Metrics = metrics[0]
+		n.MetricsAt = &now
+	}
 	n.AgentVersion = agent
 	n.Platform = platform
 	n.DockerAvailable = docker

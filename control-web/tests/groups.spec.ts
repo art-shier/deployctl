@@ -10,6 +10,7 @@ test("group assignment and one login authorizes multiple projects", async ({
     notes = `group-notes-${suffix}`,
     config = `group-config-${suffix}`;
   await page.goto("/");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByLabel("管理员凭据").fill(owner);
   await page.getByRole("button", { name: "进入管理台" }).click();
   await page.getByRole("link", { name: "项目组", exact: true }).click();

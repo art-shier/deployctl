@@ -11,6 +11,7 @@ test("owner removes projects and empty groups, identifiers stay reserved and arc
     project = `remove-app-${suffix}`,
     name = `publisher-${suffix}`;
   await page.goto("/");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByLabel("管理员凭据").fill(owner);
   await page.getByRole("button", { name: "进入管理台" }).click();
   await expect(

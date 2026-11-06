@@ -10,6 +10,7 @@ test("group-first navigation, membership and in-context group authorization", as
     project = `app-${suffix}`,
     future = `future-${suffix}`;
   await page.goto("/");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByLabel("管理员凭据").fill(owner);
   await page.getByRole("button", { name: "进入管理台" }).click();
   await expect(

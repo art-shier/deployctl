@@ -88,8 +88,8 @@ class BootstrapTests(unittest.TestCase):
         content = b'fake-cli'
         digest = hashlib.sha256(content).hexdigest()
         release = {'tag_name': 'v1.2.0', 'assets': [
-            {'name': 'deployctl.pyz', 'url': 'https://api.github.com/repos/art-shier/deployctl/releases/assets/1'},
-            {'name': 'deployctl.pyz.sha256', 'url': 'https://api.github.com/repos/art-shier/deployctl/releases/assets/2'},
+            {'name': 'deployctl.pyz', 'url': 'https://api.github.com/repos/acme/private-cli/releases/assets/1'},
+            {'name': 'deployctl.pyz.sha256', 'url': 'https://api.github.com/repos/acme/private-cli/releases/assets/2'},
         ]}
         def responses(request, limit):
             self.assertEqual(request.get_header('Authorization'), 'Bearer read-token')
@@ -99,8 +99,8 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(request.get_header('Accept'), 'application/octet-stream')
             return digest.encode() if request.full_url.endswith('/2') else content
         with patch.object(installer, 'fetch', responses), patch.object(installer, 'artifact_version', return_value='1.2.0'):
-            state = installer.install(install_dir=self.root / 'bin', version='v1.2.0', token='read-token')
-        self.assertEqual(state['repository'], 'art-shier/deployctl')
+            state = installer.install(install_dir=self.root / 'bin', version='v1.2.0', token='read-token', repository='acme/private-cli')
+        self.assertEqual(state['repository'], 'acme/private-cli')
         self.assertEqual((self.root / 'bin/ctl').read_bytes(), content)
 
     def test_redirect_strips_token_and_blocks_https_downgrade(self):
@@ -117,7 +117,7 @@ class BootstrapTests(unittest.TestCase):
         release = {'tag_name': 'v1.1.0', 'assets': []}
         with patch.object(installer, 'fetch', return_value=json.dumps(release).encode()):
             with self.assertRaisesRegex(ValueError, 'version'):
-                installer.install(install_dir=self.root / 'bin', version='v1.2.0')
+                installer.install(install_dir=self.root / 'bin', version='v1.2.0', repository='acme/private-cli')
         self.assertFalse((self.root / 'bin').exists())
 
     def test_gh_token_lookup_pins_github_host(self):

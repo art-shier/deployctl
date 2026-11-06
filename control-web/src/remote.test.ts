@@ -159,3 +159,53 @@ test("offline and disabled nodes are distinct and stale health is explicitly his
     ),
   ).toBe("最近观测 · 未知");
 });
+
+test("batch retry skips successful nodes and preserves ambiguous identity", async () => {
+  const { DeploymentBatch } = await import("./remote");
+  const batch = new DeploymentBatch();
+  const requests: { node_id: string; request_id: string }[] = [];
+  let fail = true;
+  const send = async (body: any) => {
+    requests.push({ ...body });
+    if (body.node_id === "node-b" && fail) throw new APIError(0, "offline");
+    return { id: `task-${body.node_id}` } as any;
+  };
+  const drafts = [draft, { ...draft, node_id: "node-b" }];
+  const results = await batch.submit(drafts, send);
+  expect(results[0].task?.id).toBe("task-node-a");
+  expect(results[1].uncertain).toBe(true);
+  expect(() => batch.reset()).toThrow();
+  fail = false;
+  await batch.submit(drafts, send);
+  expect(requests.filter((r) => r.node_id === "node-a")).toHaveLength(1);
+  expect(requests[1]).toEqual(requests[2]);
+  expect(batch.uncertain).toBe(false);
+});
+test("offline, stale and invalid samples never count as currently healthy", async () => {
+  const { currentHealth } = await import("./remote");
+  const now = Date.now();
+  expect(
+    currentHealth(
+      { health: "healthy", observed_at: new Date(now).toISOString() },
+      true,
+      now,
+    ),
+  ).toBe("healthy");
+  expect(
+    currentHealth(
+      { health: "healthy", observed_at: new Date(now).toISOString() },
+      false,
+      now,
+    ),
+  ).toBe("unknown");
+  expect(
+    currentHealth(
+      { health: "healthy", observed_at: new Date(now - 91000).toISOString() },
+      true,
+      now,
+    ),
+  ).toBe("unknown");
+  expect(
+    currentHealth({ health: "healthy", observed_at: "invalid" }, true, now),
+  ).toBe("unknown");
+});

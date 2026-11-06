@@ -13,16 +13,15 @@ import hashlib
 from unittest.mock import patch
 
 from deployctl.cli import main, parser
-from deployctl import server_bundle
+from deployctl import download, server_bundle
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = 'ghcr.io/art-shier/ctl-server@sha256:' + 'a' * 64
 
 
 def release(tag='v1.9.0', **changes):
-    return dict(tag_name=tag, draft=False, prerelease=False,
-                assets=[{'name': f'ctl-platform-{tag}.tar.gz'},
-                        {'name': f'ctl-platform-{tag}.tar.gz.sha256'}], **changes)
+    row = dict(version=tag, published_at='2026-11-06T00:00:00Z', cli_sha256='a'*64, server_sha256='b'*64)
+    return dict(schema_version=1, generated_at='2026-11-06T00:00:00Z', releases=[row], **changes)
 
 
 class ServerCommandTests(unittest.TestCase):
@@ -51,32 +50,66 @@ class ServerCommandTests(unittest.TestCase):
     def test_latest_resolves_to_fixed_official_bundle(self):
         self.assertTrue(callable(getattr(server_bundle, 'resolve_server_release', None)), 'official server release resolution is missing')
         with patch.object(server_bundle, 'fetch', return_value=json.dumps(release()).encode()) as transport:
-            source, tag = server_bundle.resolve_server_release()
+            source, tag, digest = server_bundle.resolve_server_release()
         self.assertEqual(tag, 'v1.9.0')
+        self.assertEqual(digest, 'b'*64)
         self.assertEqual(source, 'https://github.com/art-shier/deployctl/releases/download/v1.9.0/ctl-platform-v1.9.0.tar.gz')
         self.assertEqual(transport.call_args.args[0].full_url,
-                         'https://api.github.com/repos/art-shier/deployctl/releases/latest')
+                         'https://github.com/art-shier/deployctl/releases/latest/download/update-index.json')
 
-    def test_exact_version_cannot_silently_resolve_another_version(self):
-        self.assertTrue(callable(getattr(server_bundle, 'resolve_server_release', None)), 'official server release resolution is missing')
-        with patch.object(server_bundle, 'fetch', return_value=json.dumps(release()).encode()):
-            with self.assertRaisesRegex(ValueError, 'version'):
-                server_bundle.resolve_server_release('v1.8.0')
-            source, tag = server_bundle.resolve_server_release('1.9.0')
-            self.assertEqual(tag, 'v1.9.0')
-            self.assertIn('/v1.9.0/', source)
+    def test_exact_version_resolves_directly_without_discovery(self):
+        with patch.object(server_bundle, 'fetch', side_effect=AssertionError('exact version must avoid discovery')):
+            source, tag, digest = server_bundle.resolve_server_release('1.9.0')
+        self.assertEqual(tag, 'v1.9.0')
+        self.assertIsNone(digest)
+        self.assertIn('/v1.9.0/ctl-platform-v1.9.0.tar.gz', source)
 
-    def test_unpublished_missing_duplicate_or_prerelease_latest_is_rejected(self):
-        self.assertTrue(callable(getattr(server_bundle, 'resolve_server_release', None)), 'official server release resolution is missing')
-        fixtures = []
-        for key in ('draft', 'prerelease'):
-            value = release(); value[key] = True; fixtures.append(value)
-        value = release(); value['assets'].pop(); fixtures.append(value)
-        value = release(); value['assets'].append(value['assets'][0]); fixtures.append(value)
-        fixtures.extend([[], {'tag_name': '../../escape'}])
+    def test_invalid_latest_catalog_is_rejected(self):
+        fixtures = [[], {'tag_name': '../../escape'}, dict(release(), releases=[])]
         for value in fixtures:
             with self.subTest(value=value), patch.object(server_bundle, 'fetch', return_value=json.dumps(value).encode()):
                 with self.assertRaises(ValueError): server_bundle.resolve_server_release()
+
+    @unittest.skipIf(os.name == 'nt', 'protected POSIX instance paths and locks')
+    def test_automatic_latest_enforces_catalog_and_explicit_checksum(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            package = server_bundle.build_bundle(ROOT, folder/'package', IMAGE, 'v1.9.0')
+            content = package.read_bytes()
+            digest = hashlib.sha256(content).hexdigest()
+            cases = [
+                ('replacement-sidecar', 'b'*64, None, True),
+                ('caller-cannot-override-catalog', 'b'*64, digest, True),
+                ('caller-disagrees', digest, '0'*64, True),
+                ('catalog-matches', digest, None, False),
+                ('caller-matches', digest, digest.upper(), False),
+            ]
+            for name, catalog_digest, explicit_digest, rejects in cases:
+                index = release()
+                index['releases'][0]['server_sha256'] = catalog_digest
+                requests = []
+                def transport(request, limit, **kwargs):
+                    requests.append(request.full_url)
+                    if request.full_url.endswith('/latest/download/update-index.json'):
+                        return json.dumps(index).encode()
+                    if request.full_url.endswith('.sha256'):
+                        return (digest+'  '+package.name+'\n').encode()
+                    self.assertEqual(request.full_url,
+                        'https://github.com/art-shier/deployctl/releases/download/v1.9.0/ctl-platform-v1.9.0.tar.gz')
+                    return content
+                home = folder/name
+                with self.subTest(case=name), patch.object(server_bundle, 'require_runtime'), patch.object(server_bundle, 'LOCK_HOME', folder/'locks'), patch.object(server_bundle, 'fetch', transport), patch.object(download, 'fetch', transport), patch.object(server_bundle, 'run_bootstrap') as runner:
+                    if rejects:
+                        with self.assertRaisesRegex(ValueError, 'checksum'):
+                            server_bundle.deploy_server(home=home, expected_sha256=explicit_digest)
+                        runner.assert_not_called()
+                        self.assertFalse((home/'server-state.json').exists())
+                    else:
+                        state = server_bundle.deploy_server(home=home, expected_sha256=explicit_digest)
+                        self.assertEqual(state['current']['sha256'], digest)
+                        runner.assert_called_once()
+                if catalog_digest != digest and explicit_digest is None:
+                    self.assertIn('https://github.com/art-shier/deployctl/releases/download/v1.9.0/ctl-platform-v1.9.0.tar.gz', requests)
 
     def test_restart_readiness_uses_actual_loopback_endpoint_and_times_out(self):
         class Handler(BaseHTTPRequestHandler):

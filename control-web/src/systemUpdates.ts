@@ -20,6 +20,26 @@ export interface SystemRelease {
   cli_sha256: string;
   server_sha256: string;
 }
+export interface ReleaseCatalog {
+  releases: SystemRelease[];
+  source: "bundled" | "cache" | "remote" | "none";
+  generated_at: string | null;
+  last_success_at: string | null;
+  last_attempt_at: string | null;
+  next_sync_at: string | null;
+  stale: boolean;
+  sync_error: string;
+}
+export const catalogErrorText = (code: string) =>
+  ({
+    network_error: "无法连接官方清单，请检查中心服务器的网络。",
+    timeout: "同步超时，可以点击立即同步清单重试。",
+    rate_limited: "官方清单服务暂时限流，请稍后重试。",
+    not_found: "官方清单尚不可用，请稍后重试。",
+    http_error: "官方清单服务返回异常，请稍后重试。",
+    invalid_manifest: "官方清单校验失败，本次数据未采用。",
+    cache_write_failed: "清单缓存保存失败，请检查中心的数据目录。",
+  })[code] || (code ? "清单同步失败，请稍后重试。" : "");
 export interface UpdateJob {
   id: string;
   request_id: string;
