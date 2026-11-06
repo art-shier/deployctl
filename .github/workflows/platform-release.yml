@@ -170,7 +170,7 @@ jobs:
           test "$("$RUNNER_TEMP/published/ctl" --version)" = "${TAG#v}"
           test "$("$RUNNER_TEMP/published/deployctl" --version)" = "${TAG#v}"
           trap 'sudo docker compose --project-name ctl-platform --env-file /root/ctl-release-fixture/compose.env -f control-deploy/compose.yaml --profile database down || true' EXIT
-          sudo "$RUNNER_TEMP/published/ctl" server-upgrade --home /root/ctl-release-fixture
+          sudo "$RUNNER_TEMP/published/ctl" server-upgrade --home /root/ctl-release-fixture --cli-path /root/ctl-ci-bin/ctl
           sudo "$RUNNER_TEMP/published/ctl" server-restart --home /root/ctl-release-fixture
           curl --fail --silent http://127.0.0.1:8092/api/v1/health/ready >/dev/null
           RELEASE_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/ctl-platform-${TAG}.tar.gz"
