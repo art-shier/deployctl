@@ -7,6 +7,63 @@ import pytest
 from deployctl import cli, node_agent, updater
 
 
+@pytest.mark.parametrize('command,field', [
+    (['server', 'install'], 'cli_path'),
+    (['server', 'upgrade'], 'cli_path'),
+    (['server-upgrade'], 'cli_path'),
+    (['updater', 'setup', '--kind', 'center'], 'cli_path'),
+    (['updater', 'enroll', '--kind', 'node', '--server', 'https://center.test', '--target-id', 'a'*32], 'cli_path'),
+    (['agent', 'install'], 'executable'),
+    (['agent', 'service'], 'executable'),
+])
+def test_install_commands_default_to_invoking_cli_not_fixed_directory(monkeypatch, tmp_path, command, field):
+    # Root --user installations and custom destinations must use their own marker,
+    # even if another CLI is present in PATH or the working directory changes.
+    executable = tmp_path / '.local' / 'bin' / 'ctl'
+    monkeypatch.setattr(cli.sys, 'argv', [str(executable), *command])
+    monkeypatch.setenv('PATH', '/another/installation/bin')
+    monkeypatch.chdir(tmp_path)
+    args = cli.parser().parse_args(command)
+    assert Path(getattr(args, field)) == executable.absolute()
+    explicit = tmp_path / 'explicit' / 'deployctl'
+    args = cli.parser().parse_args([*command, '--' + field.replace('_', '-'), str(explicit)])
+    assert getattr(args, field) == str(explicit)
+
+
+@pytest.mark.parametrize('name', ['ctl', 'deployctl'])
+def test_center_upgrade_passes_actual_cli_to_automatic_setup(tmp_path, monkeypatch, name):
+    from deployctl import server_bundle
+    executable = tmp_path / '.local' / 'bin' / name
+    monkeypatch.setattr(cli.sys, 'argv', [str(executable)])
+    monkeypatch.setattr(server_bundle, 'deploy_server', lambda *args, **kwargs: {'current': {'version':'v1.15.1'}})
+    calls = []
+    monkeypatch.setattr(updater, 'setup', lambda args: calls.append(args.cli_path))
+    assert cli.main(['server', 'upgrade']) == 0
+    assert calls == [str(executable.absolute())]
+
+
+def test_relative_cli_invocation_becomes_absolute_without_path_search(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli.sys, 'argv', ['custom bin/ctl'])
+    args = cli.parser().parse_args(['server', 'upgrade'])
+    assert Path(args.cli_path) == tmp_path / 'custom bin' / 'ctl'
+
+
+def test_default_cli_detection_does_not_resolve_untrusted_links(tmp_path, monkeypatch):
+    executable = tmp_path / 'ctl'
+    target = tmp_path / 'real-ctl'
+    target.write_bytes(b'fixture')
+    try:
+        executable.symlink_to(target)
+    except OSError:
+        pytest.skip('symlink creation unavailable')
+    monkeypatch.setattr(cli.sys, 'argv', [str(executable)])
+    args = cli.parser().parse_args(['server', 'upgrade'])
+    assert Path(args.cli_path) == executable
+    with pytest.raises(ValueError):
+        updater.trusted(args.cli_path)
+
+
 def test_new_install_and_repair_commands_derive_role_defaults():
     args = cli.parser().parse_args(['agent', 'install', '--server', 'https://center.test'])
     assert args.updater_home == '/var/lib/ctl-updater-node'

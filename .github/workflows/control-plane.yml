@@ -53,24 +53,21 @@ jobs:
           IMAGE=$(docker inspect --format '{{index .RepoDigests 0}}' 127.0.0.1:5002/ctl-server:fixture)
           python scripts/build_server_bundle.py --image "$IMAGE" --version v1.8.1
           python scripts/build_release_assets.py
-          sudo install -d -m 0700 /root/ctl-ci-bin
-          sudo /usr/bin/python3 scripts/install_deployctl.py dist/deployctl.pyz --install-dir /root/ctl-ci-bin
-          if ! sudo /root/ctl-ci-bin/ctl server install --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform \
-            --cli-path /root/ctl-ci-bin/ctl \
+          sudo install -d -m 0700 /root/.local/bin
+          sudo /usr/bin/python3 scripts/install_deployctl.py dist/deployctl.pyz --install-dir /root/.local/bin
+          if ! sudo /root/.local/bin/ctl server install --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform \
             --origin http://127.0.0.1:8091 --registry-host 127.0.0.1:5091 --api-port 8091 --registry-port 5091; then
             echo 'Disposable center updater setup diagnostic'
-            sudo /root/ctl-ci-bin/ctl updater setup --kind center --server-home /root/ctl-ci-platform \
-              --cli-path /root/ctl-ci-bin/ctl || true
+            sudo /root/.local/bin/ctl updater setup --kind center --server-home /root/ctl-ci-platform || true
             sudo stat --format='%a %u %g %n' / /usr /usr/local /usr/local/bin \
-              /root/ctl-ci-bin /root/ctl-ci-bin/ctl /root/ctl-ci-bin/.deployctl-install.json /usr/bin/python3 /usr/bin/python3.12 \
+              /root/.local/bin /root/.local/bin/ctl /root/.local/bin/.deployctl-install.json /usr/bin/python3 /usr/bin/python3.12 \
               /root /root/ctl-ci-platform /root/ctl-ci-platform/instance.json /root/ctl-ci-platform/keys \
               /root/ctl-ci-platform/keys/owner.token /var /var/lib /var/lib/ctl-updater-center 2>&1 | head -c 4096 || true
             exit 1
           fi
           KEY_SUM=$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)
           UPDATER_SUM=$(sudo sha256sum /var/lib/ctl-updater-center/updater.json | cut -d ' ' -f1)
-          sudo /root/ctl-ci-bin/ctl server upgrade --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform \
-            --cli-path /root/ctl-ci-bin/ctl
+          sudo /root/.local/bin/ctl server upgrade --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform
           test "$UPDATER_SUM" = "$(sudo sha256sum /var/lib/ctl-updater-center/updater.json | cut -d ' ' -f1)"
           sudo systemctl is-active --quiet ctl-updater-center.service
           test "$KEY_SUM" = "$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"

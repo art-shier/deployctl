@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 from . import __version__
+from .cli_location import invoking_cli
 from .contract import read_yaml, validate_deployment
 from .release import build_release
 from .runtime_config import parse_assignments, validate_unset
@@ -40,7 +41,7 @@ def parser():
                 operation.add_argument('--api-port', type=int)
                 operation.add_argument('--registry-port', type=int)
                 operation.add_argument('--database-url-file', help='private file containing an external PostgreSQL URL')
-                operation.add_argument('--cli-path', default='/usr/local/bin/ctl')
+                operation.add_argument('--cli-path', default=invoking_cli(), help='managed CLI path; default: this invoking CLI')
                 operation.add_argument('--updater-home', default='/var/lib/ctl-updater-center')
                 operation.add_argument('--updater-service', default='ctl-updater-center.service')
             if name == 'logs': operation.add_argument('--tail', type=int, default=100)

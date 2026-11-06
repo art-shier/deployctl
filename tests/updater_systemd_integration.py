@@ -152,7 +152,7 @@ def main():
             token_file=root/'node-enrollment.token';token_file.write_text('ctl_'+'e'*40);token_file.chmod(0o600)
             integrated_home=root/'integrated-updater'
             install_args=[str(executable),'agent','install','--server',origin,'--home',str(agent_home),
-                '--root',str(root/'apps'),'--config-root',str(root/'config'),'--executable',str(executable),
+                '--root',str(root/'apps'),'--config-root',str(root/'config'),
                 '--service-name',unit_name,'--updater-home',str(integrated_home),'--updater-service',updater_name]
             try:
                 command(*install_args,'--token-file',str(token_file))
