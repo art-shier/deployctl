@@ -36,7 +36,6 @@ type Target = {
 };
 const errorText = (cause: unknown) =>
   cause instanceof Error ? cause.message : "操作失败，请重试。";
-const shellArg = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const statusName = (value: string) =>
   ({
     queued: "排队中",
@@ -84,119 +83,48 @@ function Setup({
   Dialog: DialogType;
   close: () => void;
 }) {
-  const [credential, setCredential] = useState<{
-    enrollment_token: string;
-    expires_at: string;
-  } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const pending = useRef<AbortController | null>(null);
-  useEffect(() => () => pending.current?.abort(), []);
-  const generate = async () => {
-    if (busy) return;
-    if (
-      target.updater &&
-      !confirm(
-        "替换登记会立即使旧更新服务凭据失效。有活动更新时无法替换。继续？",
-      )
-    )
-      return;
-    const controller = new AbortController();
-    pending.current = controller;
-    setBusy(true);
-    setError("");
-    try {
-      const result = await api<{
-        enrollment_token: string;
-        expires_at: string;
-      }>("/system-updates/enrollments", {
-        ...send("POST", { kind: target.kind, target_id: target.target_id }),
-        signal: controller.signal,
-      });
-      if (!controller.signal.aborted) setCredential(result);
-    } catch (cause) {
-      if (!controller.signal.aborted) setError(errorText(cause));
-    } finally {
-      if (!controller.signal.aborted) setBusy(false);
-    }
-  };
-  const paths =
-    target.kind === "node"
-      ? "--agent-home /var/lib/ctl-agent --agent-service ctl-agent.service"
-      : "--server-home /opt/ctl-platform";
+  const center = target.kind === "center";
   return (
-    <Dialog title={`配置更新服务 · ${target.name}`} close={close}>
+    <Dialog title={`更新服务说明 · ${target.name}`} close={close}>
       <div className="form-stack">
         <p>
-          在目标 Linux 主机使用 root 配置独立的 ctl-updater 服务。先安装官方 ctl
-          1.15.0 或更新的兼容版本。
+          {center
+            ? "更新服务随中心安装、升级自动配置。安装程序使用本机已有身份完成接入，无需另外生成凭据或登记。"
+            : "节点安装时会自动安装并启动 Agent 和更新服务，只需首次接入节点的一次性凭据，无需再次登记更新器。"}
+        </p>
+        <p>
+          更新服务在宿主机独立运行，中心或 Agent 停止升级时仍能继续执行。
+          正常安装后，这里会自动显示版本和连接状态。
+        </p>
+        <h3>已有主机补装或修复</h3>
+        <p>
+          在对应的 Linux 宿主机上，使用包含此能力的官方 ctl 执行以下命令。
+          {center
+            ? "命令从本机中心配置读取身份。"
+            : "命令复用本机节点身份，不会重新创建节点，也不再要求接入凭据。"}
+        </p>
+        <code className="code-block">
+          {center
+            ? "sudo ctl updater setup --kind center --server-home /opt/ctl-platform"
+            : "sudo ctl agent install --executable /usr/local/bin/ctl"}
+        </code>
+        <p className="muted small">
+          以上使用默认目录。自定义安装请沿用原来的路径和服务名；先运行命令的
+          --help 查看参数。
+          不要删除现有身份和任务日志。有正在执行或待恢复的更新时，请先处理任务。
+        </p>
+        <h3>检查运行状态</h3>
+        <code className="code-block">
+          sudo systemctl status{" "}
+          {center ? "ctl-updater-center" : "ctl-agent ctl-updater-node"}
+        </code>
+        <p className="muted small">
+          若已安装但仍未连接，请检查对应服务日志及主机到中心的网络。自定义服务名请使用实际名称。
+          状态每 5 秒自动刷新。
         </p>
         <a className="inline-link" href="#agent">
-          打开 Agent 接入获取 CLI 安装与校验说明
+          查看 CLI 安装与校验说明
         </a>
-        <p>
-          先在主机确认 CLI、Agent
-          或中心的实际安装目录，再按本机路径修改下列示例。已有服务需要保持原有路径配置。
-        </p>
-        <code className="code-block">
-          sudo ctl updater enroll --server {shellArg(location.origin)} --kind{" "}
-          {target.kind} --target-id {shellArg(target.target_id)} --cli-path
-          /usr/local/bin/ctl {paths} --home /var/lib/ctl-updater
-        </code>
-        <p className="muted small">
-          运行命令后，在隐藏输入提示中粘贴一次性凭据。凭据绑定此目标，有效期 15
-          分钟，仅可使用一次。关闭窗口或离开页面会清除展示。
-        </p>
-        {!["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) &&
-          location.protocol !== "https:" && (
-            <p className="notice error">
-              请从可访问的 HTTPS 管理服务地址打开此页面后登记。
-            </p>
-          )}
-        {["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) && (
-          <p className="notice">
-            当前为本机开发地址。远程主机登记时，请从该主机可访问的 HTTPS
-            管理服务地址打开页面。
-          </p>
-        )}
-        {!credential && (
-          <button
-            className="primary"
-            disabled={busy}
-            onClick={() => void generate()}
-          >
-            {busy ? "正在生成…" : "生成一次性更新凭据"}
-          </button>
-        )}
-        {error && (
-          <p className="notice error" role="alert">
-            {error}
-          </p>
-        )}
-        {credential && (
-          <>
-            <label>
-              一次性更新凭据
-              <textarea
-                readOnly
-                autoComplete="off"
-                spellCheck={false}
-                value={credential.enrollment_token}
-                onFocus={(event) => event.target.select()}
-              />
-            </label>
-            <p className="muted small">
-              到期时间 {remoteDate(credential.expires_at)}
-            </p>
-          </>
-        )}
-        <p>登记会将独立更新程序复制到私有目录。随后安装并启动 systemd 服务。</p>
-        <code className="code-block">
-          sudo ctl updater install --home /var/lib/ctl-updater
-        </code>
-        <p className="muted small">
-          服务会主动连接中心，配置完成后的版本和就绪状态每 5 秒刷新。
-        </p>
       </div>
     </Dialog>
   );
@@ -313,7 +241,7 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
   const reason = (target: Target) =>
     target.updater
       ? eligibility(target.updater, version, state.jobs, target.node)
-      : "尚未配置更新服务";
+      : "等待更新服务自动接入";
   const chosen = targets.filter(
     (target) =>
       target.kind === "node" &&
@@ -570,12 +498,12 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
                   </dd>
                   <dt>连接</dt>
                   <dd>
-                    {updater ? (updater.online ? "在线" : "失联") : "未登记"}
+                    {updater ? (updater.online ? "在线" : "失联") : "尚未连接"}
                   </dd>
                   <dt>就绪</dt>
                   <dd>
                     {!updater
-                      ? "尚未配置更新服务"
+                      ? "等待更新服务自动接入"
                       : updater.ready
                         ? "已就绪"
                         : blockedReason(updater.blocked_reason)}
@@ -593,21 +521,8 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
                   <p className="muted small">{disabledReason}</p>
                 )}
                 <div className="actions">
-                  <button
-                    disabled={
-                      locked ||
-                      loading ||
-                      !!loadError ||
-                      state.jobs.some(
-                        (job) =>
-                          job.updater_id === updater?.id &&
-                          activeUpdate(job.status) &&
-                          !job.resolved_at,
-                      )
-                    }
-                    onClick={() => setSetup(target)}
-                  >
-                    {updater ? "重新配置" : "配置"} {target.name}
+                  <button onClick={() => setSetup(target)}>
+                    更新说明 {target.name}
                   </button>
                   {target.kind === "node" && updater && (
                     <label className="scope-option">

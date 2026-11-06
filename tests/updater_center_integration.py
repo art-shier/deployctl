@@ -9,6 +9,7 @@ import tempfile
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'skills/team-deploy/assets/deployctl.pyz'))
 from deployctl.updater import Host, private_directory
+from deployctl.node_agent import read_json
 from deployctl import server_bundle
 
 
@@ -22,6 +23,14 @@ def main():
     source=ROOT/'dist/ctl-platform-v1.16.0.tar.gz'
     content=source.read_bytes();digest=hashlib.sha256(content).hexdigest()
     current=server_bundle.read_state(home/'server-state.json')['current']['version']
+    config_path=Path('/var/lib/ctl-updater-center/updater.json')
+    config_before=config_path.read_bytes()
+    config=read_json(config_path)
+    if config['server']!=instance['origin'] or config['kind']!='center' or config['target_id']!='center':
+        raise RuntimeError('automatic center updater identity mismatch')
+    subprocess.run(['/usr/local/bin/ctl','updater','setup','--kind','center','--server-home',str(home)],check=True,timeout=60)
+    if config_path.read_bytes()!=config_before:raise RuntimeError('center repair rotated updater identity')
+    subprocess.run(['systemctl','is-active','--quiet','ctl-updater-center.service'],check=True,timeout=30)
     before=hashlib.sha256((home/'keys/encryption.key').read_bytes()).hexdigest()
     host=Host({'kind':'center','target_id':'center','server':instance['origin'],
                'server_home':str(home),'cli_path':'/usr/local/bin/ctl'})
@@ -37,6 +46,7 @@ def main():
         if b'ctl_lifecycle_fixture' not in listing.stdout:
             raise RuntimeError('database backup did not include fixture data')
         host.install(job,jobdir,lambda stage:None)
+        if config_path.read_bytes()!=config_before:raise RuntimeError('remote center update reconfigured its own identity')
         if not host.verify('v1.16.0',jobdir) or not host.reconcile(job,jobdir):
             raise RuntimeError('center update version/readiness not confirmed')
         if hashlib.sha256((home/'keys/encryption.key').read_bytes()).hexdigest()!=before:

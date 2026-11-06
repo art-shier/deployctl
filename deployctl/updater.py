@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 from urllib.request import Request
 
 from . import __version__, bootstrap, server_bundle
@@ -528,7 +529,7 @@ def service_unit(home):
         '\n[Install]\nWantedBy=multi-user.target\n')
 
 
-def enroll(args,token):
+def enroll(args,token, transport=None):
     require_root()
     from .runtime import service_lock
     import zipfile
@@ -570,7 +571,7 @@ def enroll(args,token):
             if state['pending'] or not state['current']: raise ValueError('managed center must have no pending operation')
         # Stage bytes in memory; a refused rotation must preserve the old helper.
         bootstrap_content=executable.read_bytes()
-        client=PlatformClient(Credentials(config['server'],validate_token(token)))
+        client=PlatformClient(Credentials(transport or config['server'],validate_token(token)))
         response=client.json('POST','/api/v1/updater/enroll',dict(helper_version='v'+__version__,platform='linux',protocol=1))
         validate_id(response.get('updater_id')); validate_token(response.get('token'))
         if response.get('kind')!=args.kind or response.get('target_id')!=args.target_id:
@@ -581,20 +582,86 @@ def enroll(args,token):
         return response['updater_id']
 
 
+def setup(args):
+    """Derive a dedicated updater identity from an installed local role."""
+    require_root()
+    from .runtime import service_lock
+    args = SimpleNamespace(**vars(args))
+    args.home = str(trusted(args.home or '/var/lib/ctl-updater-'+args.kind, private=True))
+    name = args.service_name or 'ctl-updater-'+args.kind+'.service'
+    validate_service_name(name)
+    args.cli_path = str(trusted(args.cli_path))
+    args.agent_home = str(trusted(args.agent_home, private=True))
+    args.server_home = str(trusted(args.server_home, private=True))
+    release_version(installer_identity(args.cli_path)['version'])
+    # Validate locally fixed paths before requesting any credential.
+    if args.kind == 'node':
+        identity = read_json(Path(args.agent_home)/'node.json')
+        args.target_id = identity.get('node_id')
+        validate_id(args.target_id)
+        args.server = validate_origin(identity.get('server'))
+    else:
+        instance = server_bundle.read_instance(Path(args.server_home))
+        args.server = validate_origin(instance.get('origin'))
+        args.target_id = 'center'
+    home = private_directory(args.home)
+    trusted(home/'.setup.lock')
+    with service_lock(home/'.setup.lock'):
+        jobs = home/'jobs'
+        trusted(jobs, private=True)
+        if jobs.exists():
+            for directory in jobs.iterdir():
+                trusted(directory, private=True)
+                if directory.name.startswith('.stage-'): continue
+                record = read_json(directory/'journal.json')
+                if not record.get('acknowledged') or record.get('report', {}).get('status') not in TERMINAL:
+                    raise ValueError('unfinished updater journal prevents setup')
+        existing = home/'updater.json'
+        if existing.exists():
+            config = read_json(existing)
+            fields = ('kind', 'target_id', 'server', 'cli_path', 'agent_home', 'agent_service', 'server_home')
+            if any(config.get(key) != getattr(args, key) for key in fields):
+                raise ValueError('existing updater configuration differs from local installation')
+            validate_id(config.get('updater_id'))
+            validate_token(config.get('token'))
+            if not trusted(home/'bootstrap.pyz', private=True).is_file():
+                raise ValueError('updater bootstrap is missing')
+            python = config.get('python')
+            if not isinstance(python, str) or not Path(python).is_absolute() or not trusted(python).is_file():
+                raise ValueError('updater Python executable is missing')
+        else:
+            if args.kind == 'node':
+                client = PlatformClient(Credentials(args.server, validate_token(identity.get('token'))))
+                invitation = client.json('POST', '/api/v1/node/updater-enrollment', {})
+                transport = None
+            else:
+                keys = trusted(Path(args.server_home)/'keys', private=True, owners=(0,10001))
+                credential = validate_token(read_platform_key(keys/'owner.token').decode('ascii').strip())
+                transport = 'http://127.0.0.1:'+str(instance['api_port'])
+                client = PlatformClient(Credentials(transport, credential))
+                invitation = client.json('POST', '/api/v1/system-updates/enrollments', {'kind':'center','target_id':'center'})
+            enroll(args, validate_token(invitation.get('enrollment_token')), transport=transport)
+            config = read_json(existing)
+        install_service(home, config, name)
+    return config['updater_id']
+
+
 def add_commands(sub):
     parser=sub.add_parser('updater',help='enroll or operate the independent root system updater')
     commands=parser.add_subparsers(dest='updater_command',required=True)
-    for name in ('enroll','run','service','install'):
-        command=commands.add_parser(name); command.add_argument('--home',default=DEFAULT_HOME)
-        if name=='enroll':
-            command.add_argument('--server',required=True)
+    for name in ('enroll','run','service','install','setup'):
+        command=commands.add_parser(name); command.add_argument('--home',default=None if name=='setup' else DEFAULT_HOME)
+        if name in ('enroll','setup'):
             command.add_argument('--kind',choices=('node','center'),required=True)
-            command.add_argument('--target-id',required=True)
             command.add_argument('--cli-path',default='/usr/local/bin/ctl')
             command.add_argument('--agent-home',default='/var/lib/ctl-agent')
             command.add_argument('--agent-service',default='ctl-agent.service')
             command.add_argument('--server-home',default='/opt/ctl-platform')
+        if name=='enroll':
+            command.add_argument('--server',required=True)
+            command.add_argument('--target-id',required=True)
             command.add_argument('--token-file',help='private enrollment token file; default hidden prompt')
+        if name=='setup': command.add_argument('--service-name')
         if name=='run': command.add_argument('--once',action='store_true')
         if name=='install': command.add_argument('--service-name',default='ctl-updater.service')
 
@@ -621,6 +688,10 @@ def install_service(home,config,name):
 
 def dispatch(args):
     require_root()
+    if args.updater_command=='setup':
+        setup(args)
+        print('OK: automatic updates configured and started')
+        return
     home=trusted(args.home,private=True)
     if args.updater_command=='enroll':
         token=read_private(trusted(args.token_file,private=True)).decode().strip() if args.token_file else getpass.getpass('Enrollment token: ')

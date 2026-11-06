@@ -24,19 +24,32 @@ BUNDLE=ROOT/'skills/team-deploy/assets/deployctl.pyz'
 # Use the bundled dependencies with the trusted system Python, including under sudo.
 sys.path.insert(0,str(BUNDLE))
 from deployctl import bootstrap
-from deployctl.node_agent import service_unit, write_json
+from deployctl.node_agent import read_json
 from deployctl.updater import Host, Updater, private_directory
 
 
 class Center(BaseHTTPRequestHandler):
+    node_enrollments=0
+    updater_enrollments=0
+    updater_invitations=0
+    node_id=''
     def log_message(self,*args): pass
     def do_POST(self):
         self.rfile.read(int(self.headers.get('Content-Length','0')))
-        if self.path=='/api/v1/node/heartbeat':
+        if self.path=='/api/v1/node/enroll':
+            Center.node_enrollments+=1
+            body={'node_id':Center.node_id,'token':'ctl_'+'a'*40}
+        elif self.path=='/api/v1/node/updater-enrollment':
+            Center.updater_invitations+=1
+            body={'enrollment_token':'ctl_'+'b'*40}
+        elif self.path=='/api/v1/updater/enroll':
+            Center.updater_enrollments+=1
+            body={'updater_id':'d'*32,'kind':'node','target_id':Center.node_id,'token':'ctl_'+'c'*40}
+        elif self.path in ('/api/v1/node/heartbeat','/api/v1/updater/heartbeat'):
             body={'enabled':True,'instances':[]}
-        elif self.path=='/api/v1/node/poll':
+        elif self.path in ('/api/v1/node/poll','/api/v1/updater/poll'):
             time.sleep(.2)
-            body={'task':None}
+            body={'task':None,'job':None}
         else:
             self.send_error(404);return
         raw=json.dumps(body).encode()
@@ -101,9 +114,12 @@ def main():
         raise SystemExit('requires explicit disposable Linux root systemd fixture')
     if not Path('/run/systemd/system').is_dir(): raise SystemExit('systemd unavailable')
     node_id=uuid.uuid4().hex
-    unit_name='ctl-updater-fixture-'+node_id+'.service'
+    Center.node_id=node_id
+    unit_name='ctl-agent-fixture-'+node_id+'.service'
+    updater_name='ctl-updater-fixture-'+node_id+'.service'
     unit=Path('/etc/systemd/system')/unit_name
-    if unit.exists(): raise RuntimeError('fixture unit collision')
+    updater_unit=Path('/etc/systemd/system')/updater_name
+    if unit.exists() or updater_unit.exists(): raise RuntimeError('fixture unit collision')
     center=ThreadingHTTPServer(('127.0.0.1',0),Center)
     thread=threading.Thread(target=center.serve_forever,daemon=True);thread.start()
     try:
@@ -111,15 +127,28 @@ def main():
             root=Path(temp);root.chmod(0o700)
             agent_home=private_directory(root/'agent')
             origin=f'http://127.0.0.1:{center.server_address[1]}'
-            write_json(agent_home/'node.json',{'server':origin,'node_id':node_id,'token':'ctl_'+'a'*40})
             old=root/'old.pyz';candidate(BUNDLE,old,'1.15.0')
             install=private_directory(root/'bin')
             bootstrap.install(artifact=old,install_dir=install)
             executable=install/'ctl'
-            unit.write_text(service_unit(executable,agent_home,root/'apps',root/'config'))
-            unit.chmod(0o644)
+            token_file=root/'node-enrollment.token';token_file.write_text('ctl_'+'e'*40);token_file.chmod(0o600)
+            integrated_home=root/'integrated-updater'
+            install_args=[str(executable),'agent','install','--server',origin,'--home',str(agent_home),
+                '--root',str(root/'apps'),'--config-root',str(root/'config'),'--executable',str(executable),
+                '--service-name',unit_name,'--updater-home',str(integrated_home),'--updater-service',updater_name]
             try:
-                command('systemctl','daemon-reload');command('systemctl','start',unit_name)
+                command(*install_args,'--token-file',str(token_file))
+                identity_before=(agent_home/'node.json').read_bytes()
+                updater_before=(integrated_home/'updater.json').read_bytes()
+                token_file.unlink()
+                command(*install_args)
+                if (agent_home/'node.json').read_bytes()!=identity_before or (integrated_home/'updater.json').read_bytes()!=updater_before:
+                    raise RuntimeError('repeat integrated install rotated identity')
+                if (Center.node_enrollments,Center.updater_invitations,Center.updater_enrollments)!=(1,1,1):
+                    raise RuntimeError('repeat integrated install re-enrolled')
+                command('systemctl','is-active','--quiet',updater_name)
+                if read_json(integrated_home/'updater.json')['target_id']!=node_id:
+                    raise RuntimeError('integrated updater target mismatch')
                 config={'kind':'node','target_id':node_id,'server':origin,'cli_path':str(executable),
                         'agent_home':str(agent_home),'agent_service':unit_name}
                 host=Host(config,runner=host_command)
@@ -145,10 +174,12 @@ def main():
                 if not control.result or control.result['status']!='rolled_back':
                     raise RuntimeError('failed Agent startup did not automatically restore old Agent')
                 if not host.readiness()[1]:raise RuntimeError('old Agent not ready after failed candidate')
-                print('PASS: real systemd graceful stop, installer replacement, fresh Agent heartbeat, manual restore and failed-candidate automatic rollback')
+                print('PASS: integrated node installation and credential-free repeat, independent active updater, real systemd graceful stop, installer replacement, fresh Agent heartbeat, manual restore and failed-candidate automatic rollback')
             finally:
+                subprocess.run(['systemctl','disable','--now',updater_name],capture_output=True,timeout=180)
                 subprocess.run(['systemctl','stop',unit_name],capture_output=True,timeout=180)
                 unit.unlink(missing_ok=True)
+                updater_unit.unlink(missing_ok=True)
                 subprocess.run(['systemctl','daemon-reload'],capture_output=True,timeout=30)
                 subprocess.run(['systemctl','reset-failed',unit_name],capture_output=True,timeout=30)
     finally:

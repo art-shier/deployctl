@@ -118,6 +118,7 @@ func (s *Server) systemUpdateRoutes() {
 	m.HandleFunc("GET /api/v1/system-updates/releases", s.wrap(s.systemUpdateReleases))
 	m.HandleFunc("GET /api/v1/system-updates", s.wrap(s.systemUpdates))
 	m.HandleFunc("POST /api/v1/system-updates/enrollments", s.wrap(s.createUpdateEnrollment))
+	m.HandleFunc("POST /api/v1/node/updater-enrollment", s.nodeWrap(s.createNodeUpdateEnrollment))
 	m.HandleFunc("POST /api/v1/system-updates/jobs", s.wrap(s.createUpdateJobs))
 	m.HandleFunc("POST /api/v1/system-updates/jobs/{id}/cancel", s.wrap(s.cancelUpdateJob))
 	m.HandleFunc("POST /api/v1/system-updates/jobs/{id}/resolve", s.wrap(s.resolveUpdateJob))
@@ -130,6 +131,19 @@ func (s *Server) systemUpdateRoutes() {
 	m.HandleFunc("POST /api/v1/updater/poll", s.updaterWrap(s.pollUpdater))
 	m.HandleFunc("POST /api/v1/updater/jobs/{id}/start", s.updaterWrap(s.startUpdaterJob))
 	m.HandleFunc("POST /api/v1/updater/jobs/{id}/report", s.updaterWrap(s.reportUpdaterJob))
+}
+func (s *Server) createNodeUpdateEnrollment(w http.ResponseWriter, r *http.Request, node string) error {
+	var in struct{}
+	if err := decode(w, r, &in); err != nil {
+		return err
+	}
+	// nodeWrap binds the credential to the node lock taken by enrollment.
+	token, expiry, err := s.store.CreateUpdateEnrollment(r.Context(), domain.UpdateEnrollment{Kind: "node", TargetID: node}, node)
+	if err != nil {
+		return err
+	}
+	reply(w, 201, map[string]any{"enrollment_token": token, "expires_at": expiry})
+	return nil
 }
 func (s *Server) systemUpdateReleases(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	if err := owner(p); err != nil {

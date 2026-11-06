@@ -2,47 +2,51 @@
 
 本功能面向包含此改动的 CLI 1.15.0 / Web 0.8.0 构建；源码中的版本号不代表该版本已正式发布。它更新节点上的 ctl / Agent 或中心服务，不更新业务项目版本。业务部署仍在项目的“部署”页执行。
 
-## 一次性配置
+## 安装时自动启用
 
-控制台升级需要在宿主机运行独立的 `ctl-updater` 服务。它主动访问中心，不开放管理端口；升级时即使 Agent 或中心容器停止，更新程序也会继续执行并保存结果。
+更新服务随中心或节点的正常安装一起配置，不需要在控制台再生成更新器凭据、重复登记或单独安装服务。更新器仍是宿主机上的独立 systemd 服务：升级时即使 Agent 或中心容器停止，它也能继续执行并保存结果。
 
-先按安装说明在中心和需要管理的节点上安装包含本功能的 ctl。使用系统级、官方安装器管理的命令（通常 `/usr/local/bin/ctl`）；用户可写目录、软链接或被手工修改过的命令不符合更新程序要求。Linux 需要 root、Python >=3.10 和 systemd；中心还需要现有管理服务安装器要求的 Docker / Compose。
+Linux 宿主机需要 root、Python >=3.10 和 systemd。使用官方安装器管理的系统级 ctl（通常 `/usr/local/bin/ctl`）；用户可写目录、软链接或手工修改过的命令不满足自动更新要求。节点还需要 Docker / Compose，中心沿用现有管理服务安装要求。
 
-在“系统更新”页面为指定节点或中心生成一次性更新器接入凭据。它只绑定该目标，有效期15分钟，与节点登记凭据、管理员登录凭据分开。命令在隐藏输入提示中接收凭据，不要把凭据写入命令参数。
+### 新节点
 
-### 节点
-
-节点须先完成 Agent 登记、授权和 systemd 配置。首次接入更新能力时，先手动更新 ctl 并重启 Agent，确保正在运行的 Agent 也包含新版健康回报功能。仅替换磁盘上的 ctl 而不重启旧 Agent，会显示不可更新。
+在“部署节点”生成原有的节点接入凭据后，在节点宿主机执行：
 
 ```bash
-# 将地址、节点 ID、ctl 路径替换为本机实际值
-sudo /usr/local/bin/ctl updater enroll \
-  --server https://ctl.example.com \
-  --kind node --target-id <控制台节点ID> \
-  --cli-path /usr/local/bin/ctl \
-  --agent-home /var/lib/ctl-agent \
-  --agent-service ctl-agent.service
-sudo /usr/local/bin/ctl updater install
-sudo systemctl status ctl-updater
+sudo ctl agent install --server https://ctl.example.com
 ```
 
-### 中心服务器
+首次运行时隐藏输入节点接入凭据。这一次命令完成节点登记、Agent 常驻服务和更新服务安装，并设置开机自启。更新器的专用身份由程序使用节点身份自动申请；无需索取第二份凭据。控制台发现节点后，仍按原流程分配项目组、项目与环境授权，未授权节点不能领取部署或升级任务。
 
-在运行中心 Docker Compose 的**宿主机**执行，不是在 API 容器内执行。中心本身应已升级到包含系统更新 API 的版本。
+### 新中心或手动升级中心
+
+正常执行 `ctl server install` 或 `ctl server upgrade`，中心就绪后会自动配置更新服务。安装程序在本机通过受保护的已有管理员身份接入更新器，不要求用户粘贴凭据，也不依赖公网域名已完成代理配置。管理员凭据不会写入更新器身份文件；更新器后续使用专用身份通过配置的中心地址通信。
+
+默认节点更新器使用 `/var/lib/ctl-updater-node` 和 `ctl-updater-node.service`；中心使用 `/var/lib/ctl-updater-center` 和 `ctl-updater-center.service`，同一主机可以同时承担两种角色。独立程序副本保存在各自的私有目录中。
+
+## 已有主机补装与修复
+
+旧安装需要启用此能力时，先安装包含本功能的 ctl，然后在对应宿主机执行以下命令。已有本机身份会复用，不需要回控制台另领凭据。
+
+节点：
 
 ```bash
-sudo /usr/local/bin/ctl updater enroll \
-  --server https://ctl.example.com \
-  --kind center --target-id center \
-  --cli-path /usr/local/bin/ctl \
-  --server-home /opt/ctl-platform
-sudo /usr/local/bin/ctl updater install
-sudo systemctl status ctl-updater
+sudo ctl agent install --executable /usr/local/bin/ctl
+sudo systemctl status ctl-agent ctl-updater-node
 ```
 
-更新器会把可执行包复制到私有目录 `/var/lib/ctl-updater`，systemd 使用这份独立副本运行；替换 ctl 或中心容器不会终止更新器。不要删除、复制到其他服务器或编辑其中的身份和任务日志。
+中心：
 
-`--home` 可指定独立更新器目录，登记、安装服务和运行时必须一致。`ctl updater service` 只输出 systemd 单元，`ctl updater run` 用于前台排查；`--token-file` 可读取仅当前身份可读的私有凭据文件。每台主机默认一个 `ctl-updater.service`：若中心主机同时运行业务 Agent，需要分别配置独立 home，并用 `install --service-name ctl-updater-center.service` / `ctl-updater-node.service` 指定不同服务名。安装器拒绝覆盖配置不同的已有服务。
+```bash
+sudo ctl updater setup --kind center --server-home /opt/ctl-platform
+sudo systemctl status ctl-updater-center
+```
+
+节点单独修复更新器也可用 `sudo ctl updater setup --kind node`。自定义安装请沿用原有的 Agent home、服务名、部署目录、中心目录和 ctl 路径，参数见对应命令的 `--help`。`agent install` 的 `--service-name` 指定 Agent 服务，`--updater-home` / `--updater-service` 指定更新服务；`updater setup` 的 `--home` / `--service-name` 指定更新器目录和服务。
+
+重复安装复用已匹配的身份和配置；目录或服务属于其他实例时会拒绝覆盖。有活动更新或待恢复状态时，先处理原任务，不要删除身份或任务日志。若中心或 Agent 已安装成功，但更新服务配置失败，命令会明确报告这一部分失败；修复权限、路径、网络或 systemd 后重试，不要重新登记业务节点。
+
+高级 `ctl updater enroll/service/install/run` 命令保留兼容，但不属于正常安装流程。以前手动配置过更新器的主机，修复时要明确指定原 home 和服务名，避免创建第二个更新服务。中心的内部自动升级过程不会递归安装或重启自己的更新器。
 
 ## 节点更新
 
@@ -73,6 +77,6 @@ sudo systemctl status ctl-updater
 - 请求结果不明确时使用页面“重试”，保持同一请求 ID，避免重复创建更新任务。同一浏览器标签页内切换页面或刷新后会恢复待确认请求；浏览器会话存储只保存非敏感的任务参数，不保存接入凭据。
 - 更新器重启后读取私有日志，不盲目重放执行。中心若已完成替换，核对实际安装版本、摘要和 API 就绪后补报成功；无法确认则标记需要处理。
 - 需要处理的任务会继续阻止相应节点或中心领取新部署。管理员先在宿主机修复，确认更新器已回报健康的旧版或目标版本，再在控制台点击“确认已恢复”。这会记录恢复确认，保留原始失败历史，解除调度阻塞。
-- 用 `sudo journalctl -u ctl-updater -n 100` 查看固定诊断信息。检查中心可用 `sudo ctl server-status` 和 `sudo ctl server-logs`；涉及数据库恢复时先停止写入并按备份制度执行，不要直接删除 pending 标记。
+- 用 `sudo journalctl -u ctl-updater-node -n 100`（中心使用 `ctl-updater-center`） 查看固定诊断信息。检查中心可用 `sudo ctl server-status` 和 `sudo ctl server-logs`；涉及数据库恢复时先停止写入并按备份制度执行，不要直接删除 pending 标记。
 
-每个目标只有一个有效更新器身份。重新接入会替换该目标的旧更新器身份；未完成或尚未确认恢复的更新任务必须先处理。普通项目部署凭据和节点凭据均不能创建系统升级任务，只有管理员可以操作和查看系统更新。
+每个目标只有一个有效更新器身份。正常重复安装复用本机身份；显式身份恢复或高级重新接入时，未完成或尚未确认恢复的更新任务必须先处理。普通项目部署凭据和节点凭据均不能创建系统升级任务，只有管理员可以操作和查看系统更新。

@@ -63,7 +63,12 @@ def main():
     owner.json('PATCH',f'/api/v1/nodes/{node_id}',{'name':'updater-fixture','enabled':True,'groups':['default'],'projects':[],'excluded_projects':[],'environments':['prod']})
 
     def register(kind,target):
-        invitation=owner.json('POST','/api/v1/system-updates/enrollments',{'kind':kind,'target_id':target})
+        if kind=='node':
+            node_client=PlatformClient(Credentials(credentials['origin'],node['token']))
+            denied(node_client,'POST','/api/v1/node/updater-enrollment',{'kind':'center','target_id':'center'},statuses=(400,))
+            invitation=node_client.json('POST','/api/v1/node/updater-enrollment',{})
+        else:
+            invitation=owner.json('POST','/api/v1/system-updates/enrollments',{'kind':kind,'target_id':target})
         invitee=PlatformClient(Credentials(credentials['origin'],invitation['enrollment_token']))
         payload={'helper_version':'v1.15.0','protocol':1,'platform':'linux'}
         identity=invitee.json('POST','/api/v1/updater/enroll',payload)

@@ -136,10 +136,14 @@ jobs:
           IMAGE=$(docker inspect --format '{{index .RepoDigests 0}}' 127.0.0.1:5002/ctl-server:fixture)
           python scripts/build_server_bundle.py --image "$IMAGE" --version v1.8.1
           python scripts/build_release_assets.py
-          sudo python3 dist/deployctl.pyz server install --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform \
+          sudo /usr/bin/python3 scripts/install_deployctl.py dist/deployctl.pyz --install-dir /usr/local/bin
+          sudo /usr/local/bin/ctl server install --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform \
             --origin http://127.0.0.1:8091 --registry-host 127.0.0.1:5091 --api-port 8091 --registry-port 5091
           KEY_SUM=$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)
-          sudo python3 dist/deployctl.pyz server upgrade --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform
+          UPDATER_SUM=$(sudo sha256sum /var/lib/ctl-updater-center/updater.json | cut -d ' ' -f1)
+          sudo /usr/local/bin/ctl server upgrade --release dist/ctl-platform-v1.8.1.tar.gz --home /root/ctl-ci-platform
+          test "$UPDATER_SUM" = "$(sudo sha256sum /var/lib/ctl-updater-center/updater.json | cut -d ' ' -f1)"
+          sudo systemctl is-active --quiet ctl-updater-center.service
           test "$KEY_SUM" = "$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
           curl --fail --silent http://127.0.0.1:8091/api/v1/health/ready >/dev/null
           sudo docker exec ctl-platform-database-1 psql -U ctl -d ctl -c 'CREATE TABLE ctl_lifecycle_fixture(value integer); INSERT INTO ctl_lifecycle_fixture VALUES (42)' >/dev/null

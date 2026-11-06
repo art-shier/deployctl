@@ -37,6 +37,35 @@ func updateFixture(t *testing.T, s *Store, kind, target string) (domain.Updater,
 func updateRelease() domain.SystemRelease {
 	return domain.SystemRelease{Version: "v1.16.0", PublishedAt: time.Now().UTC(), CLISHA256: strings.Repeat("a", 64), ServerSHA256: strings.Repeat("b", 64)}
 }
+func TestNodeUpdaterEnrollmentRevalidatesRevokedIdentityAndActiveJob(t *testing.T) {
+	s := fixture(t)
+	ctx := context.Background()
+	n, invitation, _, err := s.CreateNode(ctx, domain.NodeInput{Name: "node", Enabled: true}, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, token, err := s.EnrollNode(ctx, auth.HashToken(invitation), "test", "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := WithNodeIdentity(ctx, auth.HashToken(token))
+	u, _ := updateFixture(t, s, "node", n.ID)
+	_, err = s.CreateUpdateJobs(ctx, domain.UpdateRequest{RequestID: domain.NewID(), UpdaterIDs: []string{u.ID}, Version: "v1.16.0", Parallelism: 1}, "owner", func(context.Context, string) (domain.SystemRelease, error) { return updateRelease(), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = s.CreateUpdateEnrollment(stale, domain.UpdateEnrollment{Kind: "node", TargetID: n.ID}, n.ID); !errors.Is(err, domain.ErrConflict) {
+		t.Fatal("active update enrollment", err)
+	}
+	// A request authenticated before rotation must recheck the credential under
+	// the scheduler and node locks, even when an active update would conflict.
+	if _, _, err = s.RotateNodeEnrollment(ctx, n.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = s.CreateUpdateEnrollment(stale, domain.UpdateEnrollment{Kind: "node", TargetID: n.ID}, n.ID); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatal("revoked request enrolled updater", err)
+	}
+}
 func TestUpdateLifecycleFrozenRetryAndTerminalReplay(t *testing.T) {
 	s := fixture(t)
 	ctx := context.Background()

@@ -16,6 +16,61 @@ import (
 
 type fixedSystemReleases struct{ calls int }
 
+func TestNodeCreatesOnlyOwnUpdaterEnrollment(t *testing.T) {
+	db := testutil.Store(t)
+	ctx := context.Background()
+	node, invite, _, err := db.CreateNode(ctx, domain.NodeInput{Name: "node", Enabled: true}, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, token, err := db.EnrollNode(ctx, auth.HashToken(invite), "test", "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(db, Options{OwnerHash: auth.HashToken("owner")})
+	call := func(path, credential, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+credential)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		return w
+	}
+	path := "/api/v1/node/updater-enrollment"
+	if w := call(path, "owner", `{}`); w.Code != 401 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	for _, body := range []string{`{"kind":"center"}`, `{"target_id":"` + domain.NewID() + `"}`} {
+		if w := call(path, token, body); w.Code != 400 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	w := call(path, token, `{}`)
+	if w.Code != 201 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var enrollment struct {
+		Token string `json:"enrollment_token"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &enrollment)
+	body := `{"helper_version":"v1.15.0","platform":"linux","protocol":1}`
+	w = call("/api/v1/updater/enroll", enrollment.Token, body)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var identity struct {
+		Kind   string `json:"kind"`
+		Target string `json:"target_id"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &identity)
+	if identity.Kind != "node" || identity.Target != node.ID {
+		t.Fatal(w.Body.String())
+	}
+	if w = call("/api/v1/updater/enroll", enrollment.Token, body); w.Code != 401 {
+		t.Fatal("reused enrollment", w.Code)
+	}
+}
+
 func (f *fixedSystemReleases) Releases(context.Context) ([]domain.SystemRelease, error) {
 	f.calls++
 	return []domain.SystemRelease{{Version: "v1.16.0", PublishedAt: time.Now().UTC(), CLISHA256: strings.Repeat("a", 64), ServerSHA256: strings.Repeat("b", 64)}}, nil

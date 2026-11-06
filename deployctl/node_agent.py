@@ -554,23 +554,82 @@ def service_unit(executable, home, root, config_root):
             'TimeoutStopSec=900\nKillMode=mixed\n\n[Install]\nWantedBy=multi-user.target\n')
 
 
+def install(args):
+    """Install a node and its independent updater using the original identity."""
+    import re
+    import subprocess
+    from types import SimpleNamespace
+    from . import updater, bootstrap
+    updater.require_root()
+    if (not re.fullmatch(r'[A-Za-z0-9_-]+\.service', args.service_name)
+        or args.service_name.startswith('ctl-updater')):
+        raise ValueError('invalid Agent service name')
+    executable = updater.trusted(args.executable)
+    updater.installer_identity(executable)
+    home = private_directory(updater.trusted(args.home, private=True))
+    root = updater.trusted(args.root)
+    config_root = updater.trusted(args.config_root)
+    content = service_unit(executable, home, root, config_root).encode()
+    unit = updater.trusted(Path('/etc/systemd/system')/args.service_name)
+    updater.trusted(home/'.install.lock')
+    with service_lock(home/'.install.lock'):
+        if unit.exists() and (not unit.is_file() or unit.read_bytes() != content):
+            raise ValueError('existing Agent unit differs; choose a separate service name')
+        identity_path = home/'node.json'
+        if identity_path.exists():
+            identity = read_json(identity_path)
+            validate_id(identity.get('node_id'))
+            server = validate_origin(identity.get('server'))
+            validate_token(identity.get('token'))
+            if args.server and validate_origin(args.server) != server:
+                raise ValueError('existing Agent belongs to a different server')
+        else:
+            if not args.server: raise ValueError('new Agent installation requires --server')
+            token = read_private(updater.trusted(args.token_file, private=True)).decode('ascii').strip() if args.token_file else getpass.getpass('Enrollment token: ')
+            enroll(args.server, token, home)
+        if not unit.exists(): bootstrap.atomic_write(unit, content, 0o644)
+        host = updater.Host({'cli_path':str(executable),'kind':'node','agent_service':args.service_name})
+        try:
+            host.command(['systemctl','daemon-reload'])
+            host.command(['systemctl','enable','--now',args.service_name], timeout=60)
+            host.command(['systemctl','is-active','--quiet',args.service_name])
+        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError):
+            raise RuntimeError('Agent installed; Agent service not ready and automatic updates not configured. '
+                'Repair by repeating ctl agent install with the same local paths.') from None
+        try:
+            updater.setup(SimpleNamespace(kind='node', home=args.updater_home, cli_path=str(executable),
+                agent_home=str(home), agent_service=args.service_name, server_home='/opt/ctl-platform',
+                service_name=args.updater_service))
+        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError):
+            raise RuntimeError('Agent installed and started; automatic updates not configured. '
+                'Repair by repeating ctl agent install with the same local paths.') from None
+
+
 def add_commands(sub):
     command = sub.add_parser('agent', help='enroll or run the outbound deployment node agent')
     operations = command.add_subparsers(dest='agent_command', required=True)
-    for name in ('enroll', 'run', 'service'):
+    for name in ('enroll', 'run', 'service', 'install'):
         operation = operations.add_parser(name)
         operation.add_argument('--home', default=DEFAULT_HOME)
-        if name == 'enroll':
-            operation.add_argument('--server', required=True)
+        if name in ('enroll', 'install'):
+            operation.add_argument('--server', required=name == 'enroll')
             operation.add_argument('--token-file', help='private enrollment token file; otherwise hidden prompt')
-        else:
+        if name != 'enroll':
             operation.add_argument('--root', default='/opt/deployments')
             operation.add_argument('--config-root', default='/etc/deployctl')
-        if name == 'service':
+        if name in ('service', 'install'):
             operation.add_argument('--executable', default='/usr/local/bin/ctl')
+        if name == 'install':
+            operation.add_argument('--service-name', default='ctl-agent.service')
+            operation.add_argument('--updater-home', default='/var/lib/ctl-updater-node')
+            operation.add_argument('--updater-service', default='ctl-updater-node.service')
 
 
 def dispatch(args):
+    if args.agent_command == 'install':
+        install(args)
+        print('OK: Agent and automatic updater installed and started')
+        return
     if args.agent_command == 'service':
         print(service_unit(args.executable, args.home, args.root, args.config_root), end='')
         return

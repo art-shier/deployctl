@@ -158,29 +158,37 @@ test("owner navigation shows versions and unconfigured existing nodes", async ({
     page.getByRole("heading", { name: "系统更新", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("未配置节点", { exact: true })).toBeVisible();
-  await expect(page.getByText("尚未配置更新服务")).toBeVisible();
+  await expect(page.getByText("等待更新服务自动接入")).toBeVisible();
   await expect(page.getByText("更新服务 v1.15.0").first()).toBeVisible();
 });
-test("empty setup enrollment is generated on demand and clears on close", async ({
+test("setup explains automatic installation without another credential exchange", async ({
   page,
 }) => {
   const f = await fixture(page, { empty: true });
   await page.goto("/#system-updates");
+  await page
+    .getByRole("button", { name: "更新说明 中心", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "随中心安装、升级自动配置",
+  );
+  await expect(page.getByRole("dialog")).toContainText(
+    "sudo ctl updater setup --kind center",
+  );
+  await expect(page.getByRole("dialog")).not.toContainText("updater enroll");
+  await expect(
+    page.getByRole("button", { name: "生成一次性更新凭据" }),
+  ).toHaveCount(0);
   expect(f.requests).toHaveLength(0);
-  await page.getByRole("button", { name: "配置 中心", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("隐藏输入");
-  await page.getByRole("button", { name: "生成一次性更新凭据" }).click();
-  await expect(page.getByLabel("一次性更新凭据")).toHaveValue(
-    "ephemeral-secret",
-  );
-  expect(f.requests[0]).toEqual({ kind: "center", target_id: "center" });
-  await expect(page.locator("code")).not.toContainText(["ephemeral-secret"]);
-  expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(
-    "ephemeral-secret",
-  );
   await page.getByRole("button", { name: "关闭", exact: true }).click();
-  await page.getByRole("button", { name: "配置 中心", exact: true }).click();
-  await expect(page.getByLabel("一次性更新凭据")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "更新说明 未配置节点", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "sudo ctl agent install",
+  );
+  await expect(page.getByRole("dialog")).toContainText("复用本机节点身份");
+  expect(f.paths).not.toContain("/api/v1/system-updates/enrollments");
 });
 test("catalog error has explicit recovery and disabled update submission", async ({
   page,
@@ -274,7 +282,7 @@ test("mobile setup and history fit the viewport", async ({ page }) => {
     ),
   ).toBe(true);
   await page
-    .getByRole("button", { name: "配置 未配置节点", exact: true })
+    .getByRole("button", { name: "更新说明 未配置节点", exact: true })
     .click();
   expect(
     await page.evaluate(
@@ -302,7 +310,7 @@ const historyJob = (status: string, kind = "node") => ({
   parallelism: 1,
 });
 
-test("polling stops on navigation and enrollment secrets clear", async ({
+test("polling stops on navigation and installation help makes no enrollment request", async ({
   page,
 }) => {
   await page.clock.install();
@@ -315,12 +323,10 @@ test("polling stops on navigation and enrollment secrets clear", async ({
   await page.clock.runFor(5100);
   await expect.poll(count).toBeGreaterThan(initial);
   await page
-    .getByRole("button", { name: "配置 未配置节点", exact: true })
+    .getByRole("button", { name: "更新说明 未配置节点", exact: true })
     .click();
-  await page.getByRole("button", { name: "生成一次性更新凭据" }).click();
-  await expect(page.getByLabel("一次性更新凭据")).toHaveValue(
-    "ephemeral-secret",
-  );
+  await expect(page.getByRole("dialog")).toContainText("复用本机节点身份");
+  expect(f.paths).not.toContain("/api/v1/system-updates/enrollments");
   await page.evaluate(() => {
     location.hash = "groups";
   });
@@ -332,7 +338,7 @@ test("polling stops on navigation and enrollment secrets clear", async ({
   expect(count()).toBe(stopped);
   await page.getByRole("link", { name: "系统更新", exact: true }).click();
   await page
-    .getByRole("button", { name: "配置 未配置节点", exact: true })
+    .getByRole("button", { name: "更新说明 未配置节点", exact: true })
     .click();
   await expect(page.getByLabel("一次性更新凭据")).toHaveCount(0);
 });
