@@ -124,6 +124,8 @@ jobs:
           docker exec "$CTL_POSTGRES_CONTAINER" createdb -U postgres ctl_docker_e2e
           CTL_FIXTURE_DATABASE_URL='postgres://postgres:fixture-only@127.0.0.1:5432/ctl_docker_e2e?sslmode=disable' \
             python tests/control_plane_integration.py
+      - name: Independent updater with real systemd Agent restart and recovery
+        run: sudo env CTL_DISPOSABLE_SYSTEMD_FIXTURE=1 /usr/bin/python3 tests/updater_systemd_integration.py
       - name: Build and repeat actual platform bootstrap
         run: |
           docker build -f control-deploy/Dockerfile -t ctl-platform-ci .
@@ -152,5 +154,7 @@ jobs:
           test "$KEY_SUM" = "$(sudo sha256sum /root/ctl-ci-platform/keys/encryption.key | cut -d ' ' -f1)"
           test "$(sudo docker exec ctl-platform-database-1 psql -U ctl -d ctl -Atc 'SELECT value FROM ctl_lifecycle_fixture')" = 42
           test "$(sudo cat /root/ctl-ci-platform/registry/.lifecycle-fixture)" = lifecycle
+          python scripts/build_server_bundle.py --image "$IMAGE" --version v1.16.0
+          sudo env CTL_DISPOSABLE_CENTER_FIXTURE=1 /usr/bin/python3 tests/updater_center_integration.py
           sudo docker compose --project-name ctl-platform --env-file /root/ctl-ci-platform/compose.env \
             -f control-deploy/compose.yaml --profile database down

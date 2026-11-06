@@ -255,7 +255,7 @@ def run_server_command(argv, timeout, label):
 
 
 def deploy_server(source=None, home='/opt/ctl-platform', expected_sha256=None, upgrade=False,
-                  release_version=None, progress=None, **options):
+                  release_version=None, progress=None, expected_previous=None, preflight=None, **options):
     if source and release_version: raise ValueError('--release conflicts with --version')
     from .progress import Progress
     progress = progress or Progress(enabled=False)
@@ -280,6 +280,10 @@ def deploy_server(source=None, home='/opt/ctl-platform', expected_sha256=None, u
             state = {'schema_version': 1, 'current': None, 'pending': None}
             if state_path.exists():
                 state = read_state(state_path)
+            if expected_previous is not None and state != expected_previous:
+                raise ValueError('installed center changed after updater backup')
+            if preflight is not None:
+                preflight()
             if state['pending'] and state['pending']['sha256'] != digest:
                 raise ValueError('pending server operation: retry its exact release before changing versions')
             instance = home/'instance.json'; reject_links(instance)

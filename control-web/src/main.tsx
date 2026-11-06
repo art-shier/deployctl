@@ -48,6 +48,7 @@ import { ImagesView } from "./ImagesView";
 import { GroupsView } from "./ProjectGroups";
 import { AgentAccess } from "./AgentAccessPage";
 import { NodesPage } from "./NodesPage";
+import { SystemUpdatesPage } from "./SystemUpdatesPage";
 import { ProjectDeployments } from "./ProjectDeployments";
 import { tokenScopeLabel } from "./tokenScope";
 import { projectFormPayload } from "./projectForm";
@@ -363,6 +364,10 @@ function App() {
             <Terminal size={18} />
             Agent 接入
           </a>
+          <a href="#system-updates" className={page === "system-updates" ? "active" : ""}>
+            <RefreshCw size={18} />
+            系统更新
+          </a>
         </nav>
         <div className="sidebar-account">
           <ShieldCheck size={17} />
@@ -403,6 +408,8 @@ function App() {
             <AgentAccess />
           ) : page === "nodes" ? (
             <NodesPage Dialog={Modal} />
+          ) : page === "system-updates" ? (
+            <SystemUpdatesPage Dialog={Modal} />
           ) : selected ? (
             <ProjectView slug={selected} navigate={navigate} />
           ) : (

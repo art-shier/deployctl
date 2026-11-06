@@ -444,6 +444,11 @@ class Agent:
             raise ValueError('too many instances on one node')
         self.instances = [instance_identity(value) for value in response['instances']]
         self.enabled = response['enabled']
+        # Private local evidence is emitted only after a validated center heartbeat.
+        # The independent updater binds it to the restarted systemd process.
+        write_json(self.home / 'readiness.json', {'node_id': self.node_id,
+            'version': 'v' + __version__, 'pid': os.getpid(),
+            'heartbeat_ns': time.time_ns(), 'enabled': self.enabled})
         with self.samples_lock:
             for key, value in samples.items():
                 if self.samples.get(key) is value:

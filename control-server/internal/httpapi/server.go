@@ -24,6 +24,7 @@ type ManifestVerifier interface {
 	CheckManifest(context.Context, string, string) error
 }
 type Options struct {
+	SystemReleases     SystemReleaseProvider
 	OwnerHash          string
 	PublicOrigin       string
 	CookieSecure       bool
@@ -43,9 +44,13 @@ type Server struct {
 type handler func(http.ResponseWriter, *http.Request, auth.Principal) error
 
 func New(s *store.Store, o Options) *Server {
+	if o.SystemReleases == nil {
+		o.SystemReleases = officialSystemReleases()
+	}
 	server := &Server{store: s, options: o, mux: http.NewServeMux(), imageUpload: make(chan struct{}, 1)}
 	m := server.mux
 	server.remoteRoutes()
+	server.systemUpdateRoutes()
 	m.HandleFunc("GET /api/v1/health/ready", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.Ping(r.Context()); err != nil {
 			failure(w, err)
@@ -216,6 +221,8 @@ func reply(w http.ResponseWriter, status int, value any) {
 func failure(w http.ResponseWriter, err error) {
 	status, code, message := 500, "internal_error", "服务暂时不可用"
 	switch {
+	case errors.Is(err, errSystemReleasesUnavailable):
+		status, code, message = 503, "system_releases_unavailable", "官方更新版本暂时不可用，请稍后重试"
 	case errors.Is(err, errAgentUnavailable):
 		status, code, message = 503, "agent_resources_unavailable", "Agent 接入资源暂时不可用，请稍后重试"
 	case errors.Is(err, registry.ErrMixedLayers):

@@ -556,6 +556,9 @@ func (s *Store) PollNode(ctx context.Context, node string) (*domain.AgentTask, e
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	if err = lockUpdateScheduler(ctx, tx); err != nil {
+		return nil, err
+	}
 	n, err := lockRemoteNode(ctx, tx, node, "UPDATE")
 	if err != nil {
 		return nil, err
@@ -593,6 +596,13 @@ func (s *Store) PollNode(ctx context.Context, node string) (*domain.AgentTask, e
 		return nil, err
 	}
 	if !n.Enabled {
+		return nil, tx.Commit(ctx)
+	}
+	blocked, err := updateBlocksNode(ctx, tx, node)
+	if err != nil {
+		return nil, err
+	}
+	if blocked {
 		return nil, tx.Commit(ctx)
 	}
 	rows, err := tx.Query(ctx, "SELECT data FROM ctl_remote_tasks WHERE node_id=$1 AND status='queued' ORDER BY created_at,id FOR UPDATE", node)

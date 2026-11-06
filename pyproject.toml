@@ -4,10 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "team-deployctl"
-version = "1.14.0"
+version = "1.15.0"
 description = "Standard GitHub release delivery and Docker Compose deployment"
 requires-python = ">=3.10"
 dependencies = ["PyYAML==6.0.3"]
+
+[project.optional-dependencies]
+test = ["pytest==9.2.0", "jsonschema==4.26.0"]
 
 [project.scripts]
 deployctl = "deployctl.cli:main"
