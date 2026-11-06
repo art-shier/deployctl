@@ -380,6 +380,63 @@ h2 {
   border: 0;
   border-radius: 0;
 }
+.audit-table {
+  table-layout: fixed;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.audit-table th,
+.audit-table td {
+  padding: 14px 12px;
+  vertical-align: top;
+}
+.audit-table th:first-child {
+  width: 26%;
+}
+.audit-table th:nth-child(2) {
+  width: 18%;
+}
+.audit-table th:nth-child(4) {
+  width: 96px;
+}
+.audit-table th:last-child {
+  width: 156px;
+}
+@media (max-width: 760px) {
+  .audit-table,
+  .audit-table tbody,
+  .audit-table tr,
+  .audit-table td {
+    display: block;
+    width: 100%;
+  }
+  .audit-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .audit-table tr {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .audit-table tr:last-child {
+    border-bottom: 0;
+  }
+  .audit-table td {
+    display: grid;
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 12px;
+    padding: 5px 12px;
+    border: 0;
+  }
+  .audit-table td::before {
+    content: attr(data-label);
+    color: #64748b;
+    font-size: 11px;
+  }
+}
 th {
   background: #f8fafc;
   color: #64748b;
