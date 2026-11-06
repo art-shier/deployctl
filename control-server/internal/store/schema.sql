@@ -46,3 +46,30 @@ CREATE TABLE IF NOT EXISTS ctl_audit (id text PRIMARY KEY, project text NOT NULL
 CREATE INDEX IF NOT EXISTS ctl_audit_recent ON ctl_audit(created_at DESC);
 CREATE INDEX IF NOT EXISTS ctl_receipts_project ON ctl_receipts(project,created_at DESC);
 CREATE INDEX IF NOT EXISTS ctl_sessions_expiry ON ctl_sessions(expires_at);
+
+-- Remote identities deliberately never enter ctl_tokens or ctl_sessions.
+CREATE TABLE IF NOT EXISTS ctl_node_enrollments (
+ hash text PRIMARY KEY, expires_at timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ctl_nodes (
+ id text PRIMARY KEY, data jsonb NOT NULL, token_hash text UNIQUE,
+ enrollment_hash text UNIQUE, enrollment_expires timestamptz,
+ registered boolean NOT NULL DEFAULT false
+);
+CREATE TABLE IF NOT EXISTS ctl_instances (
+ id text PRIMARY KEY, node_id text NOT NULL REFERENCES ctl_nodes(id),
+ project text NOT NULL REFERENCES ctl_projects(slug), environment text NOT NULL,
+ data jsonb NOT NULL, UNIQUE(node_id,project,environment)
+);
+CREATE TABLE IF NOT EXISTS ctl_remote_tasks (
+ id text PRIMARY KEY, instance_id text NOT NULL REFERENCES ctl_instances(id),
+ node_id text NOT NULL REFERENCES ctl_nodes(id), project text NOT NULL REFERENCES ctl_projects(slug),
+ actor text NOT NULL, request_id text NOT NULL, request_hash text NOT NULL,
+ status text NOT NULL CHECK(status IN ('queued','leased','running','succeeded','failed','needs_attention','cancelled','expired')),
+ created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,
+ data jsonb NOT NULL, ciphertext bytea NOT NULL, UNIQUE(actor,request_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ctl_remote_instance_active ON ctl_remote_tasks(instance_id) WHERE status IN ('queued','leased','running');
+CREATE UNIQUE INDEX IF NOT EXISTS ctl_remote_node_claimed ON ctl_remote_tasks(node_id) WHERE status IN ('leased','running');
+CREATE INDEX IF NOT EXISTS ctl_remote_node_queue ON ctl_remote_tasks(node_id,created_at) WHERE status='queued';
+CREATE INDEX IF NOT EXISTS ctl_remote_project_recent ON ctl_remote_tasks(project,created_at DESC);

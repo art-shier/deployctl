@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"unicode/utf8"
 
@@ -310,6 +311,11 @@ func PublishTempFile(root, filename string, release domain.Release) error {
 			return verifyArtifact(target, release.SHA256)
 		}
 		return err
+	}
+	// Windows does not support fsync on a directory handle opened by os.Open.
+	// The file was already synced before publication; Linux keeps directory fsync.
+	if runtime.GOOS == "windows" {
+		return nil
 	}
 	dir, err := os.Open(root)
 	if err != nil {

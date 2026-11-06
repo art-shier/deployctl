@@ -1,0 +1,29 @@
+.remote-page {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.remote-fields {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.remote-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.remote-page .actions {
+  flex-wrap: wrap;
+}
+.remote-page td {
+  overflow-wrap: anywhere;
+}
+.remote-page .notice {
+  overflow-wrap: anywhere;
+}

@@ -18,6 +18,8 @@ def parser():
     sub = result.add_subparsers(dest='command', required=True)
     from .platform_management import add_commands
     add_commands(sub)
+    from .node_agent import add_commands as add_agent_commands
+    add_agent_commands(sub)
     server = sub.add_parser('server', help='install, upgrade or operate the independent ctl platform')
     operations = server.add_subparsers(dest='server_command', required=True)
     for name in ('install', 'upgrade', 'restart', 'start', 'stop', 'status', 'logs'):
@@ -121,7 +123,10 @@ def parser():
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
-        if args.command == 'server':
+        if args.command == 'agent':
+            from .node_agent import dispatch
+            dispatch(args)
+        elif args.command == 'server':
             from .server_bundle import deploy_server, operate_server
             if args.server_command in ('install', 'upgrade'):
                 from .progress import Progress

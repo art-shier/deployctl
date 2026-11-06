@@ -6,11 +6,13 @@ CLI 1.13.0 新增静态项目：创建时选择 static，首次安装可 `ctl in
 
 平台仓库：[art-shier/deployctl](https://github.com/art-shier/deployctl) · [版本与安装资产](https://github.com/art-shier/deployctl/releases) · [构建流水线](https://github.com/art-shier/deployctl/actions)
 
-本版本包含**管理服务与管理台0.6.0及CLI1.13.0**：按权限管理项目/项目组、读写配置、托管镜像/发布包和访问凭据；服务器登录后可直接 `ctl install notes --prod`。侧栏新增「Agent 接入」，从当前服务下载完整skill及CLI、查看接入说明和权限，见[Agent接入说明](docs/agent-access.md)。管理服务支持 `ctl server-install` 自动获取官方最新正式Release，或 `ctl server install` 等价写法；仍可指定 `--version` 或 `--release`。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)，项目与配置命令见[项目管理说明](docs/project-management.md)。
+本版本包含**管理服务与管理台0.7.0及CLI1.14.0**：按权限管理项目/项目组、读写配置、托管镜像/发布包和访问凭据；服务器登录后可直接 `ctl install notes --prod`。侧栏新增「Agent 接入」，从当前服务下载完整skill及CLI、查看接入说明和权限，见[Agent接入说明](docs/agent-access.md)。管理服务支持 `ctl server-install` 自动获取官方最新正式Release，或 `ctl server install` 等价写法；仍可指定 `--version` 或 `--release`。安装、CI接入、配置优先级和备份见 [管理服务说明](docs/control-plane.md)，项目与配置命令见[项目管理说明](docs/project-management.md)。
 
 v1.8.1完善**项目组工作台与组授权**：登录先进入项目组，点组查看项目列表，在组内注册、加入或移出项目，并直接管理该组的发布/部署凭据。新凭据只授权项目组，项目详情不再提供凭据入口。旧 Token 保留原项目权限，owner 为全局超级管理员。CLI 提供 `whoami` / `projects`。详见 [项目组和共享部署凭据](docs/control-plane.md#项目组和共享部署凭据v181)。
 
 支持单个无状态 HTTP 服务、Docker Compose、私有 GitHub Release 下载、升级失败恢复、人工回滚和状态/日志查询。单机更新可能短暂中断；数据库迁移、多机滚动发布、HTTPS 入口和持久化存储需另行配置。
+
+CLI 1.14.0 新增**远程部署节点**：Linux 主机运行出站 Agent，管理台按项目组/项目/环境授权节点，项目中选择节点执行安装、升级和回滚。同一项目环境可部署到多台节点，任务冻结版本与配置并记录各实例状态；负载均衡先手动配置。功能需配套的 v1.14.0 管理服务与 CLI，接入和恢复方法见 [远程部署与节点运维](docs/remote-deployment.md)。
 
 v1.8.2简化登录：`ctl login` 默认连接 `https://ctl.shier.art`。可用 `ctl config set server <地址>` 修改默认服务，`ctl config get server` 查看当前地址；切换服务后重新登录。管理服务无需为此升级。
 
@@ -24,17 +26,50 @@ v1.9.0支持项目组按环境配置启动变量与安装参数，项目同名�
 
 ```bash
 set -o pipefail
-curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.13.0/install.sh \
-  | bash -s -- --user --version v1.13.0
+curl --fail --silent --show-error https://raw.githubusercontent.com/art-shier/deployctl/v1.14.0/install.sh \
+  | bash -s -- --user --version v1.14.0
 export PATH="$HOME/.local/bin:$PATH"
 ctl --version
 ```
 
 安装器下载 CLI、检查 SHA256 和版本，安装 `ctl` 与 `deployctl` 到 `~/.local/bin`。CLI 内置依赖，无需服务器 pip 安装。再次执行可升级本安装器管理的命令；已有其他同名工具会保留并报告冲突。
 
-安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.13.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
+安装后，CLI自身升级使用`ctl self-update`，指定工具版本可用`ctl self-update --version v1.14.0`。命令沿用原安装目录、平台仓库和别名选择。v1.2.0及更早版本没有此命令，需要先重新执行安装器升级一次。详见 [工具定位与升级](skills/team-deploy/references/cli-lifecycle.md)。
 
 要求 Python >=3.10；Docker 项目部署另需 Docker Engine、Docker Compose >=2.30，静态项目部署无需 Docker。安装脚本不自动安装系统组件或提升权限。无 `gh`、指定安装目录、升级最新版等用法见 [安装说明](docs/install.md)。
+
+## 安装中心服务（管理台 + 镜像仓库）
+
+上面的安装命令只安装 `ctl` 工具。自建镜像服务器和 Web 管理台，还需在**中心 Linux 服务器**上执行 `ctl server-install`。它通过 Docker Compose 一起启动管理 API / Web、Distribution Registry 镜像仓库和默认 PostgreSQL，无需单独安装 Registry。使用外部 PostgreSQL 时可跳过内置数据库。
+
+要求 Python >=3.10、Docker Engine、Docker Compose >=2.30，以及 root / sudo 权限。先按上文安装 ctl，再执行以下命令；将 `ctl.example.com` 替换为自己的域名：
+
+```bash
+# 兼容上文安装到 ~/.local/bin 的 ctl；默认获取官方最新正式 Release
+sudo "$(command -v ctl)" server-install \
+  --origin https://ctl.example.com \
+  --registry-host ctl.example.com
+
+sudo "$(command -v ctl)" server-status
+```
+
+完成安装后：
+
+1. 将域名解析到中心服务器，配置 HTTPS 反向代理。同域名部署时，整个域名（包括 `/v2/`）转发到 `127.0.0.1:8080`。安装器不会自动配置 DNS、证书或反向代理。
+2. 从服务器的 `/opt/ctl-platform/keys/owner.token` 获取首次管理员登录凭据，访问自己的 HTTPS 地址登录管理台。
+3. 在管理台创建项目和配置，向镜像仓库上传或推送镜像，再接入业务部署节点。
+
+默认数据目录为 `/opt/ctl-platform`。API 入口为本机 `8080`，额外 Registry 网关入口为本机 `5000`；同域名模式只需代理 `8080`，底层 Registry 不直接对外开放。首次安装可用 `--api-port` / `--registry-port` 调整端口。代理还需配置镜像上传大小和超时。
+
+已有中心实例使用 `server-upgrade` 升级。固定版本、外部数据库、反向代理要求、备份和故障处理见 [中心服务完整安装与运维指南](docs/control-plane.md#引导管理服务)。
+
+远程部署节点需配套升级中心服务和 CLI 到 v1.14.0；仅升级 CLI 不会升级中心服务。
+
+## 接入远程部署节点
+
+在每台承载业务容器的 Linux 主机安装配套的 `ctl`，通过 `ctl agent enroll` 登记，再用 systemd 常驻运行 `ctl agent run`。中心管理台发现节点后，分配项目组、项目和环境授权，即可在项目中选择节点部署。
+
+节点安装步骤、一次性凭据、开机启动和恢复方法见 [远程部署与节点运维](docs/remote-deployment.md)。节点无需再次安装中心服务或镜像仓库。
 
 ## 业务项目接入
 
@@ -59,7 +94,7 @@ v1.6.0起增加可选pre `refresh_config: true`，让钩子生成的服务器配
 
 v1.5.0新增 `--env-var` 应用运行配置、`--set` 安装参数、`--unset-env` 删除覆盖值，以及可选宿主机pre/post hooks。应用通过 `DEPLOYCTL_ENV_FILE` 读取只读 `.env.json`；成功配置随版本提交，失败恢复旧快照。项目接入见 [运行时配置与钩子](docs/runtime-config.md)。
 
-## 服务器部署
+## 手动部署业务项目
 
 按 [运维手册](docs/operations.md) 配置部署用户、Docker 镜像拉取权限以及 `/etc/deployctl/project-a/production/{config.env,secrets.env}`，然后：
 

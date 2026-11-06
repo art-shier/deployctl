@@ -25,6 +25,7 @@ test("static project creation, release upload and directory inheritance through 
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.goto(`/#project/${slug}`);
   await expect(page.getByRole("tab", { name: "镜像管理" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "部署", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "项目设置" }).click();
   await expect(page.getByLabel("部署类型")).toBeDisabled();
   await page.getByRole("button", { name: "取消", exact: true }).click();
