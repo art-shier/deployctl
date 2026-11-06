@@ -1,6 +1,6 @@
 # 远程部署与节点运维
 
-本功能要求配套的 v1.14.0 管理服务、Web 和 CLI。已有 CLI 安装、升级、回滚命令及目录保持兼容；升级中心服务前请按管理服务指南备份。
+远程部署基础功能要求配套的 v1.14.0 管理服务、Web 和 CLI；本文的一体安装与自动更新要求包含此改动的 v1.15.0 构建（源码版本不代表已经正式发布）。已有 CLI 安装、升级、回滚命令及目录保持兼容；升级中心服务前请按管理服务指南备份。
 
 ## 工作方式
 
@@ -24,34 +24,25 @@ Agent 主动登记后，列表自动发现节点并显示“待授权”；主�
 
 ## 2. 接入 Linux 节点
 
-节点要求 Python >=3.10、Docker Engine、Docker Compose >=2.30。安装包含本功能的 `ctl` 后，以拥有 Docker 权限的固定运行身份执行（以下以 root 为例）：
+节点要求 Python >=3.10、Docker Engine、Docker Compose >=2.30 和 systemd。使用官方安装器安装系统级 ctl 后，在宿主机执行：
 
 ```bash
-sudo ctl agent enroll --server https://ctl.example.com
+sudo ctl agent install --server https://ctl.example.com
 ```
 
-命令隐藏输入一次性注册凭据。也可使用 `--token-file /私有路径/enrollment.token`，文件须当前身份所有、0600；读取后自行安全移除。注册成功将独立节点身份写入 `/var/lib/ctl-agent/node.json`，目录 0700、文件 0600。不得把这个目录复制给另一台服务器。
+首次安装隐藏输入上一步生成的节点凭据，也可使用 `--token-file /私有路径/enrollment.token`（当前身份所有、0600）。命令会自动完成登记、安装并启动 Agent 和独立更新服务，设置开机自启；不需要再登记更新器或手写 systemd 单元。节点身份保存在 `/var/lib/ctl-agent/node.json`，目录 0700、文件 0600，不得复制给另一台服务器。
 
-前台排查可以运行：
-
-```bash
-sudo ctl agent run
-```
-
-安装常驻服务（`--executable` 必须指向此节点已安装的实际 ctl 路径）：
+已有节点补装或重试安装直接执行以下命令，复用已有身份、不再输入凭据：
 
 ```bash
-sudo ctl agent service --executable /usr/local/bin/ctl \
-  | sudo tee /etc/systemd/system/ctl-agent.service >/dev/null
-sudo systemctl daemon-reload
-sudo systemctl enable --now ctl-agent
-sudo systemctl status ctl-agent
+sudo ctl agent install
+sudo systemctl status ctl-agent ctl-updater-node
 sudo journalctl -u ctl-agent -n 100
 ```
 
-使用用户安装的 ctl 时，将 `/usr/local/bin/ctl` 换成实际绝对路径。systemd 单元默认 root 身份，以兼容宿主机 hooks；若改为专用部署用户，须确保 Docker、部署目录与配置目录权限一致。
+自定义安装使用 `--executable`（官方安装器管理的实际 ctl 路径）、`--home`、`--root`（默认 `/opt/deployments`）、`--config-root`（默认 `/etc/deployctl`）、`--service-name`。更新服务可指定 `--updater-home` 和 `--updater-service`，重复执行必须沿用原有配置。默认以 root 运行；不同配置的已有 systemd 单元不会被覆盖。
 
-`enroll/run/service` 支持 `--home`。`run/service` 还支持 `--root`（默认 `/opt/deployments`）、`--config-root`（默认 `/etc/deployctl`）。注册与运行必须使用同一身份与 home；手动 CLI 操作应指定相同部署/配置目录。`service` 仅输出单元，不会自行修改系统。
+高级排查仍可使用 `ctl agent enroll/run/service`；`enroll` 只登记身份，`service` 只输出单元，正常安装应使用 `agent install`。前台 `agent run` 与常驻服务不能同时使用同一 home；先停止对应服务再排查。实际节点身份丢失才使用控制台的“重新登记”，补装更新能力不需要重新登记。
 
 不要在业务容器内启动 Agent。若以后容器化运行 Agent，需要另行设计宿主机 hooks、路径映射与 Docker socket 权限。
 

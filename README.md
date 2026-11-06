@@ -67,9 +67,15 @@ sudo "$(command -v ctl)" server-status
 
 ## 接入远程部署节点
 
-在每台承载业务容器的 Linux 主机安装配套的 `ctl`，通过 `ctl agent enroll` 登记，再用 systemd 常驻运行 `ctl agent run`。中心管理台发现节点后，分配项目组、项目和环境授权，即可在项目中选择节点部署。
+在每台承载业务容器的 Linux 主机安装配套的 `ctl`，通过 `ctl agent install --server <中心地址>` 一次完成接入，并自动安装、启动 Agent 和更新服务。中心管理台发现节点后，分配项目组、项目和环境授权，即可在项目中选择节点部署。
 
 节点安装步骤、一次性凭据、开机启动和恢复方法见 [远程部署与节点运维](docs/remote-deployment.md)。节点无需再次安装中心服务或镜像仓库。
+
+## 控制台更新节点和中心服务
+
+源码中的 CLI 1.15.0 / Web 0.8.0 新增“系统更新”：管理员可以选择官方稳定版本，逐台或分批更新节点 ctl / Agent，也可以更新中心服务。更新服务随中心或节点安装自动配置，无需再次登记；它作为宿主机独立服务，在 Agent 或中心容器重启时继续运行。节点支持失败恢复旧版本，中心在数据库与配置备份成功后升级，保留失败诊断而不自动回滚数据库。
+
+此功能的版本号不代表已经发布，旧 v1.14.0 不包含更新器。安装接入、备份范围、任务取消和人工恢复见 [系统更新操作指南](docs/system-updates.md)。
 
 ## 业务项目接入
 
@@ -144,6 +150,8 @@ python -m pip install -e .
 python scripts/build_install_script.py --check
 python scripts/build_release_assets.py
 python -m unittest discover -s tests -v
+python -m pip install -e '.[test]'
+python -m pytest tests/test_updater.py tests/test_integrated_updater.py -q
 python -I -S dist/deployctl.pyz validate templates/deployment.yaml
 bash scripts/installer_smoke.sh
 # Linux，需 Docker 与网络

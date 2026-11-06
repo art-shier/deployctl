@@ -146,11 +146,17 @@ jobs:
         run: |
           mkdir "$RUNNER_TEMP/server-draft"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "ctl-platform-${TAG}.tar.gz*" --dir "$RUNNER_TEMP/server-draft"
+          sudo install -d -m 0700 /root/ctl-ci-bin
+          sudo /usr/bin/python3 scripts/install_deployctl.py "$RUNNER_TEMP/installed/ctl" --install-dir /root/ctl-ci-bin \
+            --sha256 "$(sha256sum "$RUNNER_TEMP/installed/ctl" | cut -d ' ' -f1)"
           trap 'sudo docker compose --project-name ctl-platform --env-file /root/ctl-release-fixture/compose.env -f control-deploy/compose.yaml --profile database down || true' EXIT
-          sudo "$RUNNER_TEMP/installed/ctl" server install --release "$RUNNER_TEMP/server-draft/ctl-platform-${TAG}.tar.gz" --home /root/ctl-release-fixture \
+          sudo /root/ctl-ci-bin/ctl server install --release "$RUNNER_TEMP/server-draft/ctl-platform-${TAG}.tar.gz" --home /root/ctl-release-fixture \
+            --cli-path /root/ctl-ci-bin/ctl \
             --origin http://127.0.0.1:8092 --registry-host 127.0.0.1:5092 --api-port 8092 --registry-port 5092
           curl --fail --silent http://127.0.0.1:8092/api/v1/health/ready >/dev/null
-          sudo "$RUNNER_TEMP/installed/ctl" server upgrade --release "$RUNNER_TEMP/server-draft/ctl-platform-${TAG}.tar.gz" --home /root/ctl-release-fixture
+          sudo /root/ctl-ci-bin/ctl server upgrade --release "$RUNNER_TEMP/server-draft/ctl-platform-${TAG}.tar.gz" --home /root/ctl-release-fixture \
+            --cli-path /root/ctl-ci-bin/ctl
+          sudo systemctl is-active --quiet ctl-updater-center.service
       - name: Publish verified Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -164,7 +170,7 @@ jobs:
           test "$("$RUNNER_TEMP/published/ctl" --version)" = "${TAG#v}"
           test "$("$RUNNER_TEMP/published/deployctl" --version)" = "${TAG#v}"
           trap 'sudo docker compose --project-name ctl-platform --env-file /root/ctl-release-fixture/compose.env -f control-deploy/compose.yaml --profile database down || true' EXIT
-          sudo "$RUNNER_TEMP/published/ctl" server-upgrade --home /root/ctl-release-fixture
+          sudo "$RUNNER_TEMP/published/ctl" server-upgrade --home /root/ctl-release-fixture --cli-path /root/ctl-ci-bin/ctl
           sudo "$RUNNER_TEMP/published/ctl" server-restart --home /root/ctl-release-fixture
           curl --fail --silent http://127.0.0.1:8092/api/v1/health/ready >/dev/null
           RELEASE_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/ctl-platform-${TAG}.tar.gz"

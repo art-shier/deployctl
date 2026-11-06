@@ -150,6 +150,14 @@ test("node enrollment is one-time and deployment retry preserves identity across
   const { bodies } = await fixture(page);
   await page.goto("/#nodes");
   await page.getByRole("button", { name: "接入节点", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "sudo ctl agent install --server",
+  );
+  await expect(page.getByRole("dialog")).toContainText(
+    "自动安装并启动 Agent 和更新服务",
+  );
+  await expect(page.getByRole("dialog")).not.toContainText("agent service");
+
   await page
     .getByRole("button", { name: "生成一次性注册凭据", exact: true })
     .click();
@@ -227,7 +235,7 @@ test("onboarding creates a credential before discovery, then assigns grants to t
   await expect(dialog.getByLabel("允许环境")).toHaveCount(0);
   await expect(dialog.getByRole("checkbox")).toHaveCount(0);
   await expect(dialog).toContainText(
-    `sudo ctl agent enroll --server ${new URL(page.url()).origin}`,
+    `sudo ctl agent install --server ${new URL(page.url()).origin}`,
   );
   await page
     .getByRole("button", { name: "生成一次性注册凭据", exact: true })

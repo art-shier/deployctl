@@ -73,3 +73,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS ctl_remote_instance_active ON ctl_remote_tasks
 CREATE UNIQUE INDEX IF NOT EXISTS ctl_remote_node_claimed ON ctl_remote_tasks(node_id) WHERE status IN ('leased','running');
 CREATE INDEX IF NOT EXISTS ctl_remote_node_queue ON ctl_remote_tasks(node_id,created_at) WHERE status='queued';
 CREATE INDEX IF NOT EXISTS ctl_remote_project_recent ON ctl_remote_tasks(project,created_at DESC);
+
+-- Updater identities are separate from platform and Agent credentials.
+CREATE TABLE IF NOT EXISTS ctl_update_enrollments (
+ hash text PRIMARY KEY, kind text NOT NULL, target_id text NOT NULL,
+ expires_at timestamptz NOT NULL, UNIQUE(kind,target_id)
+);
+CREATE TABLE IF NOT EXISTS ctl_updaters (
+ id text PRIMARY KEY, kind text NOT NULL CHECK(kind IN ('node','center')),
+ target_id text NOT NULL, token_hash text NOT NULL UNIQUE, data jsonb NOT NULL,
+ UNIQUE(kind,target_id)
+);
+CREATE TABLE IF NOT EXISTS ctl_update_requests (
+ request_id text PRIMARY KEY, request_hash text NOT NULL, batch_id text NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ctl_update_jobs (
+ id text PRIMARY KEY, request_id text NOT NULL REFERENCES ctl_update_requests(request_id),
+ updater_id text NOT NULL REFERENCES ctl_updaters(id), kind text NOT NULL,
+ target_id text NOT NULL, batch_id text NOT NULL, status text NOT NULL,
+ created_at timestamptz NOT NULL, data jsonb NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ctl_update_updater_active ON ctl_update_jobs(updater_id) WHERE status IN ('queued','leased','running');
+CREATE INDEX IF NOT EXISTS ctl_update_jobs_recent ON ctl_update_jobs(created_at DESC);

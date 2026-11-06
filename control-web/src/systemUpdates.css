@@ -1,0 +1,50 @@
+.update-targets,
+.update-history {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+}
+.update-target {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.update-target h3 {
+  margin: 0;
+}
+.update-details {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 16px;
+  font-size: 13px;
+}
+.update-details dt {
+  color: var(--muted);
+}
+.update-details dd {
+  margin: 0;
+}
+.system-updates .scope-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.system-updates .scope-option input {
+  width: 16px;
+}
+.system-updates .section-heading {
+  flex-wrap: wrap;
+}
+.system-updates .notice button {
+  margin-left: 10px;
+}
+@media (max-width: 700px) {
+  .system-updates .page-heading {
+    align-items: flex-start;
+  }
+  .system-updates .update-target {
+    padding: 14px;
+  }
+}

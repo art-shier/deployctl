@@ -444,6 +444,11 @@ class Agent:
             raise ValueError('too many instances on one node')
         self.instances = [instance_identity(value) for value in response['instances']]
         self.enabled = response['enabled']
+        # Private local evidence is emitted only after a validated center heartbeat.
+        # The independent updater binds it to the restarted systemd process.
+        write_json(self.home / 'readiness.json', {'node_id': self.node_id,
+            'version': 'v' + __version__, 'pid': os.getpid(),
+            'heartbeat_ns': time.time_ns(), 'enabled': self.enabled})
         with self.samples_lock:
             for key, value in samples.items():
                 if self.samples.get(key) is value:
@@ -549,23 +554,115 @@ def service_unit(executable, home, root, config_root):
             'TimeoutStopSec=900\nKillMode=mixed\n\n[Install]\nWantedBy=multi-user.target\n')
 
 
+def agent_process_matches(host, node_id, version, after_ns=0):
+    try:
+        info = host.service_info()
+        marker = read_json(host.agent_home/'readiness.json')
+        heartbeat = marker.get('heartbeat_ns')
+        return (info.get('ActiveState') == 'active' and int(info.get('MainPID', '0')) > 0
+            and marker.get('node_id') == node_id and marker.get('version') == version
+            and marker.get('pid') == int(info['MainPID'])
+            and type(heartbeat) is int and after_ns < heartbeat <= time.time_ns()
+            and time.time_ns()-heartbeat < 90*1_000_000_000)
+    except (ValueError, RuntimeError, OSError):
+        return False
+
+
+def install(args):
+    """Install a node and its independent updater using the original identity."""
+    import re
+    import subprocess
+    from types import SimpleNamespace
+    from . import updater, bootstrap
+    updater.require_root()
+    if (not re.fullmatch(r'[A-Za-z0-9_-]+\.service', args.service_name)
+        or args.service_name.startswith('ctl-updater')):
+        raise ValueError('invalid Agent service name')
+    executable = updater.trusted(args.executable)
+    updater.installer_identity(executable)
+    home = private_directory(updater.trusted(args.home, private=True))
+    root = updater.trusted(args.root)
+    config_root = updater.trusted(args.config_root)
+    content = service_unit(executable, home, root, config_root).encode()
+    unit = updater.trusted(Path('/etc/systemd/system')/args.service_name)
+    updater.trusted(home/'.install.lock')
+    with service_lock(home/'.install.lock'):
+        if unit.exists() and (not unit.is_file() or unit.read_bytes() != content):
+            raise ValueError('existing Agent unit differs; choose a separate service name')
+        identity_path = home/'node.json'
+        if identity_path.exists():
+            identity = read_json(identity_path)
+            validate_id(identity.get('node_id'))
+            server = validate_origin(identity.get('server'))
+            validate_token(identity.get('token'))
+            if args.server and validate_origin(args.server) != server:
+                raise ValueError('existing Agent belongs to a different server')
+        else:
+            if not args.server: raise ValueError('new Agent installation requires --server')
+            token = read_private(updater.trusted(args.token_file, private=True)).decode('ascii').strip() if args.token_file else getpass.getpass('Enrollment token: ')
+            enroll(args.server, token, home)
+        if not unit.exists(): bootstrap.atomic_write(unit, content, 0o644)
+        host = updater.Host({'cli_path':str(executable),'kind':'node','agent_service':args.service_name,
+            'agent_home':str(home)})
+        try:
+            updater_home = private_directory(updater.trusted(args.updater_home, private=True))
+            # The helper takes this lock for each complete protocol iteration.
+            # Never restart the Agent while an updater is executing or recovering.
+            with updater.setup_lock(updater_home):
+                updater.check_setup_journals(updater_home)
+                version = updater.installer_identity(executable)['version']
+                node_id = read_json(identity_path)['node_id']
+                host.command(['systemctl','daemon-reload'])
+                refresh = (host.service_info().get('ActiveState') == 'active'
+                    and not agent_process_matches(host, node_id, version))
+                if refresh:
+                    host.stop_agent()
+                after_ns = time.time_ns()
+                host.command(['systemctl','enable','--now',args.service_name], timeout=60)
+                host.command(['systemctl','is-active','--quiet',args.service_name])
+                if refresh:
+                    deadline = time.monotonic()+120
+                    while not agent_process_matches(host, node_id, version, after_ns):
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError('new Agent process has no fresh heartbeat')
+                        time.sleep(1)
+        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError):
+            raise RuntimeError('Agent installed; Agent service not ready and automatic updates not configured. '
+                'Repair by repeating ctl agent install with the same local paths.') from None
+        try:
+            updater.setup(SimpleNamespace(kind='node', home=args.updater_home, cli_path=str(executable),
+                agent_home=str(home), agent_service=args.service_name, server_home='/opt/ctl-platform',
+                service_name=args.updater_service))
+        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError):
+            raise RuntimeError('Agent installed and started; automatic updates not configured. '
+                'Repair by repeating ctl agent install with the same local paths.') from None
+
+
 def add_commands(sub):
     command = sub.add_parser('agent', help='enroll or run the outbound deployment node agent')
     operations = command.add_subparsers(dest='agent_command', required=True)
-    for name in ('enroll', 'run', 'service'):
+    for name in ('enroll', 'run', 'service', 'install'):
         operation = operations.add_parser(name)
         operation.add_argument('--home', default=DEFAULT_HOME)
-        if name == 'enroll':
-            operation.add_argument('--server', required=True)
+        if name in ('enroll', 'install'):
+            operation.add_argument('--server', required=name == 'enroll')
             operation.add_argument('--token-file', help='private enrollment token file; otherwise hidden prompt')
-        else:
+        if name != 'enroll':
             operation.add_argument('--root', default='/opt/deployments')
             operation.add_argument('--config-root', default='/etc/deployctl')
-        if name == 'service':
+        if name in ('service', 'install'):
             operation.add_argument('--executable', default='/usr/local/bin/ctl')
+        if name == 'install':
+            operation.add_argument('--service-name', default='ctl-agent.service')
+            operation.add_argument('--updater-home', default='/var/lib/ctl-updater-node')
+            operation.add_argument('--updater-service', default='ctl-updater-node.service')
 
 
 def dispatch(args):
+    if args.agent_command == 'install':
+        install(args)
+        print('OK: Agent and automatic updater installed and started')
+        return
     if args.agent_command == 'service':
         print(service_unit(args.executable, args.home, args.root, args.config_root), end='')
         return

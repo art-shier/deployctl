@@ -288,7 +288,7 @@ function NodeOnboarding({
       <section className="remote-section">
         <h3>1. 在 Linux 主机安装 ctl</h3>
         <p>
-          需要 Python ≥ 3.10、Docker Engine 和 Docker Compose ≥
+          需要 Linux systemd、Python ≥ 3.10、Docker Engine 和 Docker Compose ≥
           2.30。使用当前管理服务提供、支持 agent 命令的 ctl，安装后运行{" "}
           <code>ctl --version</code> 检查。
         </p>
@@ -299,16 +299,17 @@ function NodeOnboarding({
         </p>
       </section>
       <section className="remote-section">
-        <h3>2. 使用一次性凭据登记</h3>
+        <h3>2. 一次接入并安装服务</h3>
         <p>
           生成凭据时尚未创建节点。Agent
           完成登记后，主机信息会自动出现在节点列表，并等待分配授权。
         </p>
         <code className="code-block">
-          sudo ctl agent enroll --server {location.origin}
+          sudo ctl agent install --server {location.origin}
         </code>
         <p className="muted small">
-          在隐藏输入提示中粘贴凭据。凭据只展示本次，有效期 15 分钟。
+          在首次安装的隐藏输入提示中粘贴凭据。命令自动安装并启动 Agent
+          和更新服务。凭据只展示本次，有效期 15 分钟。
         </p>
         {["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) && (
           <p className="notice">
@@ -349,11 +350,10 @@ function NodeOnboarding({
         )}
       </section>
       <section className="remote-section">
-        <h3>3. 启动 Agent 并分配授权</h3>
+        <h3>3. 为发现的节点分配授权</h3>
         <p>
-          登记后运行 <code>sudo ctl agent run</code>。持续运行可使用{" "}
-          <code>sudo ctl agent service --executable /usr/local/bin/ctl</code>{" "}
-          生成 systemd 单元，再安装并启用服务。
+          安装完成后，Agent 和更新服务会自动连接中心，并设置为开机启动。
+          无需另外登记更新器或手动安装 systemd 单元。
         </p>
         <p>
           节点列表每 5

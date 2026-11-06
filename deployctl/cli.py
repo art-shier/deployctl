@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import subprocess
 import tempfile
 
 from . import __version__
@@ -20,6 +21,8 @@ def parser():
     add_commands(sub)
     from .node_agent import add_commands as add_agent_commands
     add_agent_commands(sub)
+    from .updater import add_commands as add_updater_commands
+    add_updater_commands(sub)
     server = sub.add_parser('server', help='install, upgrade or operate the independent ctl platform')
     operations = server.add_subparsers(dest='server_command', required=True)
     for name in ('install', 'upgrade', 'restart', 'start', 'stop', 'status', 'logs'):
@@ -37,6 +40,9 @@ def parser():
                 operation.add_argument('--api-port', type=int)
                 operation.add_argument('--registry-port', type=int)
                 operation.add_argument('--database-url-file', help='private file containing an external PostgreSQL URL')
+                operation.add_argument('--cli-path', default='/usr/local/bin/ctl')
+                operation.add_argument('--updater-home', default='/var/lib/ctl-updater-center')
+                operation.add_argument('--updater-service', default='ctl-updater-center.service')
             if name == 'logs': operation.add_argument('--tail', type=int, default=100)
     login = sub.add_parser('login', help='save private platform credentials')
     login.add_argument('--server', help='override saved server for this login; default: saved server or https://ctl.shier.art')
@@ -126,6 +132,9 @@ def main(argv=None):
         if args.command == 'agent':
             from .node_agent import dispatch
             dispatch(args)
+        elif args.command == 'updater':
+            from .updater import dispatch
+            dispatch(args)
         elif args.command == 'server':
             from .server_bundle import deploy_server, operate_server
             if args.server_command in ('install', 'upgrade'):
@@ -134,6 +143,15 @@ def main(argv=None):
                     release_version=args.server_version, progress=Progress(enabled=not args.quiet),
                     upgrade=args.server_command == 'upgrade', origin=args.origin, registry_host=args.registry_host,
                     api_port=args.api_port, registry_port=args.registry_port, database_url_file=args.database_url_file)
+                from .updater import setup
+                from types import SimpleNamespace
+                try:
+                    setup(SimpleNamespace(kind='center', home=args.updater_home, cli_path=args.cli_path,
+                        agent_home='/var/lib/ctl-agent', agent_service='ctl-agent.service',
+                        server_home=args.home, service_name=args.updater_service))
+                except (ValueError, RuntimeError, OSError, subprocess.SubprocessError):
+                    raise RuntimeError('center installed; automatic updates not configured. '
+                        'Repair with sudo ctl updater setup --kind center --server-home '+args.home) from None
                 print(f"OK: ctl server running {state['current']['version']}; instance: {args.home}")
             else:
                 state = operate_server(args.server_command, home=args.home, tail=getattr(args, 'tail', 100))
