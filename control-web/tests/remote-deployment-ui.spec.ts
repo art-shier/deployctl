@@ -189,13 +189,13 @@ test("node enrollment is one-time and deployment retry preserves identity across
       .getByRole("row")
       .filter({ hasText: "Server B" }),
   ).toContainText("v2");
-  await page.getByLabel("目标节点").selectOption("node-a");
+  await page.getByLabel("目标节点 Server A").check();
   await page.getByLabel("操作", { exact: true }).selectOption("upgrade");
   await page.getByLabel("部署版本").selectOption("v2");
   await page.getByLabel("主机端口").fill("8081");
   await page.getByRole("button", { name: "创建部署任务", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("结果尚未确认");
-  await expect(page.getByLabel("目标节点")).toBeDisabled();
+  await expect(page.getByLabel("目标节点 Server A")).toBeDisabled();
   page.once("dialog", (dialog) => dialog.dismiss());
   await page.getByRole("link", { name: "部署节点", exact: true }).click();
   await expect(page).toHaveURL(/#project\/notes$/);
@@ -212,7 +212,8 @@ test("node enrollment is one-time and deployment retry preserves identity across
   await expect(page.getByRole("table", { name: "部署任务" })).toContainText(
     "已取消",
   );
-  await page.getByLabel("目标节点").selectOption("node-b");
+  await page.getByLabel("目标节点 Server A").uncheck();
+  await page.getByLabel("目标节点 Server B").check();
   await page.getByLabel("操作", { exact: true }).selectOption("upgrade");
   await expect(
     page.getByRole("button", { name: "创建部署任务" }),
@@ -437,4 +438,157 @@ test("onboarding retries errors, cancels pending generation on dismissal and cle
   await page.getByRole("link", { name: "部署节点", exact: true }).click();
   await page.getByRole("button", { name: "接入节点", exact: true }).click();
   await expect(page.getByLabel("一次性注册凭据")).toHaveCount(0);
+});
+
+test("batch deploy retries only uncertain node and shows independent tasks", async ({
+  page,
+}) => {
+  await fixture(page);
+  const bodies: Record<string, unknown>[] = [];
+  const tasks: Record<string, unknown>[] = [];
+  let fail = true;
+  await page.route("**/api/v1/projects/notes/tasks", async (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({ json: tasks });
+    const body = route.request().postDataJSON();
+    bodies.push(body);
+    let task = tasks.find((t) => t.node_id === body.node_id);
+    if (!task) {
+      task = {
+        ...body,
+        id: `task-${body.node_id}`,
+        status: "queued",
+        stage: "accepted",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      tasks.push(task);
+    }
+    if (body.node_id === "node-b" && fail) {
+      fail = false;
+      return route.abort("failed");
+    }
+    return route.fulfill({ status: 201, json: task });
+  });
+  await page.goto("/#project/notes");
+  await page.getByRole("tab", { name: "部署", exact: true }).click();
+  await page.getByLabel("操作", { exact: true }).selectOption("rollback");
+  await page.getByLabel("目标节点 Server A").check();
+  await page.getByLabel("目标节点 Server B").check();
+  await page.getByRole("button", { name: "创建部署任务", exact: true }).click();
+  await expect(page.getByRole("list", { name: "批量提交结果" })).toContainText(
+    "Server A：已创建",
+  );
+  await expect(page.getByRole("list", { name: "批量提交结果" })).toContainText(
+    "Server B：结果待确认",
+  );
+  await page
+    .getByRole("button", { name: "重试原任务请求", exact: true })
+    .click();
+  await expect(page.getByRole("list", { name: "批量提交结果" })).toContainText(
+    "Server B：已创建",
+  );
+  expect(bodies.filter((b) => b.node_id === "node-a")).toHaveLength(1);
+  const retried = bodies.filter((b) => b.node_id === "node-b");
+  expect(retried).toHaveLength(2);
+  expect(retried[0]).toEqual(retried[1]);
+  await expect(
+    page.getByRole("status").filter({ hasText: "2 个实例：" }),
+  ).toContainText("2 个状态未知");
+  await page.screenshot({
+    path: "test-results/batch-deployment.png",
+    fullPage: true,
+  });
+});
+
+test("node metrics show capacity and explicitly mark old samples", async ({
+  page,
+}) => {
+  const { nodes } = await fixture(page);
+  Object.assign(nodes[0], {
+    online: true,
+    metrics_at: new Date().toISOString(),
+    metrics: {
+      cpu_cores: 4,
+      cpu_percent: 25.5,
+      memory: { total_bytes: 8 * 1024 ** 3, available_bytes: 3 * 1024 ** 3 },
+      disk: {
+        total_bytes: 100 * 1024 ** 3,
+        available_bytes: 40 * 1024 ** 3,
+        path: "/srv/ctl",
+      },
+    },
+  });
+  Object.assign(nodes[1], {
+    metrics_at: "2020-01-01T00:00:00Z",
+    metrics: { cpu_cores: 2, cpu_percent: null, memory: null, disk: null },
+  });
+  await page.goto("/#nodes");
+  const table = page.getByRole("table", { name: "部署节点" });
+  await expect(table).toContainText("CPU 25.5% · 4 核");
+  await expect(table).toContainText("5.0 GiB / 8.0 GiB");
+  await expect(table).toContainText("剩余 40.0 GiB");
+  await expect(table).toContainText("历史数据 · 当前状态未知");
+  await page.screenshot({
+    path: "test-results/node-metrics.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    390,
+  );
+  await page.screenshot({
+    path: "test-results/node-metrics-mobile.png",
+    fullPage: true,
+  });
+});
+
+test("service overview separates healthy, stopped and stale instances", async ({
+  page,
+}) => {
+  const { nodes } = await fixture(page);
+  nodes.forEach((node) => (node.online = true));
+  await page.route("**/api/v1/projects/notes/instances", (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: "a",
+          node_id: "node-a",
+          environment: "prod",
+          health: "healthy",
+          observed_at: new Date().toISOString(),
+          actual_version: "v2",
+        },
+        {
+          id: "b",
+          node_id: "node-b",
+          environment: "prod",
+          health: "stopped",
+          observed_at: new Date().toISOString(),
+          actual_version: "v1",
+        },
+        {
+          id: "c",
+          node_id: "node-a",
+          environment: "prod",
+          health: "healthy",
+          observed_at: "2020-01-01T00:00:00Z",
+          actual_version: "v1",
+        },
+        {
+          id: "d",
+          node_id: "node-a",
+          environment: "staging",
+          health: "healthy",
+          observed_at: new Date().toISOString(),
+          actual_version: "v1",
+        },
+      ],
+    }),
+  );
+  await page.goto("/#project/notes");
+  await page.getByRole("tab", { name: "部署", exact: true }).click();
+  await expect(page.locator(".runtime-summary")).toContainText(
+    "3 个实例：1 个正常，0 个异常，1 个停止，0 个未安装，1 个状态未知",
+  );
 });

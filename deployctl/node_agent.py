@@ -15,6 +15,7 @@ import threading
 import time
 
 from . import __version__
+from .host_metrics import HostMetrics
 from .contract import validate_name
 from .platform_client import PlatformClient, PlatformError, validate_defaults, validate_origin, validate_resolution, validate_token
 from .platform_credentials import Credentials
@@ -298,6 +299,8 @@ class Agent:
         self.samples_lock = threading.Lock()
         self.observation_lock = threading.Lock()
         self.sample_epochs = {}
+        self.metrics_supported = False
+        self.host_metrics = HostMetrics(executor.manager.root if isinstance(executor, RuntimeExecutor) else self.home)
         self.docker_ok = False
         self.recover()
 
@@ -435,15 +438,18 @@ class Agent:
             samples = dict(self.samples) if allow_samples else {}
         busy = self.worker is not None and self.worker.is_alive()
         observations = [v for k, v in samples.items() if not (busy and k == self.active_instance)]
-        response = self.client.json('POST', '/api/v1/node/heartbeat', {
-            'agent_version': __version__, 'platform': platform.system().lower() + '/' + platform.machine(),
-            'docker_available': self.docker_ok, 'instances': observations})
+        body = {'agent_version': __version__, 'platform': platform.system().lower() + '/' + platform.machine(),
+                'docker_available': self.docker_ok, 'instances': observations}
+        if self.metrics_supported:
+            body['metrics'] = self.host_metrics.sample()
+        response = self.client.json('POST', '/api/v1/node/heartbeat', body)
         if not isinstance(response, dict) or type(response.get('enabled')) is not bool or not isinstance(response.get('instances'), list):
             raise ValueError('invalid node heartbeat response')
         if len(response['instances']) > 1000:
             raise ValueError('too many instances on one node')
         self.instances = [instance_identity(value) for value in response['instances']]
         self.enabled = response['enabled']
+        self.metrics_supported = response.get('metrics_supported') is True
         # Private local evidence is emitted only after a validated center heartbeat.
         # The independent updater binds it to the restarted systemd process.
         write_json(self.home / 'readiness.json', {'node_id': self.node_id,

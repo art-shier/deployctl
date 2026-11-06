@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { RefreshCw } from "lucide-react";
 import { api, send, type Project, type Release } from "./api";
 import {
-  DeploymentSubmission,
+  DeploymentBatch,
+  currentHealth,
+  type BatchResult,
   activeTask,
   cancellableTask,
   findInstance,
@@ -40,6 +42,8 @@ export function ProjectDeployments({ project }: { project: Project }) {
     host_port: "",
     bind_address: "",
   });
+  const [selectedNodes, setSelectedNodes] = useState<string[]>([]);
+  const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [optionsError, setOptionsError] = useState("");
@@ -50,7 +54,7 @@ export function ProjectDeployments({ project }: { project: Project }) {
   const [cancelling, setCancelling] = useState("");
   const [uncertain, setUncertain] = useState(false);
   const [revision, reload] = useState(0);
-  const submission = useRef(new DeploymentSubmission());
+  const submission = useRef(new DeploymentBatch());
   const mounted = useRef(true);
   const locked = useRef(false);
   locked.current = busy || uncertain;
@@ -150,17 +154,27 @@ export function ProjectDeployments({ project }: { project: Project }) {
   const environmentTasks = tasks.filter(
     (task) => task.environment === draft.environment,
   );
-  const node = nodes.find((node) => node.id === draft.node_id);
-  const instance = findInstance(instances, draft.node_id, draft.environment);
+  const remainingNodes = selectedNodes.filter(
+    (id) =>
+      !batchResults.some((result) => result.node_id === id && result.task),
+  );
+  const selected = nodes.filter((node) => selectedNodes.includes(node.id));
   const active = tasks.some(
     (task) =>
-      task.node_id === draft.node_id &&
+      remainingNodes.includes(task.node_id) &&
       task.environment === draft.environment &&
-      activeTask(task.status),
+      activeTask(task.status) &&
+      !batchResults.some((result) => result.task?.id === task.id),
   );
   const needsRollback =
-    instance?.pending_transaction && draft.action !== "rollback";
+    draft.action !== "rollback" &&
+    remainingNodes.some(
+      (id) =>
+        findInstance(instances, id, draft.environment)?.pending_transaction,
+    );
   const update = (changes: Partial<DeploymentDraft>) => {
+    submission.current.reset();
+    setBatchResults([]);
     setDraft((value) => ({ ...value, ...changes }));
     setActionError("");
     setNotice("");
@@ -172,11 +186,20 @@ export function ProjectDeployments({ project }: { project: Project }) {
     setActionError("");
     setNotice("");
     try {
-      const task = await submission.current.submit(draft, (body) =>
-        api<DeploymentTask>(`${base}/tasks`, send("POST", body)),
+      const results = await submission.current.submit(
+        selectedNodes.map((node_id) => ({ ...draft, node_id })),
+        (body) => api<DeploymentTask>(`${base}/tasks`, send("POST", body)),
       );
       if (mounted.current) {
-        setNotice(`任务已创建 · ${task.id}`);
+        setBatchResults(results);
+        const count = results.filter((result) => result.task).length;
+        setNotice(
+          `任务已创建：${count} / ${results.length} 个节点。各节点独立执行，请查看部署任务。`,
+        );
+        if (results.some((result) => result.error))
+          setActionError(
+            "部分任务创建结果尚未确认或创建失败。重试只提交未成功的节点，已创建任务不会重复提交。",
+          );
         reload((value) => value + 1);
       }
     } catch (cause) {
@@ -214,7 +237,7 @@ export function ProjectDeployments({ project }: { project: Project }) {
         <div>
           <h2>远程部署</h2>
           <p className="muted small">
-            每次选择一个节点。同一项目环境可在多台节点部署，版本与任务分别记录。
+            勾选一个或多个节点，一次提交相同部署参数，各节点独立执行并记录结果。
           </p>
         </div>
         <button disabled={busy} onClick={() => reload((value) => value + 1)}>
@@ -228,6 +251,101 @@ export function ProjectDeployments({ project }: { project: Project }) {
           <button onClick={() => reload((value) => value + 1)}>重试加载</button>
         </div>
       )}
+      <section className="remote-section">
+        <h3>服务运行概览</h3>
+        <div className="panel runtime-summary" role="status">
+          {(() => {
+            const list = instances.filter(
+              (instance) => instance.environment === draft.environment,
+            );
+            const states = list.map((instance) =>
+              currentHealth(
+                instance,
+                !!nodes.find((node) => node.id === instance.node_id)?.online &&
+                  !error,
+              ),
+            );
+            return `${list.length} 个实例：${states.filter((s) => s === "healthy").length} 个正常，${states.filter((s) => s === "unhealthy").length} 个异常，${states.filter((s) => s === "stopped").length} 个停止，${states.filter((s) => s === "not_installed").length} 个未安装，${states.filter((s) => !["healthy", "unhealthy", "stopped", "not_installed"].includes(s)).length} 个状态未知`;
+          })()}
+        </div>
+        <h3>已部署实例</h3>
+        <p className="muted small">
+          业务健康取自最后一次观测。离线期间显示历史状态。
+        </p>
+        {loading && (
+          <p className="loading" role="status">
+            正在刷新部署状态…
+          </p>
+        )}
+        {instances.filter(
+          (instance) => instance.environment === draft.environment,
+        ).length ? (
+          <div className="table-wrap">
+            <table aria-label="已部署实例">
+              <thead>
+                <tr>
+                  <th>节点 / 环境</th>
+                  <th>实际版本</th>
+                  <th>健康观测</th>
+                  <th>绑定</th>
+                  <th>事务</th>
+                </tr>
+              </thead>
+              <tbody>
+                {instances
+                  .filter(
+                    (instance) => instance.environment === draft.environment,
+                  )
+                  .map((instance) => (
+                    <tr key={instance.id}>
+                      <td>
+                        {nodeName(instance.node_id)}
+                        <small className="block muted">
+                          {instance.environment} ·{" "}
+                          {nodes.find((node) => node.id === instance.node_id)
+                            ? nodeLabel(
+                                nodes.find(
+                                  (node) => node.id === instance.node_id,
+                                )!,
+                              )
+                            : "节点不在当前可用范围"}
+                        </small>
+                      </td>
+                      <td>
+                        <code>{instance.actual_version || "未安装"}</code>
+                      </td>
+                      <td>
+                        {healthLabel(
+                          instance,
+                          !error &&
+                            !!nodes.find((node) => node.id === instance.node_id)
+                              ?.online,
+                        )}
+                        <small className="block muted">
+                          {remoteDate(instance.observed_at)}
+                        </small>
+                      </td>
+                      <td>
+                        <code>
+                          {instance.binding
+                            ? `${instance.binding.bind_address}:${instance.binding.host_port}`
+                            : "—"}
+                        </code>
+                      </td>
+                      <td>
+                        {instance.pending_transaction
+                          ? "待回滚恢复"
+                          : "无待处理事务"}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          !loading && <p className="empty">此环境尚无部署实例。</p>
+        )}
+      </section>
       <form className="panel form-stack" onSubmit={submit}>
         <h3>创建部署任务</h3>
         <fieldset disabled={busy || uncertain} className="remote-fields">
@@ -236,9 +354,10 @@ export function ProjectDeployments({ project }: { project: Project }) {
               部署环境
               <select
                 value={draft.environment}
-                onChange={(event) =>
-                  update({ environment: event.target.value, node_id: "" })
-                }
+                onChange={(event) => {
+                  update({ environment: event.target.value, node_id: "" });
+                  setSelectedNodes([]);
+                }}
               >
                 {[...new Set([project.default_environment, ...environments])]
                   .filter(Boolean)
@@ -249,30 +368,52 @@ export function ProjectDeployments({ project }: { project: Project }) {
                   ))}
               </select>
             </label>
-            <label>
-              目标节点
-              <select
-                required
-                value={draft.node_id}
-                onChange={(event) => update({ node_id: event.target.value })}
-              >
-                <option value="">请选择节点</option>
-                {nodes.map((node) => (
-                  <option key={node.id} value={node.id}>
-                    {node.name} · {nodeLabel(node)}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
+          <fieldset className="scope-options">
+            <legend>目标节点（已选 {selectedNodes.length}，最多 50 个）</legend>
+            {nodes.map((node) => {
+              const running = tasks.some(
+                (task) =>
+                  task.node_id === node.id &&
+                  task.environment === draft.environment &&
+                  activeTask(task.status),
+              );
+              return (
+                <label key={node.id} className="scope-option">
+                  <input
+                    type="checkbox"
+                    aria-label={`目标节点 ${node.name}`}
+                    checked={selectedNodes.includes(node.id)}
+                    disabled={
+                      !selectedNodes.includes(node.id) &&
+                      (running || !node.enabled || selectedNodes.length >= 50)
+                    }
+                    onChange={(event) => {
+                      update({});
+                      setSelectedNodes((ids) =>
+                        event.target.checked
+                          ? [...ids, node.id]
+                          : ids.filter((id) => id !== node.id),
+                      );
+                    }}
+                  />
+                  <span>
+                    {node.name} · {nodeLabel(node)}
+                    {running ? " · 已有未完成任务" : ""}
+                  </span>
+                </label>
+              );
+            })}
+          </fieldset>
           {!loading && !nodes.length && (
             <p className="muted">
               当前环境没有可用节点，请在部署节点中配置授权并启用节点。
             </p>
           )}
-          {node && !node.online && (
+          {selected.some((node) => !node.online) && (
             <p className="notice">
-              节点失联，任务将排队等待连接。任务创建后 24 小时内可开始执行。
+              所选节点中有节点失联，对应任务将排队等待连接。任务创建后 24
+              小时内可开始执行。
             </p>
           )}
           <div className="form-two">
@@ -357,6 +498,20 @@ export function ProjectDeployments({ project }: { project: Project }) {
             {actionError}
           </p>
         )}
+        {batchResults.length > 0 && (
+          <ul aria-label="批量提交结果">
+            {batchResults.map((result) => (
+              <li key={result.node_id}>
+                {nodeName(result.node_id)}：
+                {result.task
+                  ? `已创建 · ${result.task.id}`
+                  : result.uncertain
+                    ? "结果待确认，请重试原请求"
+                    : result.error}
+              </li>
+            ))}
+          </ul>
+        )}
         {notice && (
           <p className="notice" role="status">
             {notice}
@@ -372,93 +527,27 @@ export function ProjectDeployments({ project }: { project: Project }) {
                   optionsLoading ||
                   !!error ||
                   !!optionsError ||
-                  !node ||
+                  !selectedNodes.length ||
+                  remainingNodes.some(
+                    (id) =>
+                      !nodes.some((node) => node.id === id && node.enabled),
+                  ) ||
                   active ||
-                  !!needsRollback))
+                  !!needsRollback ||
+                  (batchResults.length > 0 &&
+                    batchResults.every((result) => result.task))))
             }
           >
-            {busy ? "正在提交…" : uncertain ? "重试原任务请求" : "创建部署任务"}
+            {busy
+              ? "正在提交…"
+              : uncertain
+                ? "重试原任务请求"
+                : batchResults.some((result) => result.error)
+                  ? "重试失败节点"
+                  : "创建部署任务"}
           </button>
         </div>
       </form>
-      <section className="remote-section">
-        <h3>已部署实例</h3>
-        <p className="muted small">
-          业务健康取自最后一次观测。离线期间显示历史状态。
-        </p>
-        {loading && (
-          <p className="loading" role="status">
-            正在刷新部署状态…
-          </p>
-        )}
-        {instances.filter(
-          (instance) => instance.environment === draft.environment,
-        ).length ? (
-          <div className="table-wrap">
-            <table aria-label="已部署实例">
-              <thead>
-                <tr>
-                  <th>节点 / 环境</th>
-                  <th>实际版本</th>
-                  <th>健康观测</th>
-                  <th>绑定</th>
-                  <th>事务</th>
-                </tr>
-              </thead>
-              <tbody>
-                {instances
-                  .filter(
-                    (instance) => instance.environment === draft.environment,
-                  )
-                  .map((instance) => (
-                    <tr key={instance.id}>
-                      <td>
-                        {nodeName(instance.node_id)}
-                        <small className="block muted">
-                          {instance.environment} ·{" "}
-                          {nodes.find((node) => node.id === instance.node_id)
-                            ? nodeLabel(
-                                nodes.find(
-                                  (node) => node.id === instance.node_id,
-                                )!,
-                              )
-                            : "节点不在当前可用范围"}
-                        </small>
-                      </td>
-                      <td>
-                        <code>{instance.actual_version || "未安装"}</code>
-                      </td>
-                      <td>
-                        {healthLabel(
-                          instance,
-                          !!nodes.find((node) => node.id === instance.node_id)
-                            ?.online,
-                        )}
-                        <small className="block muted">
-                          {remoteDate(instance.observed_at)}
-                        </small>
-                      </td>
-                      <td>
-                        <code>
-                          {instance.binding
-                            ? `${instance.binding.bind_address}:${instance.binding.host_port}`
-                            : "—"}
-                        </code>
-                      </td>
-                      <td>
-                        {instance.pending_transaction
-                          ? "待回滚恢复"
-                          : "无待处理事务"}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          !loading && <p className="empty">此环境尚无部署实例。</p>
-        )}
-      </section>
       <section className="remote-section">
         <h3>部署任务</h3>
         <p className="muted small">

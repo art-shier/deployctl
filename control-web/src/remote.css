@@ -27,3 +27,18 @@
 .remote-page .notice {
   overflow-wrap: anywhere;
 }
+
+.node-resources {
+  display: grid;
+  gap: 4px;
+  min-width: 210px;
+  max-width: 320px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.runtime-summary {
+  padding: 16px;
+  margin-bottom: 16px;
+  line-height: 1.8;
+}

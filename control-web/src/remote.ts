@@ -1,6 +1,20 @@
 import { APIError } from "./api";
 
+export interface ResourceCapacity {
+  total_bytes: number;
+  available_bytes: number;
+  path?: string;
+}
+export interface NodeMetrics {
+  cpu_cores: number;
+  cpu_percent: number | null;
+  memory: ResourceCapacity | null;
+  disk: ResourceCapacity | null;
+}
 export interface DeploymentNode {
+  metrics?: NodeMetrics | null;
+  metrics_at?: string | null;
+
   id: string;
   name: string;
   enabled: boolean;
@@ -154,7 +168,8 @@ export function healthLabel(
   now = Date.now(),
 ) {
   if (!instance.observed_at) return "尚未观测";
-  const fresh = online && now - Date.parse(instance.observed_at) <= 90000;
+  const age = now - Date.parse(instance.observed_at);
+  const fresh = online && Number.isFinite(age) && age >= -5000 && age <= 90000;
   return `${fresh ? "最近观测" : "上次观测"} · ${healthNames[instance.health] || "未知"}`;
 }
 export const activeTask = (status: string) =>
@@ -192,3 +207,86 @@ export const stageLabel = (stage: string) =>
   })[stage] || stage;
 export const remoteDate = (value: string | null) =>
   value ? new Date(value).toLocaleString("zh-CN") : "尚未上报";
+
+export function currentHealth(
+  instance: Pick<Instance, "health" | "observed_at">,
+  online: boolean,
+  now = Date.now(),
+) {
+  const age = now - Date.parse(instance.observed_at || "");
+  return online && Number.isFinite(age) && age >= -5000 && age <= 90000
+    ? instance.health
+    : "unknown";
+}
+export interface BatchResult {
+  node_id: string;
+  task?: DeploymentTask;
+  error?: string;
+  uncertain: boolean;
+}
+export class DeploymentBatch {
+  private entries: {
+    draft: DeploymentDraft;
+    submission: DeploymentSubmission;
+    result: BatchResult;
+  }[] = [];
+  private inFlight = false;
+  get uncertain() {
+    return this.entries.some((e) => e.submission.uncertain);
+  }
+  reset() {
+    if (this.inFlight || this.uncertain)
+      throw new Error("请先确认原任务结果。");
+    this.entries = [];
+  }
+  async submit(
+    drafts: DeploymentDraft[],
+    send: (
+      body: TaskPayload & { request_id: string },
+    ) => Promise<DeploymentTask>,
+  ) {
+    if (this.inFlight) throw new Error("请求正在提交，请等待。");
+    if (!drafts.length || drafts.length > 50)
+      throw new Error("请选择 1 到 50 个节点。");
+    drafts.forEach(deploymentPayload);
+    if (!this.entries.length)
+      this.entries = drafts.map((draft) => ({
+        draft: { ...draft },
+        submission: new DeploymentSubmission(),
+        result: { node_id: draft.node_id, uncertain: false },
+      }));
+    if (
+      JSON.stringify(this.entries.map((e) => e.draft)) !==
+      JSON.stringify(drafts)
+    )
+      throw new Error("请先确认原任务结果。");
+    this.inFlight = true;
+    try {
+      let index = 0;
+      await Promise.all(
+        Array.from({ length: Math.min(5, this.entries.length) }, async () => {
+          while (index < this.entries.length) {
+            const entry = this.entries[index++];
+            if (entry.result.task) continue;
+            try {
+              entry.result = {
+                node_id: entry.draft.node_id,
+                task: await entry.submission.submit(entry.draft, send),
+                uncertain: false,
+              };
+            } catch (error) {
+              entry.result = {
+                node_id: entry.draft.node_id,
+                error: error instanceof Error ? error.message : "提交失败",
+                uncertain: entry.submission.uncertain,
+              };
+            }
+          }
+        }),
+      );
+      return this.entries.map((e) => ({ ...e.result }));
+    } finally {
+      this.inFlight = false;
+    }
+  }
+}

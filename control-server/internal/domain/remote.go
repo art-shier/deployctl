@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -18,7 +19,37 @@ type NodeInput struct {
 	Environments     []string `json:"environments"`
 }
 
+type ResourceCapacity struct {
+	TotalBytes     int64  `json:"total_bytes"`
+	AvailableBytes int64  `json:"available_bytes"`
+	Path           string `json:"path,omitempty"`
+}
+type NodeMetrics struct {
+	CPUCores   int               `json:"cpu_cores"`
+	CPUPercent *float64          `json:"cpu_percent"`
+	Memory     *ResourceCapacity `json:"memory"`
+	Disk       *ResourceCapacity `json:"disk"`
+}
+
+func (m NodeMetrics) Validate() error {
+	if m.CPUCores < 0 || m.CPUCores > 1048576 {
+		return ErrInvalid
+	}
+	if m.CPUPercent != nil && (math.IsNaN(*m.CPUPercent) || math.IsInf(*m.CPUPercent, 0) || *m.CPUPercent < 0 || *m.CPUPercent > 100) {
+		return ErrInvalid
+	}
+	for _, c := range []*ResourceCapacity{m.Memory, m.Disk} {
+		if c != nil && (c.TotalBytes <= 0 || c.AvailableBytes < 0 || c.AvailableBytes > c.TotalBytes || len(c.Path) > 4096) {
+			return ErrInvalid
+		}
+	}
+	return nil
+}
+
 type Node struct {
+	Metrics   *NodeMetrics `json:"metrics"`
+	MetricsAt *time.Time   `json:"metrics_at"`
+
 	NodeInput
 	PendingAuthorization bool       `json:"pending_authorization"`
 	ID                   string     `json:"id"`

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { Plus, RefreshCw } from "lucide-react";
 import { api, send, type Group, type Project } from "./api";
+import { NodeResources } from "./NodeResources";
 import { nodeLabel, remoteDate, type DeploymentNode } from "./remote";
 
 type DialogType = ComponentType<{
@@ -496,6 +497,7 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
                 <th>连接状态</th>
                 <th>授权范围</th>
                 <th>Agent / Docker</th>
+                <th>主机资源</th>
                 <th>最后心跳</th>
                 <th>操作</th>
               </tr>
@@ -537,6 +539,9 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
                           : "不可用"
                         : "未知"}
                     </small>
+                  </td>
+                  <td>
+                    <NodeResources node={node} unavailable={!!error} />
                   </td>
                   <td>{remoteDate(node.last_seen)}</td>
                   <td>

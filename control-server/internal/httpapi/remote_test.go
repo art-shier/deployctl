@@ -83,6 +83,30 @@ func TestRemoteHTTPEnrollmentIdentityBoundary(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
+
+	if !strings.Contains(w.Body.String(), `"metrics_supported":true`) {
+		t.Fatal("missing negotiation")
+	}
+	w = call("POST", "/api/v1/node/heartbeat", identity.Token, `{"agent_version":"test","platform":"linux","docker_available":true,"instances":[],"metrics":{"cpu_cores":4,"cpu_percent":25.5,"memory":{"total_bytes":1000,"available_bytes":400},"disk":{"total_bytes":2000,"available_bytes":1000,"path":"/srv/ctl"}}}`)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	w = call("GET", "/api/v1/nodes", "owner", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"cpu_percent":25.5`) || !strings.Contains(w.Body.String(), `"metrics_at":"`) {
+		t.Fatal("metrics not persisted", w.Code, w.Body.String())
+	}
+	w = call("POST", "/api/v1/node/heartbeat", identity.Token, `{"agent_version":"test","platform":"linux","docker_available":true,"instances":[],"metrics":{"cpu_cores":4,"cpu_percent":101}}`)
+	if w.Code != 400 {
+		t.Fatal("invalid metric accepted", w.Code, w.Body.String())
+	}
+	w = call("POST", "/api/v1/node/heartbeat", identity.Token, `{"agent_version":"old","platform":"linux","docker_available":true,"instances":[]}`)
+	if w.Code != 200 {
+		t.Fatal("old agent rejected", w.Code)
+	}
+	w = call("GET", "/api/v1/nodes", "owner", "")
+	if !strings.Contains(w.Body.String(), `"cpu_percent":25.5`) {
+		t.Fatal("missing metrics erased last sample")
+	}
 	w = call("POST", "/api/v1/node/poll", identity.Token, `{"wait_seconds":0}`)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"task":null`) {
 		t.Fatal(w.Code, w.Body.String())

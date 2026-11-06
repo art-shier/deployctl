@@ -239,6 +239,7 @@ func (s *Server) nodeWrap(h func(http.ResponseWriter, *http.Request, string) err
 }
 func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request, node string) error {
 	var in struct {
+		Metrics         *domain.NodeMetrics  `json:"metrics"`
 		AgentVersion    string               `json:"agent_version"`
 		Platform        string               `json:"platform"`
 		DockerAvailable bool                 `json:"docker_available"`
@@ -247,7 +248,7 @@ func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request, node stri
 	if err := decode(w, r, &in); err != nil {
 		return err
 	}
-	enabled, instances, err := s.store.HeartbeatNode(r.Context(), node, in.AgentVersion, in.Platform, in.DockerAvailable, in.Instances)
+	enabled, instances, err := s.store.HeartbeatNode(r.Context(), node, in.AgentVersion, in.Platform, in.DockerAvailable, in.Instances, in.Metrics)
 	if err != nil {
 		return err
 	}
@@ -255,7 +256,7 @@ func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request, node stri
 	for _, i := range instances {
 		out = append(out, map[string]string{"id": i.ID, "project": i.Project, "environment": i.Environment})
 	}
-	reply(w, 200, map[string]any{"enabled": enabled, "instances": out})
+	reply(w, 200, map[string]any{"enabled": enabled, "instances": out, "metrics_supported": true})
 	return nil
 }
 func (s *Server) pollNode(w http.ResponseWriter, r *http.Request, node string) error {
