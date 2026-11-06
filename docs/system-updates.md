@@ -92,3 +92,7 @@ sudo systemctl status ctl-updater-center
 - 用 `sudo journalctl -u ctl-updater-node -n 100`（中心使用 `ctl-updater-center`） 查看固定诊断信息。检查中心可用 `sudo ctl server-status` 和 `sudo ctl server-logs`；涉及数据库恢复时先停止写入并按备份制度执行，不要直接删除 pending 标记。
 
 每个目标只有一个有效更新器身份。正常重复安装复用本机身份；显式身份恢复或高级重新接入时，未完成或尚未确认恢复的更新任务必须先处理。普通项目部署凭据和节点凭据均不能创建系统升级任务，只有管理员可以操作和查看系统更新。
+
+## 独立更新源
+
+源码 1.17.0 增加可配置下载源、中心转发更新包与自动镜像发布。配置与迁移步骤见 [独立更新源与发布同步](update-source.md)。是否已正式发布请以 Release 为准。

@@ -33,6 +33,7 @@ func (s *Server) systemUpdateRoutes() {
 		}
 	})
 	m.HandleFunc("POST /api/v1/updater/heartbeat", s.updaterWrap(s.heartbeatUpdater))
+	m.HandleFunc("GET /api/v1/updater/jobs/{id}/package", s.updaterWrap(s.updaterPackage))
 	m.HandleFunc("POST /api/v1/updater/poll", s.updaterWrap(s.pollUpdater))
 	m.HandleFunc("POST /api/v1/updater/jobs/{id}/start", s.updaterWrap(s.startUpdaterJob))
 	m.HandleFunc("POST /api/v1/updater/jobs/{id}/report", s.updaterWrap(s.reportUpdaterJob))
@@ -175,7 +176,7 @@ func (s *Server) heartbeatUpdater(w http.ResponseWriter, r *http.Request, id str
 	if err := s.store.HeartbeatUpdater(r.Context(), id, in); err != nil {
 		return err
 	}
-	reply(w, 200, map[string]bool{"enabled": true})
+	reply(w, 200, map[string]bool{"enabled": true, "package_proxy": true})
 	return nil
 }
 func (s *Server) pollUpdater(w http.ResponseWriter, r *http.Request, id string) error {
@@ -228,4 +229,26 @@ func (s *Server) resolveUpdateJob(w http.ResponseWriter, r *http.Request, p auth
 	}
 	reply(w, 200, job)
 	return nil
+}
+
+func (s *Server) updaterPackage(w http.ResponseWriter, r *http.Request, id string) error {
+	job, err := s.store.UpdateJobMaterial(r.Context(), id, r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	provider, ok := s.options.SystemReleases.(interface {
+		Artifact(context.Context, domain.UpdateJob) ([]byte, error)
+	})
+	if !ok {
+		return errSystemReleasesUnavailable
+	}
+	raw, err := provider.Artifact(r.Context(), job)
+	if err != nil {
+		return errSystemReleasesUnavailable
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(200)
+	_, err = w.Write(raw)
+	return err
 }

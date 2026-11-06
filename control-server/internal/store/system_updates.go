@@ -597,3 +597,22 @@ func (s *Store) ResolveUpdateJob(ctx context.Context, id, actor string) (domain.
 	}
 	return j, tx.Commit(ctx)
 }
+
+func (s *Store) UpdateJobMaterial(ctx context.Context, updater, id string) (domain.UpdateJob, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.UpdateJob{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = lockUpdater(ctx, tx, updater); err != nil {
+		return domain.UpdateJob{}, err
+	}
+	job, err := scanUpdateJob(tx.QueryRow(ctx, "SELECT data FROM ctl_update_jobs WHERE id=$1 AND updater_id=$2", id, updater))
+	if err != nil {
+		return job, err
+	}
+	if job.Status != "running" {
+		return job, domain.ErrForbidden
+	}
+	return job, tx.Commit(ctx)
+}

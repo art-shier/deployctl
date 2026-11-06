@@ -16,6 +16,10 @@ import (
 
 type fixedSystemReleases struct{ calls int }
 
+func (*fixedSystemReleases) Artifact(_ context.Context, job domain.UpdateJob) ([]byte, error) {
+	return []byte("verified fixture:" + job.ID), nil
+}
+
 func TestNodeCreatesOnlyOwnUpdaterEnrollment(t *testing.T) {
 	db := testutil.Store(t)
 	ctx := context.Background()
@@ -134,8 +138,17 @@ func TestUpdaterHTTPIdentityAndFrozenCatalog(t *testing.T) {
 	if poll.Job.Status != "leased" {
 		t.Fatal(w.Body.String())
 	}
+	if w = call("GET", "/api/v1/updater/jobs/"+poll.Job.ID+"/package", identity.Token, ""); w.Code != 403 {
+		t.Fatal("unstarted package", w.Code)
+	}
+	if w = call("GET", "/api/v1/updater/jobs/"+poll.Job.ID+"/package", "owner", ""); w.Code != 401 {
+		t.Fatal("owner used updater transport", w.Code)
+	}
 	if w = call("POST", "/api/v1/updater/jobs/"+poll.Job.ID+"/start", identity.Token, `{}`); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
+	}
+	if w = call("GET", "/api/v1/updater/jobs/"+poll.Job.ID+"/package", identity.Token, ""); w.Code != 200 || w.Body.String() != "verified fixture:"+poll.Job.ID {
+		t.Fatal("package", w.Code, w.Body.String())
 	}
 	if w = call("POST", "/api/v1/updater/jobs/"+poll.Job.ID+"/report", identity.Token, `{"status":"failed","stage":"failed","result_code":"raw secret output","current_version":"v1.14.0"}`); w.Code != 400 {
 		t.Fatal("raw logs", w.Code, w.Body.String())

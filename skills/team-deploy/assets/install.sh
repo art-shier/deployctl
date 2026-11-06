@@ -55,9 +55,9 @@ def fetch(request, limit):
                 raise ValueError('download exceeds size limit')
             return content
     except HTTPError as exc:
-        raise RuntimeError(f'GitHub HTTP {exc.code}; check release/version and repository access; private repositories require GH_TOKEN or gh auth login') from exc
+        raise RuntimeError(f'Release download HTTP {exc.code}; check update source, release/version and access') from exc
     except (URLError, TimeoutError) as exc:
-        raise RuntimeError('GitHub download failed; check network and HTTPS certificate') from exc
+        raise RuntimeError('Release download failed; check update source network and HTTPS certificate') from exc
 
 
 def digest_text(text):
@@ -125,25 +125,56 @@ def parse_release_index(raw):
     return value
 
 
-def official_release_index():
-    return parse_release_index(fetch(Request(INDEX_URL, headers={'User-Agent': 'deployctl-installer'}), MAX_INDEX_SIZE))
+def update_source(value=None):
+    value = os.environ.get('CTL_UPDATE_SOURCE', '') if value is None else value
+    if not isinstance(value, str):
+        raise ValueError('update source must be an HTTPS base URL')
+    value = value.rstrip('/')
+    if not value:
+        return ''
+    parsed = urlsplit(value)
+    if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
+            or parsed.query or parsed.fragment or any(c in value for c in '\\$#%?')
+            or any(ord(c) <= 32 or ord(c) >= 127 for c in value)
+            or any(part in ('.', '..') for part in parsed.path.split('/'))):
+        raise ValueError('update source must be a plain HTTPS base URL without credentials or query')
+    return value
 
 
-def github_release(repository, version, token, release_id=None):
+def release_index_url(source=None):
+    base = update_source(source)
+    return base + '/update-index.json' if base else INDEX_URL
+
+
+def release_asset_url(tag, name, source=None):
+    if not TAG.fullmatch(tag) or not re.fullmatch(r'[A-Za-z0-9_.-]+', name) or name in ('.', '..'):
+        raise ValueError('invalid update artifact identity')
+    base = update_source(source)
+    return (base + '/' + tag if base else 'https://github.com/' + DEFAULT_REPOSITORY + '/releases/download/' + tag) + '/' + name
+
+
+def official_release_index(source=None):
+    return parse_release_index(fetch(Request(release_index_url(source), headers={'User-Agent': 'deployctl-installer'}), MAX_INDEX_SIZE))
+
+
+def github_release(repository, version, token, release_id=None, source=None):
+    source = update_source(source)
+    if source and (repository != DEFAULT_REPOSITORY or release_id is not None):
+        raise ValueError("custom update source is only supported for public official releases")
     if not re.fullmatch(r'[A-Za-z0-9-]+/[A-Za-z0-9_.-]+', repository):
         raise ValueError('repository must be owner/repository')
     if version != 'latest' and not TAG.fullmatch(version):
         raise ValueError('version must be latest or a semantic version tag')
     if repository == DEFAULT_REPOSITORY and release_id is None:
         if version == 'latest':
-            releases = official_release_index()['releases']
+            releases = (official_release_index(source) if source or 'CTL_UPDATE_SOURCE' in os.environ else official_release_index())['releases']
             if not releases:
                 raise ValueError('official release index is empty')
             tag, expected = releases[0]['version'], releases[0]['cli_sha256']
         else:
             tag = version if version.startswith('v') else 'v' + version
             expected = None
-        base = f'https://github.com/{repository}/releases/download/{quote(tag, safe="")}/deployctl.pyz'
+        base = release_asset_url(tag, "deployctl.pyz", source)
         headers = {'User-Agent': 'deployctl-installer'}
         if expected is None:
             expected = digest_text(fetch(Request(base + '.sha256', headers=headers), 4096).decode('utf-8'))
@@ -193,7 +224,8 @@ def atomic_write(path, content, mode):
 
 
 def install(artifact=None, install_dir=None, repository=DEFAULT_REPOSITORY, version='latest',
-            token='', no_alias=False, force=False, expected_sha256=None, primary_name='deployctl', release_id=None):
+            token='', no_alias=False, force=False, expected_sha256=None, primary_name='deployctl', release_id=None, source=None):
+    source = update_source(source)
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', primary_name) or primary_name in ('.', '..'):
         raise ValueError('invalid destination command name')
     if artifact:
@@ -204,7 +236,7 @@ def install(artifact=None, install_dir=None, repository=DEFAULT_REPOSITORY, vers
         expected = digest_text(path.with_name(path.name + '.sha256').read_text(encoding='utf-8'))
         tag = None
     else:
-        content, expected, tag = github_release(repository, version, token, release_id)
+        content, expected, tag = github_release(repository, version, token, release_id, source) if source or "CTL_UPDATE_SOURCE" in os.environ else github_release(repository, version, token, release_id)
     actual = hashlib.sha256(content).hexdigest()
     if actual != expected or (expected_sha256 and actual != digest_text(expected_sha256)):
         raise ValueError('artifact checksum mismatch; existing installation is unchanged')
@@ -253,7 +285,7 @@ def install(artifact=None, install_dir=None, repository=DEFAULT_REPOSITORY, vers
     files.update({name: installed_digest for name in names})
     state = {'schema_version': 1, 'repository': repository, 'version': tag,
              'sha256': actual, 'files': files, 'directory': str(folder),
-             'primary_name': primary_name, 'commands': names}
+             'primary_name': primary_name, 'commands': names, 'update_source': source}
     changed = []
     try:
         for name in names:
@@ -289,6 +321,7 @@ def main(argv=None):
     parser.add_argument('--repo', default=DEFAULT_REPOSITORY)
     parser.add_argument('--version', default='latest')
     parser.add_argument('--release-id', help='CI draft verification: numeric Release ID; requires exact --version')
+    parser.add_argument('--update-source', help='HTTPS mirror base URL; persisted for self-update')
     parser.add_argument('--user', action='store_true', help='install into ~/.local/bin')
     parser.add_argument('--install-dir', help='custom command directory')
     parser.add_argument('--no-alias', action='store_true', help='do not install the ctl alias')
@@ -311,7 +344,7 @@ def main(argv=None):
             target = Path(args.destination).expanduser().resolve()
             folder, name = target.parent, target.name
         state = install(args.artifact, folder, args.repo, args.version,
-                        resolve_token() if not args.artifact else '', args.no_alias, args.force, args.sha256, name, args.release_id)
+                        resolve_token() if not args.artifact else '', args.no_alias, args.force, args.sha256, name, args.release_id, args.update_source)
         print(f"Installed {state['version']} into {state['directory']}")
         print('Commands: ' + ', '.join([name] + ([] if args.no_alias or name == 'ctl' else ['ctl'])))
         if state['directory'] not in os.environ.get('PATH', '').split(os.pathsep):

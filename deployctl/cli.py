@@ -34,6 +34,7 @@ def parser():
                 source = operation.add_mutually_exclusive_group()
                 source.add_argument('--release', help='server bundle HTTPS URL or local archive')
                 source.add_argument('--version', dest='server_version', help='official Release tag; default: latest stable Release')
+                operation.add_argument('--update-source', help='HTTPS update mirror base URL; preserved in center configuration')
                 operation.add_argument('--quiet', action='store_true', help='hide release acquisition progress')
                 operation.add_argument('--sha256', help='expected checksum; default: adjacent .sha256')
                 operation.add_argument('--origin', help='initial public API origin; default: https://ctl.shier.art')
@@ -70,6 +71,7 @@ def parser():
     publish.add_argument('--registry-token-file', help='private short-lived pull verification token for an external private Registry')
     self_update = sub.add_parser('self-update', help='update the installed CLI itself; leaves deployed services unchanged')
     self_update.add_argument('--version', default='latest', help='tool Release tag; default: latest published version')
+    self_update.add_argument('--update-source', help='HTTPS update mirror base URL; saved for future self-update')
     self_update.add_argument('--sha256', help='optional independently obtained CLI artifact checksum')
     self_update.add_argument('--release-id', help=argparse.SUPPRESS)
     init = sub.add_parser('init', help='initialize project deployment YAML and GitHub workflow')
@@ -143,7 +145,7 @@ def main(argv=None):
                 state = deploy_server(args.release, home=args.home, expected_sha256=args.sha256,
                     release_version=args.server_version, progress=Progress(enabled=not args.quiet),
                     upgrade=args.server_command == 'upgrade', origin=args.origin, registry_host=args.registry_host,
-                    api_port=args.api_port, registry_port=args.registry_port, database_url_file=args.database_url_file)
+                    api_port=args.api_port, registry_port=args.registry_port, database_url_file=args.database_url_file, update_source=args.update_source)
                 from .updater import setup
                 from types import SimpleNamespace
                 try:
@@ -202,7 +204,7 @@ def main(argv=None):
                 print(f"OK: published {args.application}/{release['version']}")
         elif args.command == 'self-update':
             from .self_update import update_tool
-            state = update_tool(version=args.version, expected_sha256=args.sha256, release_id=args.release_id)
+            state = update_tool(version=args.version, expected_sha256=args.sha256, release_id=args.release_id, source=args.update_source)
             print(f'Updated tool to {state["version"]} in {state["directory"]}')
             print('Commands: ' + ', '.join(state['commands']))
         elif args.command == 'init':

@@ -119,7 +119,8 @@ class Updater:
         # Reconcile/report before heartbeat: center may have disappeared mid-update.
         if self.recover(): return
         current, ready, reason = self.host.readiness()
-        self.client.json('POST', '/api/v1/updater/heartbeat', dict(current_version=current, helper_version='v'+__version__, protocol=1, platform='linux', ready=ready, blocked_reason=reason))
+        capabilities=self.client.json('POST', '/api/v1/updater/heartbeat', dict(current_version=current, helper_version='v'+__version__, protocol=1, platform='linux', ready=ready, blocked_reason=reason))
+        self.host.package_proxy = isinstance(capabilities,dict) and capabilities.get('package_proxy') is True
         if not ready: return
         response = self.client.json('POST', '/api/v1/updater/poll', {})
         job = response.get('job')
@@ -356,7 +357,12 @@ class Host:
         # Validated center jobs carry catalog-pinned hashes, including cached releases.
         name='deployctl.pyz' if self.kind=='node' else 'ctl-platform-'+tag+'.tar.gz'
         limit=bootstrap.MAX_DOWNLOAD if self.kind=='node' else server_bundle.MAX_EXPANDED
-        content=bootstrap.fetch(Request('https://github.com/art-shier/deployctl/releases/download/'+tag+'/'+name),limit)
+        # A negotiated center endpoint never falls back to external downloads.
+        if getattr(self,'package_proxy',False):
+            client=PlatformClient(Credentials(self.config['server'],self.config['token']))
+            content=client.request('GET','/api/v1/updater/jobs/'+job['id']+'/package',limit=limit)
+        else:
+            content=bootstrap.fetch(Request(bootstrap.release_asset_url(tag,name)),limit)
         digest=job['cli_sha256' if self.kind=='node' else 'server_sha256']
         if hashlib.sha256(content).hexdigest()!=digest: raise ValueError('release checksum mismatch')
         path=directory/name; bootstrap.atomic_write(path,content,0o600)
@@ -401,7 +407,10 @@ class Host:
                 env={'PGDATABASE':(destination/'database.url').read_text().strip()}
             else:
                 active=state['current']; bundle=self.server_home/'server-releases'/active['sha256']
-                server_bundle.installed_content(bundle,active)
+                if cfg.get("update_source"):
+                    server_bundle.installed_content(bundle,active,cfg["update_source"])
+                else:
+                    server_bundle.installed_content(bundle,active)
                 argv=['docker','compose','--project-name','ctl-platform','--env-file',str(self.server_home/'compose.env'),
                     '-f',str(bundle/'control-deploy/compose.yaml'),'--profile','database','exec','-T','database',
                     'pg_dump','-U','ctl','-d','ctl','--format=custom','--no-owner','--no-acl']
@@ -443,7 +452,7 @@ class Host:
             stage('installing')
             bootstrap.install(artifact=directory/'deployctl.pyz',install_dir=self.executable.parent,
                 repository=bootstrap.DEFAULT_REPOSITORY,version=job['version'],expected_sha256=job['cli_sha256'],
-                primary_name=metadata['primary_name'],no_alias='ctl' not in metadata['commands'])
+                primary_name=metadata['primary_name'],no_alias='ctl' not in metadata['commands'],source=metadata.get('update_source',''))
             stage('restarting'); self.restart_agent(directory)
         else:
             state=self.center_state()

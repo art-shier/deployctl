@@ -163,3 +163,5 @@ python scripts/docker_integration.py
 CI 在 Linux Python 3.10/3.12 和 Windows Python 3.12 检查 CLI；Linux 另跑真实安装和 Docker 生命周期。版本发布先验证草稿 Release 中的真实资产，再公开已验证的版本。详见 [构建与发布](docs/release-pipeline.md)、[验证记录](docs/verification.md)。
 
 `init/validate/package` 可在 Windows 执行，服务运行命令面向 Linux。固定镜像 digest；包版本不覆盖；快照回滚恢复版本和配置，数据库或hook外部副作用需独立恢复。默认仅监听 `127.0.0.1`，外部访问通过服务器网关或显式配置的绑定地址。
+
+源码 CLI 1.17.0 / Web 0.10.0 增加 [独立更新源与发布同步](docs/update-source.md)：S3 兼容下载源、OCI 镜像仓库和中心转发节点更新包。配置完成后发版自动同步，无需每次手动搬运文件。

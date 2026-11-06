@@ -35,7 +35,7 @@ jobs:
       - run: python scripts/build_release_assets.py
       - run: python -m unittest discover -s tests -v
       - name: Independent updater lifecycle and recovery
-        run: python -m pytest tests/test_updater.py tests/test_integrated_updater.py tests/test_release_catalog.py -q
+        run: python -m pytest tests/test_updater.py tests/test_integrated_updater.py tests/test_release_catalog.py tests/test_update_source.py -q
       - name: Static deployment transactions on Linux
         if: runner.os == 'Linux'
         run: python -m unittest discover -s tests -p 'test_static_runtime.py' -v

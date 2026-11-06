@@ -52,7 +52,7 @@ func main() {
 		log.Fatal("database migration failed")
 	}
 	done()
-	catalog := httpapi.NewSystemReleaseCatalog(c.API.ArtifactsDir, c.UpdateIndexSeed)
+	catalog := httpapi.NewSystemReleaseCatalog(c.API.ArtifactsDir, c.UpdateIndexSeed, c.UpdateSource)
 	c.API.SystemReleases = catalog
 	catalog.Start(ctx)
 	server := &http.Server{Addr: c.Listen, Handler: httpapi.New(db, c.API), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 60 * time.Minute, WriteTimeout: 61 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}

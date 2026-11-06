@@ -650,3 +650,23 @@ test("unavailable session storage prevents an unpersisted update POST", async ({
   await expect(page.getByRole("alert")).toContainText("浏览器无法保存");
   expect(f.requests).toHaveLength(0);
 });
+
+test("configured update source remains visible when synchronization fails", async ({
+  page,
+}) => {
+  await fixture(page, {
+    catalog: {
+      source: "cache",
+      stale: true,
+      sync_error: "network_error",
+      update_source: "https://downloads.example.com/ctl/update-index.json",
+    },
+  });
+  await page.goto("/#system-updates");
+  await expect(
+    page.getByText(
+      "更新源：https://downloads.example.com/ctl/update-index.json",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("无法连接更新清单");
+});

@@ -1,0 +1,50 @@
+name: Sync update source
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published version to synchronize or retry (e.g. v1.17.0)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: update-source-publication
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download verified public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.version }}
+        run: |
+          python -c 'import os,re; assert re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+",os.environ["TAG"])'
+          gh release view "$TAG" --json isDraft,isPrerelease --jq 'select(.isDraft == false and .isPrerelease == false)' > release.json
+          test -s release.json
+          gh release download "$TAG" --dir mirror-assets
+      - name: Upload artifacts and then expose catalog
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CTL_UPDATE_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CTL_UPDATE_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.CTL_UPDATE_S3_REGION || 'us-east-1' }}
+          AWS_EC2_METADATA_DISABLED: 'true'
+          PUBLIC_URL: ${{ vars.CTL_UPDATE_MIRROR_URL }}
+          DESTINATION: ${{ vars.CTL_UPDATE_S3_DESTINATION }}
+          IMAGE_REPOSITORY: ${{ vars.CTL_SERVER_MIRROR_REPOSITORY }}
+          ENDPOINT: ${{ vars.CTL_UPDATE_S3_ENDPOINT }}
+          TAG: ${{ inputs.version }}
+        run: |
+          test -n "$AWS_ACCESS_KEY_ID" && test -n "$AWS_SECRET_ACCESS_KEY" && test -n "$IMAGE_REPOSITORY"
+          python scripts/sync_update_source.py --version "$TAG" --artifacts mirror-assets \
+            --public-url "$PUBLIC_URL" --destination "$DESTINATION" --endpoint "$ENDPOINT" --image-repository "$IMAGE_REPOSITORY"

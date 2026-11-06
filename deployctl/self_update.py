@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -10,7 +11,7 @@ import sys
 from . import bootstrap
 
 
-def update_tool(version='latest', expected_sha256=None, executable=None, release_id=None):
+def update_tool(version='latest', expected_sha256=None, executable=None, release_id=None, source=None):
     command = Path(executable or sys.argv[0]).expanduser().resolve()
     directory = command.parent
     marker = directory / '.deployctl-install.json'
@@ -43,11 +44,12 @@ def update_tool(version='latest', expected_sha256=None, executable=None, release
             or set(commands) != {primary, *(['ctl'] if 'ctl' in commands else [])}
             or command.name not in commands or any(name not in files for name in commands)):
         raise ValueError('invalid installer command metadata; rerun install.sh with the original destination')
+    source = bootstrap.update_source(source if source is not None else os.environ.get('CTL_UPDATE_SOURCE', metadata.get('update_source', '')))
     try:
         return bootstrap.install(
             install_dir=directory, repository=metadata['repository'], version=version,
             token=bootstrap.resolve_token(), no_alias='ctl' not in commands,
-            expected_sha256=expected_sha256, primary_name=primary, release_id=release_id,
+            expected_sha256=expected_sha256, primary_name=primary, release_id=release_id, source=source,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError('CLI verification timed out; existing installation is unchanged') from exc

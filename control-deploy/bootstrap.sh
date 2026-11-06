@@ -9,7 +9,7 @@ while (($#));do
   (($#>=2)) || { echo 'Missing parameter value' >&2;exit 1; }
   case $1 in
     --home) home=$2;; --image) image=$2;;
-    --origin|--registry-host|--api-port|--registry-port|--database-url-file) args+=("$1" "$2");;
+    --origin|--registry-host|--api-port|--registry-port|--database-url-file|--update-source) args+=("$1" "$2");;
     *) echo 'Unknown bootstrap parameter' >&2;exit 1;;
   esac
   shift 2

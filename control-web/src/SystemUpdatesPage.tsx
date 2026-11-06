@@ -457,6 +457,11 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
         {catalogBusy && !catalog && <p role="status">正在加载版本清单…</p>}
         {catalog && (
           <div className="muted small">
+            {catalog.update_source && (
+              <p style={{ overflowWrap: "anywhere" }}>
+                更新源：{catalog.update_source}
+              </p>
+            )}
             <p>
               清单来源：
               <span>
