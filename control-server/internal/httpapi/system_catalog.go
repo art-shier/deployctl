@@ -463,6 +463,11 @@ type systemCatalogProvider interface {
 }
 
 func (s *Server) releaseCatalog(ctx context.Context, force bool) CatalogSnapshot {
+	if provider, ok := s.options.SystemReleases.(interface {
+		Catalog(context.Context) CatalogSnapshot
+	}); ok {
+		return provider.Catalog(ctx)
+	}
 	if provider, ok := s.options.SystemReleases.(systemCatalogProvider); ok {
 		if force {
 			return provider.Sync(ctx)

@@ -1,0 +1,37 @@
+name: Register released version
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+    secrets:
+      CTL_VERSION_REGISTRATION_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published version to register (e.g. v1.17.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  register:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Register published metadata
+        env:
+          CTL_CENTER_URL: ${{ vars.CTL_CENTER_URL }}
+          CTL_VERSION_REGISTRATION_TOKEN: ${{ secrets.CTL_VERSION_REGISTRATION_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: python scripts/register_release.py --repo "$GITHUB_REPOSITORY" --version "$VERSION"

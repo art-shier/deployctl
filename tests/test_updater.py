@@ -277,6 +277,20 @@ def test_download_uses_only_fixed_official_url_and_pinned_digest(tmp_path,monkey
     assert not (tmp_path/'deployctl.pyz').exists()
 
 
+def test_center_package_failure_never_falls_back_to_external_download(tmp_path,monkeypatch):
+    host=updater.Host(dict(IDENTITY,cli_path=str(tmp_path/'ctl'),server='https://center.example',token='updater-token'))
+    host.package_proxy=True
+    calls=[]
+    class Packages:
+        def request(self,method,path,limit):
+            calls.append((method,path))
+            raise RuntimeError('center unavailable')
+    monkeypatch.setattr(updater,'PlatformClient',lambda credentials:Packages())
+    monkeypatch.setattr(updater.bootstrap,'fetch',lambda *args:pytest.fail('external fallback'))
+    with pytest.raises(RuntimeError,match='center unavailable'):host.prepare(JOB,tmp_path)
+    assert calls==[('GET','/api/v1/updater/jobs/'+JOB['id']+'/package')]
+
+
 def test_stop_must_complete_before_installer_runs(tmp_path,monkeypatch):
     host,_,calls,state=managed_host(tmp_path,monkeypatch)
     # A systemctl stop success alone cannot prove the old process is gone.
