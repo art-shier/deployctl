@@ -46,7 +46,11 @@ type handler func(http.ResponseWriter, *http.Request, auth.Principal) error
 
 func New(s *store.Store, o Options) *Server {
 	if o.SystemReleases == nil {
-		o.SystemReleases = NewSystemReleaseCatalog(o.ArtifactsDir, "")
+		if s != nil {
+			o.SystemReleases = NewRegisteredSystemCatalog(s, o.ArtifactsDir)
+		} else {
+			o.SystemReleases = NewSystemReleaseCatalog(o.ArtifactsDir, "")
+		}
 	}
 	server := &Server{store: s, options: o, mux: http.NewServeMux(), imageUpload: make(chan struct{}, 1)}
 	m := server.mux
@@ -54,6 +58,7 @@ func New(s *store.Store, o Options) *Server {
 	server.logRoutes()
 	server.remoteRoutes()
 	server.systemUpdateRoutes()
+	server.releaseRegistrationRoutes()
 	m.HandleFunc("GET /api/v1/health/ready", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.Ping(r.Context()); err != nil {
 			failure(w, err)

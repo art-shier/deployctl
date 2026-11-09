@@ -119,7 +119,8 @@ class Updater:
         # Reconcile/report before heartbeat: center may have disappeared mid-update.
         if self.recover(): return
         current, ready, reason = self.host.readiness()
-        self.client.json('POST', '/api/v1/updater/heartbeat', dict(current_version=current, helper_version='v'+__version__, protocol=1, platform='linux', ready=ready, blocked_reason=reason))
+        capabilities=self.client.json('POST', '/api/v1/updater/heartbeat', dict(current_version=current, helper_version='v'+__version__, protocol=1, platform='linux', ready=ready, blocked_reason=reason))
+        self.host.package_proxy=isinstance(capabilities,dict) and capabilities.get('package_proxy') is True
         if not ready: return
         response = self.client.json('POST', '/api/v1/updater/poll', {})
         job = response.get('job')
@@ -356,7 +357,11 @@ class Host:
         # Validated center jobs carry catalog-pinned hashes, including cached releases.
         name='deployctl.pyz' if self.kind=='node' else 'ctl-platform-'+tag+'.tar.gz'
         limit=bootstrap.MAX_DOWNLOAD if self.kind=='node' else server_bundle.MAX_EXPANDED
-        content=bootstrap.fetch(Request('https://github.com/art-shier/deployctl/releases/download/'+tag+'/'+name),limit)
+        if getattr(self,'package_proxy',False):
+            client=PlatformClient(Credentials(self.config['server'],self.config['token']))
+            content=client.request('GET','/api/v1/updater/jobs/'+job['id']+'/package',limit=limit)
+        else:
+            content=bootstrap.fetch(Request('https://github.com/art-shier/deployctl/releases/download/'+tag+'/'+name),limit)
         digest=job['cli_sha256' if self.kind=='node' else 'server_sha256']
         if hashlib.sha256(content).hexdigest()!=digest: raise ValueError('release checksum mismatch')
         path=directory/name; bootstrap.atomic_write(path,content,0o600)

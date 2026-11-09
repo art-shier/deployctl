@@ -21,6 +21,88 @@ const updater = (id: string, kind = "node") => ({
   last_seen: "2026-11-06T00:00:00Z",
 });
 
+test("registered catalog accepts manual metadata and retains inputs on conflict", async ({
+  page,
+}) => {
+  await fixture(page, { catalog: { source: "registered", stale: false } });
+  let calls = 0;
+  await page.route("**/api/v1/system-updates/releases", async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.version).toBe("v1.17.0");
+    expect(body.cli_url).toContain("/v1.17.0/deployctl.pyz");
+    calls++;
+    await route.fulfill(
+      calls === 1
+        ? { status: 409, json: { message: "conflict" } }
+        : { status: 201, json: body },
+    );
+  });
+  await page.goto("/#system-updates");
+  await expect(page.getByRole("button", { name: "立即同步清单" })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "登记版本", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("版本号", { exact: true }).fill("v1.17.0");
+  await dialog.getByRole("button", { name: "填入 GitHub 下载地址" }).click();
+  await dialog.getByLabel("CLI SHA256", { exact: true }).fill("a".repeat(64));
+  await dialog
+    .getByLabel("中心安装包 SHA256", { exact: true })
+    .fill("b".repeat(64));
+  await dialog.getByRole("button", { name: "保存版本" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("不能覆盖已有版本");
+  await expect(dialog.getByLabel("版本号", { exact: true })).toHaveValue(
+    "v1.17.0",
+  );
+  await dialog.getByRole("button", { name: "保存版本" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(calls).toBe(2);
+});
+
+test("pipeline credential is masked and cleared when closed on mobile", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await fixture(page, { catalog: { source: "registered", stale: false } });
+  let configured = false;
+  await page.route(
+    "**/api/v1/system-updates/registration-token",
+    async (route) => {
+      if (route.request().method() === "POST") {
+        configured = true;
+        return route.fulfill({
+          status: 201,
+          json: { token: "test-only-registration-token" },
+        });
+      }
+      return route.fulfill({ json: { configured, created_at: null } });
+    },
+  );
+  await page.goto("/#system-updates");
+  await page.getByRole("button", { name: "流水线登记接入" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "生成登记凭据" }).click();
+  await expect(
+    dialog.getByLabel("版本登记凭据", { exact: true }),
+  ).toHaveAttribute("type", "password");
+  await expect(dialog.getByLabel("版本登记凭据", { exact: true })).toHaveValue(
+    "test-only-registration-token",
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await dialog.getByRole("button", { name: "关闭" }).click();
+  await page.getByRole("button", { name: "流水线登记接入" }).click();
+  await expect(dialog.getByLabel("版本登记凭据", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    dialog.getByRole("button", { name: "更换登记凭据" }),
+  ).toBeDisabled();
+});
+
 test("manual catalog sync retains bundled versions on failure and retries immediately", async ({
   page,
 }) => {

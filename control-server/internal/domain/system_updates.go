@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -48,6 +49,11 @@ func UpdateVersionNewer(target, current string) bool {
 }
 
 type SystemRelease struct {
+	CLIURL       string     `json:"cli_url,omitempty"`
+	ServerURL    string     `json:"server_url,omitempty"`
+	Source       string     `json:"registration_source,omitempty"`
+	RegisteredAt *time.Time `json:"registered_at,omitempty"`
+
 	Version      string    `json:"version"`
 	PublishedAt  time.Time `json:"published_at"`
 	CLISHA256    string    `json:"cli_sha256"`
@@ -122,6 +128,8 @@ func (r UpdateRequest) Validate() error {
 }
 
 type UpdateJob struct {
+	CLIURL         string     `json:"cli_url,omitempty"`
+	ServerURL      string     `json:"server_url,omitempty"`
 	ID             string     `json:"id"`
 	RequestID      string     `json:"request_id"`
 	BatchID        string     `json:"batch_id"`
@@ -162,4 +170,31 @@ func (r UpdateReport) Validate() error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+func ValidUpdateURL(value string) bool {
+	u, err := url.Parse(value)
+	if err != nil || len(value) > 4096 || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return false
+	}
+	for _, c := range value {
+		if c <= 32 || c == 127 || c == '\\' {
+			return false
+		}
+	}
+	return true
+}
+func OfficialUpdateURLs(version string) (string, string) {
+	base := "https://github.com/art-shier/deployctl/releases/download/" + version + "/"
+	return base + "deployctl.pyz", base + "ctl-platform-" + version + ".tar.gz"
+}
+func (r SystemRelease) ValidateRegistration() error {
+	if r.Validate() != nil || !ValidUpdateURL(r.CLIURL) || !ValidUpdateURL(r.ServerURL) {
+		return ErrInvalid
+	}
+	return nil
+}
+func (r SystemRelease) RequiresPackageProxy() bool {
+	cli, server := OfficialUpdateURLs(r.Version)
+	return (r.CLIURL != "" && r.CLIURL != cli) || (r.ServerURL != "" && r.ServerURL != server)
 }

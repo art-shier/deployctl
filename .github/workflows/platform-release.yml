@@ -18,6 +18,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  register:
+    needs: publish
+    if: ${{ vars.CTL_CENTER_URL != '' }}
+    uses: ./.github/workflows/register-release.yml
+    with:
+      version: ${{ inputs.version || github.ref_name }}
+    secrets:
+      CTL_VERSION_REGISTRATION_TOKEN: ${{ secrets.CTL_VERSION_REGISTRATION_TOKEN }}
   verify:
     uses: ./.github/workflows/verify.yml
     with:

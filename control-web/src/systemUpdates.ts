@@ -15,6 +15,10 @@ export interface Updater {
   online: boolean;
 }
 export interface SystemRelease {
+  cli_url?: string;
+  server_url?: string;
+  registration_source?: string;
+  registered_at?: string;
   version: string;
   published_at: string;
   cli_sha256: string;
@@ -22,7 +26,7 @@ export interface SystemRelease {
 }
 export interface ReleaseCatalog {
   releases: SystemRelease[];
-  source: "bundled" | "cache" | "remote" | "none";
+  source: "bundled" | "cache" | "remote" | "none" | "registered";
   generated_at: string | null;
   last_success_at: string | null;
   last_attempt_at: string | null;
@@ -32,6 +36,7 @@ export interface ReleaseCatalog {
 }
 export const catalogErrorText = (code: string) =>
   ({
+    database_error: "中心版本记录读取失败，请重试。",
     network_error: "无法连接官方清单，请检查中心服务器的网络。",
     timeout: "同步超时，可以点击立即同步清单重试。",
     rate_limited: "官方清单服务暂时限流，请稍后重试。",

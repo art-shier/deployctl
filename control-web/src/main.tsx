@@ -2260,7 +2260,7 @@ function AuditView() {
         <Loading />
       ) : data.length ? (
         <div className="table-wrap">
-          <table>
+          <table className="audit-table">
             <thead>
               <tr>
                 <th>操作</th>
@@ -2273,20 +2273,24 @@ function AuditView() {
             <tbody>
               {data.map((r) => (
                 <tr key={r.id}>
-                  <td>
+                  <td data-label="操作">
                     <code>{r.action}</code>
                   </td>
-                  <td>
+                  <td data-label="项目 / 环境">
                     {r.project}
                     {r.environment && " / " + r.environment}
                   </td>
-                  <td className="muted">{r.keys?.join(", ") || "—"}</td>
-                  <td>
+                  <td className="muted" data-label="变更键名">
+                    {r.keys?.join(", ") || "—"}
+                  </td>
+                  <td data-label="操作者">
                     <code>
                       {r.actor === "owner" ? "管理员" : r.actor.slice(0, 8)}
                     </code>
                   </td>
-                  <td className="muted">{date(r.created_at)}</td>
+                  <td className="muted" data-label="时间">
+                    {date(r.created_at)}
+                  </td>
                 </tr>
               ))}
             </tbody>
