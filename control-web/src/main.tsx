@@ -1025,7 +1025,7 @@ function ProjectView({
               部署；远程节点目前支持 Docker 项目。
             </p>
           ) : (
-            <ProjectDeployments project={project} />
+            <ProjectDeployments project={project} Dialog={Modal} />
           )
         ) : (
           <ReceiptsView slug={slug} />

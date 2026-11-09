@@ -163,3 +163,7 @@ python scripts/docker_integration.py
 CI 在 Linux Python 3.10/3.12 和 Windows Python 3.12 检查 CLI；Linux 另跑真实安装和 Docker 生命周期。版本发布先验证草稿 Release 中的真实资产，再公开已验证的版本。详见 [构建与发布](docs/release-pipeline.md)、[验证记录](docs/verification.md)。
 
 `init/validate/package` 可在 Windows 执行，服务运行命令面向 Linux。固定镜像 digest；包版本不覆盖；快照回滚恢复版本和配置，数据库或hook外部副作用需独立恢复。默认仅监听 `127.0.0.1`，外部访问通过服务器网关或显式配置的绑定地址。
+
+## v1.18.0 节点日志
+
+管理端可按需查看容器运行日志、部署过程及历史归档，正文保留在节点，不持续上传中心。现有 stdout/stderr 应用无需 SDK 或业务重启，升级中心与 Agent 即可使用。接入、保留期限和边界见 [节点日志](docs/node-logs.md)。

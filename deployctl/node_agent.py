@@ -16,6 +16,7 @@ import time
 
 from . import __version__
 from .host_metrics import HostMetrics
+from .node_logs import NodeLogs
 from .contract import validate_name
 from .platform_client import PlatformClient, PlatformError, validate_defaults, validate_origin, validate_resolution, validate_token
 from .platform_credentials import Credentials
@@ -134,9 +135,10 @@ def task_instance(task):
 
 
 class AgentProgress(Progress):
-    def __init__(self, callback):
+    def __init__(self, callback, event=None):
         super().__init__(enabled=False)
         self.callback = callback
+        self.event = event
 
     @contextmanager
     def stage(self, label):
@@ -151,7 +153,17 @@ class AgentProgress(Progress):
         else:
             phase = 'preparing'
         self.callback(phase)
-        yield
+        if self.event:
+            self.event(phase, label)
+        try:
+            yield
+        except BaseException:
+            if self.event:
+                self.event(phase, label + ' failed', 'error')
+            raise
+        else:
+            if self.event:
+                self.event(phase, label + ' completed')
 
 
 class AgentDockerDriver(DockerDriver):
@@ -204,7 +216,7 @@ class RuntimeExecutor:
     def _execute(self, task, stage):
         manager = self.manager
         old_progress = manager.progress
-        manager.progress = AgentProgress(stage)
+        manager.progress = AgentProgress(stage, getattr(self, "log_event", None))
         try:
             if task['action'] == 'rollback':
                 stage('rollback')
@@ -300,6 +312,9 @@ class Agent:
         self.observation_lock = threading.Lock()
         self.sample_epochs = {}
         self.metrics_supported = False
+        self.logs_supported = False
+        self.logs = NodeLogs(executor.manager.root if isinstance(executor, RuntimeExecutor) else self.home / 'log-data')
+        self.log_task = None
         self.host_metrics = HostMetrics(executor.manager.root if isinstance(executor, RuntimeExecutor) else self.home)
         self.docker_ok = False
         self.recover()
@@ -352,16 +367,22 @@ class Agent:
             write_json(path, record)
             self.current_id = None
             return
+        self.log_task = task
+        self.log_event('preparing', 'Task started')
+        if isinstance(self.executor, RuntimeExecutor):
+            self.executor.log_event = self.log_event
         record.update(status='running', stage='preparing')
         write_json(path, record)
         self.current_id = task['id']
         try:
             observation = self.executor.execute(task, self.set_stage)
             record.update(status='succeeded', stage='completed')
+            self.log_event('completed', 'Deployment succeeded')
             if observation and not observation.get('_busy'):
                 record['observation'] = observation
         except (RuntimeError, ValueError, OSError):
             record.update(status='failed', stage='execution_failed')
+            self.log_event(self.stage, 'Deployment failed; inspect stage and failure snapshot', 'error')
             try:
                 observation = self.executor.observe(task_instance(task))
                 if not observation.get('_busy'):
@@ -371,13 +392,35 @@ class Agent:
         finally:
             self.invalidate_sample(task['instance_id'])
             self.current_id = None
+            self.log_task = None
         # On process interruption the durable running journal is deliberately retained.
         write_json(path, record)
+
+    def log_event(self, stage, message, level='info'):
+        if self.log_task:
+            try:
+                self.logs.event(self.log_task, stage, message, level)
+            except (OSError, ValueError):
+                pass  # Diagnostic storage must not change deployment/replay semantics.
+
+    def poll_logs(self):
+        if not self.logs_supported:
+            return
+        response = self.client.json('POST', '/api/v1/node/logs/poll', {})
+        query = response.get('query')
+        if query:
+            validate_id(query.get('id'))
+            try:
+                result = self.logs.query(query)
+            except (ValueError, OSError, RuntimeError):
+                result = dict(text='', sources=[], truncated=False, error='log_read_failed')
+            self.client.json('POST', '/api/v1/node/logs/' + query['id'] + '/result', result)
 
     def set_stage(self, stage):
         if stage not in STAGES:
             raise ValueError('invalid deployment phase')
         self.stage = stage
+        self.log_event(stage, 'Entered ' + stage)
 
     def flush_reports(self):
         for path in self.journals.glob('*.json'):
@@ -450,6 +493,7 @@ class Agent:
         self.instances = [instance_identity(value) for value in response['instances']]
         self.enabled = response['enabled']
         self.metrics_supported = response.get('metrics_supported') is True
+        self.logs_supported = response.get('logs_supported') is True
         # Private local evidence is emitted only after a validated center heartbeat.
         # The independent updater binds it to the restarted systemd process.
         write_json(self.home / 'readiness.json', {'node_id': self.node_id,
@@ -492,8 +536,17 @@ class Agent:
         # Heartbeats cannot queue behind Docker calls or pending result uploads.
         sampler = threading.Thread(target=background, args=(self.sample_observations,), daemon=True)
         sender = threading.Thread(target=background, args=(lambda: self.heartbeat(sample=False),), daemon=True)
+        def serve_logs():
+            while not background_stop.is_set():
+                try:
+                    self.poll_logs()
+                except (RuntimeError, ValueError, OSError):
+                    pass
+                background_stop.wait(1)
+        log_reader = threading.Thread(target=serve_logs, daemon=True)
         sampler.start()
         sender.start()
+        log_reader.start()
         next_progress = 0
         backoff = 1
         try:
@@ -528,6 +581,7 @@ class Agent:
         finally:
             background_stop.set()
             sender.join(timeout=1)
+            log_reader.join(timeout=1)
             sampler.join(timeout=1)
 
 

@@ -256,7 +256,7 @@ func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request, node stri
 	for _, i := range instances {
 		out = append(out, map[string]string{"id": i.ID, "project": i.Project, "environment": i.Environment})
 	}
-	reply(w, 200, map[string]any{"enabled": enabled, "instances": out, "metrics_supported": true})
+	reply(w, 200, map[string]any{"enabled": enabled, "instances": out, "metrics_supported": true, "logs_supported": true})
 	return nil
 }
 func (s *Server) pollNode(w http.ResponseWriter, r *http.Request, node string) error {

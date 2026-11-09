@@ -167,7 +167,7 @@ def main():
             from remote_agent_docker_integration import verify_remote_agent
             with patch('remote_agent_docker_integration.AgentDockerDriver', DockerFixture):
                 verify_remote_agent(owner, identity['origin'], base / 'ci-helper', 'notes', config, image,
-                                    nodes[0][4].root, nodes[0][4].config_root)
+                                    nodes[0][4].root, nodes[0][4].config_root, runtime_logs=False)
         print('PASS: real Go/PostgreSQL/Python protocol; enrollment, frozen configs, task-scoped package/registry, two-node state, upgrade, rollback, failure recovery, crash journal and cross-node denial (Docker simulated)')
 
 

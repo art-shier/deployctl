@@ -438,6 +438,18 @@ class Manager:
         snapshot = create_snapshot(folder, app, home.name, release, values, {}, {})
         return DeploymentRef(ref['version'], snapshot.id, snapshot.sha256, ref['binding']).as_dict()
 
+    def archive_runtime(self, app, env):
+        if isinstance(self.driver, DockerDriver):
+            from .node_logs import NodeLogs
+            try:
+                NodeLogs(self.root).archive(app, env)
+            except (OSError, ValueError, RuntimeError):
+                # Preserve deployment availability; report the loss of diagnostics.
+                event = getattr(self.progress, 'event', None)
+                if event:
+                    event('preparing', 'Container log archive failed', 'warning')
+                self.progress._emit('Container log archive failed; existing Docker logs may still be available.')
+
     def deploy(self, app, env, package, upgrade=False, port=None, bind=None,
                runtime_env=None, unset_env=None, install_params=None, managed_runtime=None,
                managed_params=None, management_source=None, deployment_defaults=None):
@@ -535,6 +547,7 @@ class Manager:
                 step(phase)
                 replacement_started = True
                 with self.progress.stage('Starting container'):
+                    self.archive_runtime(app, env)
                     self.driver.up(directory, project, environment)
                 phase = 'health-check'
                 step(phase)
@@ -562,9 +575,11 @@ class Manager:
                         if replacement_started:
                             if before['current']:
                                 old_dir, old_release, _, old_env = self.reference_environment(home, folder, before['current'], app)
+                                self.archive_runtime(app, env)
                                 self.driver.up(old_dir, project, old_env)
                                 self.driver.probe(old_dir, project, old_env, old_release, before['current']['binding'])
                             else:
+                                self.archive_runtime(app, env)
                                 self.driver.down(directory, project, environment)
                         restored = before if replacement_started else unchanged_before
                         self.save(home, restored, 'deployment_failed_old_restored' if before['current'] else 'install_failed_candidate_stopped')
@@ -597,6 +612,7 @@ class Manager:
             if not target:
                 if pending and not state['current']:
                     directory, _, _, environment = self.reference_environment(home, folder, pending['to'], app)
+                    self.archive_runtime(app, env)
                     self.driver.down(directory, project, environment)
                     state['transaction'] = None
                     self.save(home, state, 'failed_install_cleaned')
@@ -611,6 +627,7 @@ class Manager:
             state['transaction'] = {'from': target, 'to': target, 'phase': 'rollback'}
             self.save(home, state, 'rollback_started')
             try:
+                self.archive_runtime(app, env)
                 self.driver.up(directory, project, environment)
                 self.driver.probe(directory, project, environment, release, target['binding'])
                 if snapshot: verify_snapshot(snapshot)

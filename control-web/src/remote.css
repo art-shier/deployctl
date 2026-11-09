@@ -42,3 +42,61 @@
   margin-bottom: 16px;
   line-height: 1.8;
 }
+
+.modal:has(.log-viewer) {
+  width: min(1100px, calc(100vw - 32px));
+}
+.log-viewer {
+  min-width: 0;
+}
+.log-viewer > .muted {
+  overflow-wrap: anywhere;
+}
+.log-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.log-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.log-filters input,
+.log-filters select {
+  width: 100%;
+  min-width: 0;
+}
+.log-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.log-content {
+  height: 360px;
+  max-height: 45vh;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: inherit;
+  font:
+    12px/1.65 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  white-space: pre;
+  tab-size: 4;
+}
+.log-content:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+@media (max-width: 640px) {
+  .log-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
