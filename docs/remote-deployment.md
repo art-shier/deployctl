@@ -116,3 +116,7 @@ CTL_TEST_DATABASE_URL='postgres://.../postgres' CTL_TEST_PYTHON=python go test .
 ```
 
 `TestRemotePythonAgentProtocol` 使用真实 Go HTTP 服务、PostgreSQL、加密规格、发布包及 Python Manager，只有 Docker 操作被模拟。Linux CI 的 `tests/control_plane_integration.py` 另覆盖真实 Docker 路径，不能用模拟测试代替实际部署验证。
+
+## 按需查看节点日志
+
+管理端实例/任务日志入口、应用接入方式、节点保留规则见 [节点日志查看](node-logs.md)。日志正文留在节点，查看时通过独立 Agent 查询通道中转。

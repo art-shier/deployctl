@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { LogViewer, type LogTarget } from "./LogViewer";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { RefreshCw } from "lucide-react";
 import { api, send, type Project, type Release } from "./api";
 import {
@@ -27,7 +35,19 @@ const actionNames: Record<string, string> = {
   rollback: "回滚",
 };
 
-export function ProjectDeployments({ project }: { project: Project }) {
+export function ProjectDeployments({
+  project,
+  Dialog,
+}: {
+  project: Project;
+  Dialog: ComponentType<{
+    title: string;
+    close: () => void;
+    children: ReactNode;
+  }>;
+}) {
+  const [logTarget, setLogTarget] = useState<LogTarget | null>(null);
+  useEffect(() => setLogTarget(null), [project.slug]);
   const base = `/projects/${project.slug}`;
   const [environments, setEnvironments] = useState<string[]>([]);
   const [releases, setReleases] = useState<Release[]>([]);
@@ -289,6 +309,7 @@ export function ProjectDeployments({ project }: { project: Project }) {
                   <th>健康观测</th>
                   <th>绑定</th>
                   <th>事务</th>
+                  <th>日志</th>
                 </tr>
               </thead>
               <tbody>
@@ -336,6 +357,19 @@ export function ProjectDeployments({ project }: { project: Project }) {
                         {instance.pending_transaction
                           ? "待回滚恢复"
                           : "无待处理事务"}
+                      </td>
+                      <td>
+                        <button
+                          onClick={() =>
+                            setLogTarget({
+                              instance: instance.id,
+                              node: nodeName(instance.node_id),
+                              environment: instance.environment,
+                            })
+                          }
+                        >
+                          运行日志
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -598,6 +632,18 @@ export function ProjectDeployments({ project }: { project: Project }) {
                     </td>
                     <td>{remoteDate(task.updated_at)}</td>
                     <td>
+                      <button
+                        onClick={() =>
+                          setLogTarget({
+                            instance: task.instance_id,
+                            node: nodeName(task.node_id),
+                            environment: task.environment,
+                            task: task.id,
+                          })
+                        }
+                      >
+                        部署日志
+                      </button>
                       {cancellableTask(task.status) && (
                         <button
                           disabled={!!cancelling}
@@ -617,6 +663,15 @@ export function ProjectDeployments({ project }: { project: Project }) {
           !loading && <p className="empty">暂无部署任务。</p>
         )}
       </section>
+      {logTarget && (
+        <LogViewer
+          key={project.slug + logTarget.instance + (logTarget.task || "")}
+          project={project.slug}
+          target={logTarget}
+          Dialog={Dialog}
+          close={() => setLogTarget(null)}
+        />
+      )}
     </div>
   );
 }

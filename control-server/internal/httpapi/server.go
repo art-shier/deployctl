@@ -40,6 +40,7 @@ type Server struct {
 	options     Options
 	mux         *http.ServeMux
 	imageUpload chan struct{}
+	logs        *logBroker
 }
 type handler func(http.ResponseWriter, *http.Request, auth.Principal) error
 
@@ -49,6 +50,8 @@ func New(s *store.Store, o Options) *Server {
 	}
 	server := &Server{store: s, options: o, mux: http.NewServeMux(), imageUpload: make(chan struct{}, 1)}
 	m := server.mux
+	server.logs = newLogBroker()
+	server.logRoutes()
 	server.remoteRoutes()
 	server.systemUpdateRoutes()
 	m.HandleFunc("GET /api/v1/health/ready", func(w http.ResponseWriter, r *http.Request) {
@@ -194,11 +197,14 @@ func permitted(p auth.Principal, action, project, env string) error {
 	return nil
 }
 func decode(w http.ResponseWriter, r *http.Request, target any) error {
+	return decodeLimit(w, r, target, 512*1024)
+}
+func decodeLimit(w http.ResponseWriter, r *http.Request, target any, limit int64) error {
 	content, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || content != "application/json" {
 		return domain.ErrInvalid
 	}
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 512*1024))
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil || !utf8.Valid(raw) || !strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
 		return domain.ErrInvalid
 	}
@@ -221,6 +227,12 @@ func reply(w http.ResponseWriter, status int, value any) {
 func failure(w http.ResponseWriter, err error) {
 	status, code, message := 500, "internal_error", "服务暂时不可用"
 	switch {
+	case errors.Is(err, errLogBusy):
+		status, code, message = 429, "log_query_busy", "日志查询繁忙，请稍后重试"
+	case errors.Is(err, errLogUnavailable):
+		status, code, message = 503, "log_node_unavailable", "节点离线，无法拉取日志"
+	case errors.Is(err, errLogTimeout):
+		status, code, message = 504, "log_query_timeout", "日志查询超时，请检查节点连接及 Agent 是否已升级"
 	case errors.Is(err, errSystemReleasesUnavailable):
 		status, code, message = 503, "system_releases_unavailable", "官方更新版本暂时不可用，请稍后重试"
 	case errors.Is(err, errAgentUnavailable):
