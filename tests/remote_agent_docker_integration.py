@@ -10,7 +10,7 @@ from deployctl.runtime import Manager
 from deployctl.release import build_release
 
 
-def verify_remote_agent(owner, origin, base, application, deployment, image, root, config_root):
+def verify_remote_agent(owner, origin, base, application, deployment, image, root, config_root, *, runtime_logs=True):
     package = build_release(deployment, image, 'v1.0.1', base / 'remote-packages')
     owner.publish(application, 'v1.0.1', package)
     node = owner.json('POST', '/api/v1/node-enrollments', {})
@@ -48,10 +48,14 @@ def verify_remote_agent(owner, origin, base, application, deployment, image, roo
         assert instance['actual_version'] == expected and instance['health'] == 'healthy'
         state = json.loads((root / application / 'prod' / 'state.json').read_text())
         assert state['current']['version'] == expected and not state['transaction']
-        runtime = logs(instance['id'])
-        assert 'started' in runtime['text'] and expected in runtime['text'], 'runtime log is not from current container'
         process = logs(instance['id'], source='deployment', task_id=task['id'])
         assert 'Deployment succeeded' in process['text'], 'missing task process log'
+        with worker.executor.runtime_lock:
+            assert logs(instance['id'], source='deployment', task_id=task['id'])['text']
+        if not runtime_logs:
+            continue  # Portable protocol fixture simulates Docker; task logs are real.
+        runtime = logs(instance['id'])
+        assert 'started' in runtime['text'] and expected in runtime['text'], 'runtime log is not from current container'
         history = logs(instance['id'], source='archives')['sources']
         previous = 'v1.0.0' if action == 'upgrade' else 'v1.0.1'
         archived = next(item for item in history if item['version'] == previous)
