@@ -142,6 +142,42 @@ class AgentTests(unittest.TestCase):
             self.worker.execute_task(altered)
         self.assertEqual(self.executor.execute.call_count, 1)
 
+    def test_shutdown_waits_for_active_worker_and_flushes_result(self):
+        entered, release, stopped = threading.Event(), threading.Event(), threading.Event()
+        stop = threading.Event()
+        original_json = self.client.json
+        offered = False
+        def json_request(method, path, body=None):
+            nonlocal offered
+            if path.endswith('/poll') and not offered:
+                offered = True
+                return {'task': task()}
+            return original_json(method, path, body)
+        self.client.json = json_request
+        def execute(candidate, stage):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError('deployment was not released')
+            return {'actual_version': 'v1.0.0', 'health': 'healthy', 'pending_transaction': False}
+        self.executor.execute.side_effect = execute
+        def run():
+            try:
+                self.worker.run(stop)
+            finally:
+                stopped.set()
+        supervisor = threading.Thread(target=run)
+        supervisor.start()
+        try:
+            self.assertTrue(entered.wait(3))
+            stop.set()
+            self.assertFalse(stopped.wait(.2), 'shutdown abandoned an active deployment')
+            release.set()
+            supervisor.join(5)
+            self.assertFalse(supervisor.is_alive())
+            self.assertTrue(any(r.get('status') == 'succeeded' for r in self.client.reports))
+        finally:
+            stop.set(); release.set(); supervisor.join(5)
+
     def test_runtime_uses_frozen_resolution_without_resolve(self):
         manager = Mock()
         manager.deploy.return_value = {}

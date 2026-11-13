@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
+import threading
 import unittest
 import signal
 import subprocess
@@ -59,6 +60,66 @@ class NativeHookTests(unittest.TestCase):
                       'timeout_seconds': timeout}
         return HookRunner().run('pre_install', descriptor, self.release_dir, self.snapshot,
                                 {'DEPLOYCTL_RELEASE_DIR': str(self.release_dir), 'DEPLOYCTL_ACTION': 'install'})
+
+    def run_agent_script(self, text, timeout=5):
+        from deployctl.node_agent import RuntimeExecutor
+        from deployctl.runtime import Manager
+        manager = Manager(self.base / 'apps', self.base / 'config')
+        RuntimeExecutor(manager, None)
+        path = self.release_dir / 'hooks/pre-install.sh'
+        path.write_text(text, encoding='utf-8')
+        descriptor = {'path': 'hooks/pre-install.sh',
+                      'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                      'timeout_seconds': timeout}
+        errors = []
+        def execute():
+            try:
+                manager.hook_runner.check()
+                manager.hook_runner.run('pre_install', descriptor, self.release_dir, self.snapshot, {})
+            except BaseException as error:
+                errors.append(error)
+        worker = threading.Thread(target=execute)
+        worker.start()
+        worker.join(timeout + 8)
+        self.assertFalse(worker.is_alive(), 'hook worker failed to terminate')
+        return errors
+
+    def test_agent_worker_runs_verified_hook_without_replacing_signal_handlers(self):
+        marker = self.base / 'completed'
+        handlers = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+        errors = self.run_agent_script(f'printf completed > "{marker}"\n')
+        self.assertEqual(errors, [])
+        self.assertEqual(marker.read_text(), 'completed')
+        self.assertEqual({s: signal.getsignal(s) for s in handlers}, handlers)
+
+    def test_agent_worker_failure_is_reported_without_hook_output(self):
+        from deployctl.hooks import HookFailure
+        errors = self.run_agent_script('echo secret-sentinel\nexit 7\n')
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], HookFailure)
+        self.assertEqual(errors[0].exit_code, 7)
+        self.assertNotIn('secret-sentinel', str(errors[0]))
+
+    def test_agent_worker_timeout_still_cleans_process_group(self):
+        from deployctl.hooks import HookFailure
+        errors = self.run_agent_script("trap '' TERM\n" + self.heartbeat(), timeout=1)
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], HookFailure)
+        self.assertTrue(errors[0].timeout)
+        self.assert_heartbeat_stopped()
+
+    def test_standalone_hook_still_rejects_unsupervised_worker(self):
+        from deployctl.hooks import HookRunner
+        errors = []
+        def check():
+            try:
+                HookRunner().check()
+            except RuntimeError as error:
+                errors.append(error)
+        worker = threading.Thread(target=check)
+        worker.start(); worker.join(3)
+        self.assertEqual(len(errors), 1)
+        self.assertIn('main thread', str(errors[0]))
 
     def test_hook_reads_same_runtime_json_and_separate_install_params(self):
         self.run_script('''set -eu
