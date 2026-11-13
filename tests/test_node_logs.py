@@ -14,6 +14,41 @@ class NodeLogsTest(unittest.TestCase):
         self.task = dict(id='a' * 32, project='notes', environment='prod')
         self.request = dict(project='notes', environment='prod', source='deployment', task_id='a' * 32, tail=200)
 
+    def failure_fixture(self, log_path=None):
+        folder = self.logs.folder('notes', 'prod')
+        config = Path(self.temp.name) / 'configuration'
+        self.logs = node_logs.NodeLogs(self.temp.name, config)
+        hook = config / 'notes' / 'prod' / 'hook-logs' / ('a'*32 + '-pre_install-' + 'b'*32 + '.log')
+        hook.parent.mkdir(parents=True)
+        hook.write_text('PostgreSQL preparation failed: image download timed out\n')
+        (folder.parent / 'last-failure.log').write_text('Failed candidate\n' + 'old app log\n'*200)
+        (folder.parent / 'last-failure.json').write_text(json.dumps({'phase':'pre_install',
+            'reason':'pre_install failed (exit 1); protected log: '+str(log_path or hook)}))
+        return hook
+
+    def test_failure_includes_current_projects_protected_hook_diagnostic(self):
+        self.failure_fixture()
+        result = self.logs.query(dict(self.request, source='failure', tail=3))
+        self.assertEqual(result['error'], '')
+        self.assertIn('image download timed out', result['text'])
+
+    def test_failure_hook_cannot_read_foreign_project_path(self):
+        foreign = Path(self.temp.name) / 'foreign-secret'
+        foreign.write_text('must-not-be-read')
+        self.failure_fixture(foreign)
+        result = self.logs.query(dict(self.request, source='failure'))
+        self.assertNotIn('must-not-be-read', result['text'])
+        self.assertIn('old app log', result['text'])
+
+    def test_failure_hook_rejects_symlink_without_losing_app_logs(self):
+        hook = self.failure_fixture()
+        foreign = Path(self.temp.name) / 'secret'
+        foreign.write_text('must-not-be-read')
+        hook.unlink(); hook.symlink_to(foreign)
+        result = self.logs.query(dict(self.request, source='failure'))
+        self.assertNotIn('must-not-be-read', result['text'])
+        self.assertIn('old app log', result['text'])
+
     def test_events_are_jsonl_and_query_filters(self):
         self.logs.event(self.task, 'preparing', 'Preparing release')
         self.logs.event(self.task, 'failed', 'Deployment failed', 'error')

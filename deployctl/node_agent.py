@@ -318,7 +318,7 @@ class Agent:
         self.sample_epochs = {}
         self.metrics_supported = False
         self.logs_supported = False
-        self.logs = NodeLogs(executor.manager.root if isinstance(executor, RuntimeExecutor) else self.home / 'log-data')
+        self.logs = NodeLogs(executor.manager.root, executor.manager.config_root) if isinstance(executor, RuntimeExecutor) else NodeLogs(self.home / 'log-data')
         self.log_task = None
         self.host_metrics = HostMetrics(executor.manager.root if isinstance(executor, RuntimeExecutor) else self.home)
         self.docker_ok = False
