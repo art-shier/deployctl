@@ -124,7 +124,13 @@ def main():
             started=base/'pre-started';resume=base/'pre-resume'
             (source/'pre.sh').write_text('''#!/usr/bin/env bash
 set -Eeuo pipefail
-[[ -z ${DOCKER_CONFIG:-} && -z ${CTL_OWNER_TOKEN:-} ]]
+[[ -n ${DOCKER_CONFIG:-} && -z ${CTL_OWNER_TOKEN:-} ]]
+[[ -f $DOCKER_CONFIG/config.json ]]
+docker pull "$DEPLOYCTL_IMAGE" >/dev/null 2>&1
+if docker pull "$DEPLOYCTL_PARAM_FORBIDDEN_IMAGE" >/dev/null 2>&1; then
+  echo 'Hook registry credentials crossed repository scope' >&2; exit 1
+fi
+printf '%s' "$DOCKER_CONFIG" > "$DEPLOYCTL_PARAM_REGISTRY_PATH"
 touch "$DEPLOYCTL_PARAM_PRE_STARTED"
 while [[ ! -e $DEPLOYCTL_PARAM_PRE_RESUME ]];do sleep .1;done
 printf 'TEXT=pre-generated\n' > "$DEPLOYCTL_CONFIG_DIR/config.env"
@@ -147,7 +153,8 @@ set -Eeuo pipefail
             owner.json('PUT',f'/api/v1/projects/{app}/environments/prod',{'expected_revision':1,
                 'runtime_env':[{'key':'TEXT','operation':'set','value':'pinned-managed'}],
                 'install_params':[{'key':k,'operation':'set','value':v} for k,v in {
-                    'ADMIN':'managed-admin','EXPECTED_TEXT':'pinned-managed','PRE_STARTED':str(started),'PRE_RESUME':str(resume)}.items()],
+                    'ADMIN':'managed-admin','EXPECTED_TEXT':'pinned-managed','PRE_STARTED':str(started),'PRE_RESUME':str(resume),
+                    'FORBIDDEN_IMAGE':other_image,'REGISTRY_PATH':str(base/'hook-registry-path')}.items()],
                 'deployment_defaults':{'host_port':app_port,'memory_limit':'128m','cpus':.5}})
             errors=[]
             def modify_mid_install():
@@ -174,6 +181,9 @@ set -Eeuo pipefail
             state_path=root/app/'prod/state.json'
             first=json.loads(state_path.read_text());current=first['current']
             snapshot=config_root/app/'prod/runtime'/current['configuration']
+            hook_registry=(base/'hook-registry-path').read_text()
+            assert not Path(hook_registry).exists(), 'hook registry credential directory survived deployment'
+            assert 'DOCKER_CONFIG' not in json.loads((snapshot/'.env.json').read_text())
             assert json.loads((snapshot/'.env.json').read_text())['TEXT']=='pinned-managed','resolution drifted during pre'
             assert json.loads((snapshot/'overrides.json').read_text())=={'TEXT':'cli-local'},'managed layer leaked into local overrides'
             installed_meta=json.loads((snapshot/'.management.json').read_text())
