@@ -33,7 +33,7 @@ func agentPublicName(name string) bool {
 	}
 	switch name {
 	case "SKILL.md", "team-deploy-skill.zip", "team-deploy-skill.zip.sha256",
-		"assets/deployctl.pyz", "assets/deployctl.pyz.sha256", "assets/install.sh",
+		"assets/deployctl.pyz", "assets/deployctl.pyz.sha256", "assets/install.sh", "assets/node-bootstrap.sh",
 		"assets/LICENSE", "assets/THIRD_PARTY_NOTICES.txt", "assets/templates/release.yml",
 		"assets/templates/deploy.yml", "assets/templates/deployment.yaml":
 		return true

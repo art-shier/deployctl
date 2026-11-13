@@ -103,3 +103,23 @@ CREATE TABLE IF NOT EXISTS ctl_system_releases (
 CREATE TABLE IF NOT EXISTS ctl_release_registration_credential (
  singleton boolean PRIMARY KEY CHECK(singleton), token_hash text NOT NULL, created_at timestamptz NOT NULL
 );
+
+-- SSH credentials are deliberately absent: workers retain them only in memory.
+CREATE TABLE IF NOT EXISTS ctl_node_installations (
+  id text PRIMARY KEY,
+  host text NOT NULL,
+  port integer NOT NULL,
+  username text NOT NULL,
+  fingerprint text NOT NULL,
+  actor text NOT NULL,
+  status text NOT NULL,
+  stage text NOT NULL,
+  error_code text NOT NULL DEFAULT '',
+  node_id text NOT NULL DEFAULT '',
+  enrollment_hash text UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ctl_node_installations_active_host
+  ON ctl_node_installations(host,port) WHERE status='running';

@@ -948,3 +948,29 @@ td {
     flex-wrap: wrap;
   }
 }
+
+.node-install-form fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.node-install-form .node-install-key {
+  display: block;
+}
+.node-install-form .node-install-key code {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+.node-install-form .checkbox-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+}
+.node-install-form .checkbox-row input {
+  width: auto;
+  flex: 0 0 auto;
+}

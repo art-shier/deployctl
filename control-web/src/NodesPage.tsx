@@ -8,6 +8,7 @@ import {
 } from "react";
 import { Plus, RefreshCw } from "lucide-react";
 import { api, send, type Group, type Project } from "./api";
+import { NodeInstall } from "./NodeInstall";
 import { NodeResources } from "./NodeResources";
 import { nodeLabel, remoteDate, type DeploymentNode } from "./remote";
 
@@ -474,6 +475,7 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
           </button>
         </div>
       </div>
+      <NodeInstall Dialog={Dialog} />
       <p className="notice">
         在线表示最近 90
         秒收到已登记节点的心跳。失联与业务健康分别记录。禁用后停止接收新任务，业务容器继续运行。

@@ -226,6 +226,9 @@ func (s *Store) EnrollNodeNamed(ctx context.Context, hash, agent, platform, name
 	if err != nil {
 		return "", "", err
 	}
+	if _, err = tx.Exec(ctx, "UPDATE ctl_node_installations SET node_id=$2,updated_at=now() WHERE enrollment_hash=$1 AND status='running'", hash, n.ID); err != nil {
+		return "", "", err
+	}
 	if err = audit(ctx, tx, n.ID, "node.enroll", "", "", nil); err != nil {
 		return "", "", err
 	}

@@ -34,6 +34,7 @@ class AgentAssetsTests(unittest.TestCase):
         (skill / 'references/control-plane.md').write_text('Public instructions\n')
         (skill / 'assets/templates/release.yml').write_text('name: release\n')
         (skill / 'assets/install.sh').write_text('#!/bin/sh\n')
+        (skill / 'assets/node-bootstrap.sh').write_text('#!/bin/bash\n')
         (skill / 'assets/LICENSE').write_text('License\nPublic text\n')
         (skill / 'assets/THIRD_PARTY_NOTICES.txt').write_text('Notices\nPublic text\n')
         (skill / 'agents/openai.yaml').write_text('interface: {}\n')
