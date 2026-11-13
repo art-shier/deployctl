@@ -167,3 +167,9 @@ CI 在 Linux Python 3.10/3.12 和 Windows Python 3.12 检查 CLI；Linux 另跑�
 ## v1.18.0 节点日志
 
 管理端可按需查看容器运行日志、部署过程及历史归档，正文保留在节点，不持续上传中心。现有 stdout/stderr 应用无需 SDK 或业务重启，升级中心与 Agent 即可使用。接入、保留期限和边界见 [节点日志](docs/node-logs.md)。
+
+## v1.19.0 SSH 节点安装
+
+在管理端「部署节点 → SSH 安装节点」输入登录信息，核对 SSH 主机密钥后安装。节点侧检查环境，在支持的 Ubuntu/Debian 上缺少 Docker 时自动安装；已有 Docker 不自动升级或重启。密码不持久化，后台记录安装进度，收到此次注册节点的心跳后才显示成功。详见 [SSH 节点安装说明](docs/ssh-node-install.md)。
+
+本版本尚未完成空白 Linux 主机的 apt + systemd 全链路实测；现有 CLI 或 Agent 不自动覆盖，请按提示使用手动接入。

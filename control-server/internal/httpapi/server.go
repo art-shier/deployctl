@@ -41,6 +41,7 @@ type Server struct {
 	mux         *http.ServeMux
 	imageUpload chan struct{}
 	logs        *logBroker
+	sshProbes   chan struct{}
 }
 type handler func(http.ResponseWriter, *http.Request, auth.Principal) error
 
@@ -57,6 +58,8 @@ func New(s *store.Store, o Options) *Server {
 	server.logs = newLogBroker()
 	server.logRoutes()
 	server.remoteRoutes()
+	server.sshProbes = make(chan struct{}, 4)
+	server.nodeInstallRoutes()
 	server.systemUpdateRoutes()
 	server.releaseRegistrationRoutes()
 	m.HandleFunc("GET /api/v1/health/ready", func(w http.ResponseWriter, r *http.Request) {

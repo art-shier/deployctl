@@ -27,6 +27,7 @@ def main():
         shutil.copyfile(dist / file, skill / 'assets' / file)
     for file in ('release.yml', 'static-release.yml', 'deploy.yml', 'deployment.yaml'):
         shutil.copyfile(ROOT / 'templates' / file, skill / 'assets/templates' / file)
+    shutil.copyfile(ROOT / 'control-server/internal/nodeinstall/bootstrap.sh', skill / 'assets/node-bootstrap.sh')
     shutil.copyfile(ROOT / 'install.sh', skill / 'assets/install.sh')
     shutil.copyfile(ROOT / 'install.sh', dist / 'install.sh')
     checksum(dist / 'install.sh')
