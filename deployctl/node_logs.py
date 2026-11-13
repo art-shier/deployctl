@@ -118,8 +118,9 @@ def bounded_command(command, limit, timeout=10):
 
 
 class NodeLogs:
-    def __init__(self, root):
+    def __init__(self, root, config_root=None):
         self.root = Path(root)
+        self.config_root = Path(config_root) if config_root is not None else None
 
     def folder(self, project, environment):
         validate_name(project)
@@ -257,6 +258,36 @@ class NodeLogs:
             raise ValueError('incomplete archive')
         return {k: item[k] for k in ('id', 'version', 'container_id', 'captured_at', 'truncated')}
 
+    def failure_hook(self, home, request):
+        # Derive the only allowed directory from the managed project identity.
+        # Never follow an arbitrary path supplied through an exception message.
+        if self.config_root is None:
+            return '', False
+        try:
+            raw, clipped = self.read(home / 'last-failure.json', 4096)
+            if clipped:
+                return '', False
+            failure = json.loads(raw)
+            if not isinstance(failure, dict):
+                return '', False
+            phase = failure.get('phase')
+            if phase not in ('pre_install', 'post_install'):
+                return '', False
+            match = re.fullmatch(r'(?:pre_install|post_install) failed \([^\n]{1,160}\); protected log: ([^\n]{1,2048})', failure.get('reason', ''))
+            if not match:
+                return '', False
+            supplied = Path(match[1])
+            if not re.fullmatch(r'[a-f0-9]{32}-' + phase + r'-[a-f0-9]{32}\.log', supplied.name):
+                return '', False
+            expected = self.config_root / request['project'] / request['environment'] / 'hook-logs' / supplied.name
+            if supplied != expected.absolute():
+                return '', False
+            text, clipped = self.read(expected, 64 * 1024)
+            return '\n[Installation hook diagnostics]\n' + text, clipped
+        except (OSError, ValueError, TypeError):
+            # Missing/corrupt hook diagnostics must not hide the application log.
+            return '', False
+
     def query(self, request):
         validate_query(request)
         result = dict(text='', truncated=False, sources=[], error='')
@@ -284,6 +315,9 @@ class NodeLogs:
                 clipped = clipped or '"stage": "log_truncated"' in text[-256:]
             elif source == 'failure':
                 text, clipped = self.read(folder.parent / 'last-failure.log', QUERY_BYTES)
+                hook, hook_clipped = self.failure_hook(folder.parent, request)
+                text += hook
+                clipped = clipped or hook_clipped
             if source == 'runtime':
                 containers = self.containers(request['project'], request['environment'])
                 if not containers:
