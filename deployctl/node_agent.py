@@ -187,6 +187,11 @@ class ObservationDockerDriver(DockerDriver):
 class RuntimeExecutor:
     def __init__(self, manager, client):
         self.manager, self.client = manager, client
+        from .hooks import HookRunner
+        if isinstance(manager.hook_runner, HookRunner):
+            # Agent.run keeps the process alive until its deployment worker exits;
+            # only its main thread may handle process-wide shutdown signals.
+            manager.hook_runner.handle_signals = False
         self.runtime_lock = threading.RLock()
         self.observer = ObservationDockerDriver() if isinstance(manager.driver, DockerDriver) else manager.driver
 
@@ -745,4 +750,5 @@ def dispatch(args):
             stop.set()
         signal.signal(signal.SIGTERM, stopping)
         signal.signal(signal.SIGINT, stopping)
+        signal.signal(signal.SIGHUP, stopping)
         worker.run(stop)

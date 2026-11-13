@@ -100,10 +100,14 @@ def write_log(path, raw):
 
 
 class HookRunner:
+    # Standalone CLI owns its signals. The node Agent instead owns shutdown in
+    # its main thread and waits for the non-daemon deployment worker to finish.
+    handle_signals = True
+
     def check(self):
         if os.name == 'nt' or not Path('/bin/bash').is_file():
             raise RuntimeError('installation hooks require Linux /bin/bash')
-        if threading.current_thread() is not threading.main_thread():
+        if self.handle_signals and threading.current_thread() is not threading.main_thread():
             raise RuntimeError('installation hooks require the main thread for signal cleanup')
 
     def run(self, phase, descriptor, release_dir, snapshot, context):
@@ -129,7 +133,7 @@ class HookRunner:
             # spawn cannot strand a new session. Further signals cannot abort cleanup.
             if process is not None and not cleaning:
                 raise KeyboardInterrupt()
-        signals = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+        signals = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT) if self.handle_signals else ()
         previous_handlers = {signum: signal.getsignal(signum) for signum in signals}
         try:
             for signum in signals:
