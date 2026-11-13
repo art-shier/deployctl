@@ -13,6 +13,7 @@ class NodeBootstrapTests(unittest.TestCase):
         self.assertEqual((ROOT/'control-server/internal/nodeinstall/bootstrap.sh').read_bytes(),
                          (ROOT/'skills/team-deploy/assets/node-bootstrap.sh').read_bytes())
 
+    @unittest.skipUnless(os.name == "posix", "Linux node path ownership contract")
     def test_root_private_run_token_passes_existing_agent_contract(self):
         token = Path('/run/ctl-node-install.abcd1234/enrollment.token')
         def node_stat(path, *args, **kwargs):
