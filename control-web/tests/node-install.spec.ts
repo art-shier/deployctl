@@ -93,7 +93,7 @@ test("lost submit response reconciles the same job without a second install", as
   await expect(page.getByText(/已有 Docker Engine 低于 20.10/)).toBeVisible();
 });
 
-test("SSH form stays usable on narrow screens", async ({ page }) => {
+test("SSH form stays usable on narrow screens", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await setup(page);
   await page.getByLabel("主机地址").fill("192.168.100.200");
@@ -106,7 +106,7 @@ test("SSH form stays usable on narrow screens", async ({ page }) => {
     ),
   ).toBe(true);
   await page.screenshot({
-    path: "/private/tmp/ctl-ssh-install-mobile.png",
+    path: testInfo.outputPath("ctl-ssh-install-mobile.png"),
     fullPage: true,
   });
 });
