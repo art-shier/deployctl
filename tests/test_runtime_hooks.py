@@ -85,6 +85,26 @@ class TransactionHooksTests(unittest.TestCase):
         self.assertEqual(self.state()['current'], before)
         self.assertIsNone(self.state()['transaction'])
 
+    def test_hooks_receive_ephemeral_registry_config_without_persisting_it(self):
+        self.install()
+        self.driver.docker_config = str(self.base / 'temporary-registry')
+        self.upgrade(self.package('v1.1.0', True))
+        for phase, values, params, context in self.hooks.calls:
+            self.assertEqual(context['DOCKER_CONFIG'], self.driver.docker_config)
+            self.assertNotIn('DOCKER_CONFIG', values)
+            self.assertNotIn('DOCKER_CONFIG', params)
+        self.assertNotIn('DOCKER_CONFIG', self.driver.values)
+        self.assertNotIn(self.driver.docker_config, json.dumps(self.state()))
+
+    def test_unmanaged_hooks_do_not_inherit_operator_registry_config(self):
+        from unittest.mock import patch
+        import os
+        self.install()
+        with patch.dict(os.environ, {'DOCKER_CONFIG': '/operator/private-registry'}):
+            self.upgrade(self.package('v1.1.0', True))
+        for phase, values, params, context in self.hooks.calls:
+            self.assertNotIn('DOCKER_CONFIG', context)
+
     def test_post_failure_restores_old_snapshot_and_exits_nonzero(self):
         self.install(runtime_env={'TEXT': 'old override'})
         before = self.state()['current']

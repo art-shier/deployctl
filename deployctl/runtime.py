@@ -515,6 +515,11 @@ class Manager:
                        'DEPLOYCTL_ACTION': 'upgrade' if upgrade else 'install',
                        'DEPLOYCTL_RELEASE_DIR': str(directory), 'DEPLOYCTL_CONFIG_DIR': str(folder),
                        'DEPLOYCTL_IMAGE': release['image']}
+            # Share only this deployment's short-lived, repository-scoped pull
+            # configuration. Never inherit the operator's Docker credentials or
+            # put this temporary path into application configuration snapshots.
+            if getattr(self.driver, 'docker_config', None):
+                context['DOCKER_CONFIG'] = self.driver.docker_config
             replacement_started = False
             phase = 'prepared'
             try:
