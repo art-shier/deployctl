@@ -116,7 +116,9 @@ def main():
             other_tag=host+'/'+other+':fixture'
             run('docker','tag',image_tag,other_tag)
             run('docker','push',other_tag,env=env)
-            other_image=run('docker','image','inspect',other_tag,'--format','{{index .RepoDigests 0}}').stdout.strip()
+            repository_digests=json.loads(run('docker','image','inspect',other_tag,'--format','{{json .RepoDigests}}').stdout)
+            other_image=next(value for value in repository_digests if value.startswith(host+'/'+other+'@'))
+            assert other_image.startswith(host+'/'+other+'@') and other_image!=image
             run('docker','image','rm',other_tag)
             # Remove local tag/digest before installing; managed CLI must authenticate its pull.
             run('docker','image','rm',image_tag)
