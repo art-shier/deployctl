@@ -98,6 +98,9 @@ def validate_build_args(value, field='build.args'):
 
 
 def validate_deployment(data):
+    if isinstance(data, dict) and type(data.get("schema_version")) is int and data["schema_version"] == 2:
+        from .multiservice_contract import validate_multiservice_deployment
+        return validate_multiservice_deployment(data)
     mapping(data, {'schema_version', 'application', 'build', 'container', 'health',
                    'resources', 'required_config', 'hooks'},
             {'schema_version', 'application', 'container', 'health'}, 'deployment')
