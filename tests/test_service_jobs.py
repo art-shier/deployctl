@@ -61,3 +61,34 @@ def test_failed_restore_never_automatically_retries():
     state['restore']['status'] = 'failed'
     with pytest.raises(RuntimeError): runner.run('restore', spec(), 'volume-1', 'backup-1')
     assert driver.starts == 1
+
+
+def test_restart_does_not_reset_restore_deadline():
+    driver = JobDriver(); state = {}; saved = []
+    runner = JobRunner(driver, state, lambda x: saved.append(x))
+    runner.wall_clock = lambda: 100
+    runner.run('restore', spec(), 'volume-1', 'backup-1')
+    assert saved[0]['restore']['deadline_at'] == 101
+    state['restore']['status'] = 'running'
+    driver.current = {'running': True}
+    resumed = JobRunner(driver, state, lambda x: None)
+    resumed.wall_clock = lambda: 102
+    resumed.sleep = lambda _: pytest.fail('expired job must stop immediately')
+    with pytest.raises(RuntimeError, match='timed out'):
+        resumed.run('restore', spec(), 'volume-1', 'backup-1')
+    assert driver.starts == 1
+    assert driver.stops == 1
+
+
+def test_legacy_active_job_without_deadline_requires_recovery():
+    driver = JobDriver(); state = {}
+    runner = JobRunner(driver, state, lambda x: None)
+    runner.run('restore', spec(), 'volume-1', 'backup-1')
+    state['restore']['status'] = 'running'
+    state['restore'].pop('deadline_at', None)
+    driver.current = {'running': True}
+    runner.sleep = lambda _: pytest.fail('unbounded restore must not continue')
+    with pytest.raises(RuntimeError, match='deadline'):
+        runner.run('restore', spec(), 'volume-1', 'backup-1')
+    assert driver.starts == 1
+    assert driver.stops == 1

@@ -93,7 +93,8 @@ def parser():
     validate.add_argument('config')
     package = sub.add_parser('package', help='generate standard release archive and checksum')
     package.add_argument('--config', required=True)
-    package.add_argument('--image', required=True)
+    package.add_argument('--image', required=True, action='append',
+                         help='image digest; repeat NAME=DIGEST for multi-service packages')
     package.add_argument('--version', required=True)
     package.add_argument('--output', default='dist')
     package.add_argument('--commit', default='')
@@ -220,7 +221,21 @@ def main(argv=None):
         elif args.command == 'validate':
             print(json.dumps(validate_deployment(read_yaml(args.config)), indent=2))
         elif args.command == 'package':
-            print(build_release(read_yaml(args.config), args.image, args.version, args.output, args.commit))
+            config = validate_deployment(read_yaml(args.config))
+            if config['schema_version'] == 2:
+                images = {}
+                for item in args.image:
+                    name, separator, digest = item.partition('=')
+                    if not separator or not name or not digest:
+                        raise ValueError('multi-service --image requires NAME=DIGEST')
+                    if name in images:
+                        raise ValueError('duplicate service image resolution')
+                    images[name] = digest
+            else:
+                if len(args.image) != 1:
+                    raise ValueError('single-service packages require exactly one --image')
+                images = args.image[0]
+            print(build_release(config, images, args.version, args.output, args.commit))
         else:
             from .contract import validate_name
             from .download import acquire_release

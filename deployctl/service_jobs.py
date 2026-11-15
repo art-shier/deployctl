@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import math
 import time
 from .contract import validate_name
 
@@ -9,6 +10,7 @@ from .contract import validate_name
 class JobRunner:
     def __init__(self, driver, state, save):
         self.driver, self.state, self.save = driver, state, save
+        self.wall_clock = time.time
         self.clock = time.monotonic
         self.sleep = time.sleep
 
@@ -25,7 +27,8 @@ class JobRunner:
             'source': backup_identity, 'configuration': configuration_identity}, sort_keys=True).encode()).hexdigest()
         prior = self.state.get(name)
         execution = {'id': identity, 'container': 'job-' + identity[:32], 'target': target_volume,
-                     'source': backup_identity, 'status': 'starting'}
+                     'source': backup_identity, 'status': 'starting',
+                     'deadline_at': self.wall_clock() + spec['timeout_seconds']}
         if prior:
             if prior['id'] != identity:
                 # A different attempt does not authorize overwriting the prior target.
@@ -51,7 +54,12 @@ class JobRunner:
                 self._record(name, execution, 'unknown')
                 raise
             self._record(name, execution, 'running')
-        deadline = self.clock() + spec['timeout_seconds']
+        # Wall deadline survives agent restarts; monotonic time bounds this process
+        # even if the system clock moves backwards while the job is running.
+        deadline_at = execution.get('deadline_at')
+        valid_deadline = type(deadline_at) in (int, float) and math.isfinite(deadline_at)
+        remaining = min(spec['timeout_seconds'], max(0, deadline_at - self.wall_clock())) if valid_deadline else 0
+        deadline = self.clock() + remaining
         try:
             while True:
                 current = self.driver.inspect_job(execution['container'])
@@ -66,7 +74,10 @@ class JobRunner:
                     self._record(name, execution, 'succeeded' if code == 0 else 'failed')
                     if code != 0: raise RuntimeError('job failed; explicit recovery required')
                     return copy.deepcopy(execution)
-                if self.clock() >= deadline:
+                if not valid_deadline:
+                    self._stop_verified(name, execution)
+                    raise RuntimeError('job deadline unknown; writer stopped; recovery required')
+                if self.clock() >= deadline or self.wall_clock() >= deadline_at:
                     self._stop_verified(name, execution)
                     raise RuntimeError('job timed out; writer stopped; recovery required')
                 self.sleep(.2)

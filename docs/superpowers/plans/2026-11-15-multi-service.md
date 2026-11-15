@@ -93,3 +93,9 @@ Files: final review report; Lifelog deployment declaration, release workflow and
 - Focused contracts/package/config tests: 56 passed + 30 subtests. Local Python test env /private/tmp/ctl-multiservice-venv; use TMPDIR=/private/tmp to avoid macOS /var symlink rejection. Broad suite reached 82 passes before pre-existing process-group cleanup PermissionError on macOS; do not alter unrelated signal code to mask environment failure.
 - Docker binary unavailable locally; Linux Docker validation required before shipping. No production changes or published version.
 - Ruling: planned schema-3 minimum version is 1.20.0 with multi_service_v1 capability; this is a candidate floor, not a released-version claim. Confirm release numbering before publication.
+
+2026-11-15 continuation checkpoint:
+- Connected package CLI to schema-2 multi-service image resolutions using repeated --image NAME=DIGEST; legacy single-image syntax preserved. Duplicate or incomplete mappings fail before archive creation. CLI RED: 2 failed/4 passed; GREEN: 6 passed.
+- Fixed restore reconciliation resetting timeout after agent restart. Deadline is now persisted before starting the writer; active jobs with no valid deadline are stopped and require recovery. Completed exit status still reconciles without repeating work. Deadline RED: 2 failed/5 passed; GREEN included below.
+- Combined focused verification: 81 passed + 30 subtests (CLI, runtime CLI, contracts, release/schema, service plans/config, executor, Docker adapter and job reconciliation); git diff --check clean.
+- Still NOT ready to publish: Go platform schema-3 validation, Manager/Agent integration, build/mirror CI and real Docker tests remain. Docker executable unavailable on this host. No production changes.
