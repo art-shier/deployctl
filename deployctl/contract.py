@@ -198,6 +198,9 @@ def minimum_hook_version(hooks):
 
 
 def validate_release(data):
+    if isinstance(data, dict) and type(data.get("schema_version")) is int and data["schema_version"] == 3:
+        from .multiservice_release import validate_multiservice_release
+        return validate_multiservice_release(data)
     mapping(data, {'schema_version', 'application', 'version', 'image', 'commit',
                    'minimum_deployctl_version', 'deployment', 'hooks'},
             {'schema_version', 'application', 'version', 'image',

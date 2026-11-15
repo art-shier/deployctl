@@ -43,6 +43,9 @@ def read_hook_script(root, name):
 
 
 def render_compose(release):
+    if release.get("schema_version") == 3:
+        from .multiservice_release import render_multiservice_compose
+        return render_multiservice_compose(release)
     config = release['deployment']
     return {'services': {'app': {
         'image': release['image'], 'restart': 'unless-stopped',
@@ -64,6 +67,9 @@ def render_compose(release):
 
 def build_release(config, image, version, output, commit='', project_root=None):
     config = validate_deployment(config)
+    if config["schema_version"] == 2:
+        from .multiservice_release import build_multiservice_release
+        return build_multiservice_release(config, image, version, output, commit)
     # Build inputs are consumed before packaging; keep the server's v1 contract.
     config['build'].pop('args', None)
     scripts, hooks = {}, {}

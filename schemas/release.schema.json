@@ -1,45 +1,302 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Team release manifest v1/v2",
-  "type": "object", "additionalProperties": false,
-  "required": ["schema_version", "application", "version", "image", "minimum_deployctl_version", "deployment"],
-  "properties": {
-    "schema_version": {"enum": [1, 2]},
-    "application": {"type": "string", "maxLength": 48, "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"},
-    "version": {"type": "string", "maxLength": 96, "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$"},
-    "image": {"type": "string", "pattern": "^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$"},
-    "commit": {"type": "string", "pattern": "^([a-f0-9]{40,64})?$"},
-    "minimum_deployctl_version": {"enum": ["1.0.0", "1.5.0", "1.6.0"]},
-    "deployment": {"allOf": [{"$ref": "deployment.schema.json"}, {"not": {"required": ["hooks"]}}]},
-    "hooks": {
-      "type": "object", "minProperties": 1, "additionalProperties": false,
-      "properties": {
-        "pre_install": {"allOf": [{"$ref": "#/$defs/hook"}, {"properties": {"path": {"const": "hooks/pre-install.sh"}}}]},
-        "post_install": {"allOf": [{"$ref": "#/$defs/hook"}, {"properties": {"path": {"const": "hooks/post-install.sh"}}}, {"not": {"required": ["refresh_config"]}}]}
-      }
-    }
-  },
+  "title": "Team release contract v1/v2/v3",
   "$defs": {
     "hook": {
-      "type": "object", "additionalProperties": false,
-      "required": ["path", "sha256", "timeout_seconds"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "timeout_seconds"
+      ],
       "properties": {
-        "path": {"type": "string"},
-        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}(?![\\s\\S])"},
-        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
-        "refresh_config": {"type": "boolean"}
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        },
+        "refresh_config": {
+          "type": "boolean"
+        }
       }
     }
   },
-  "allOf": [
-    {"if": {"properties": {"schema_version": {"const": 1}}}, "then": {"properties": {"minimum_deployctl_version": {"const": "1.0.0"}}, "not": {"required": ["hooks"]}}},
-    {"if": {"properties": {"schema_version": {"const": 2}}}, "then": {
-      "required": ["hooks"],
-      "allOf": [{
-        "if": {"properties": {"hooks": {"required": ["pre_install"], "properties": {"pre_install": {"required": ["refresh_config"]}}}}},
-        "then": {"properties": {"minimum_deployctl_version": {"const": "1.6.0"}}},
-        "else": {"properties": {"minimum_deployctl_version": {"const": "1.5.0"}}}
-      }]
-    }}
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "application",
+        "version",
+        "image",
+        "minimum_deployctl_version",
+        "deployment"
+      ],
+      "properties": {
+        "schema_version": {
+          "enum": [
+            1,
+            2
+          ]
+        },
+        "application": {
+          "type": "string",
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 96,
+          "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$"
+        },
+        "image": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^([a-f0-9]{40,64})?$"
+        },
+        "minimum_deployctl_version": {
+          "enum": [
+            "1.0.0",
+            "1.5.0",
+            "1.6.0"
+          ]
+        },
+        "deployment": {
+          "allOf": [
+            {
+              "$ref": "deployment.schema.json"
+            },
+            {
+              "not": {
+                "required": [
+                  "hooks"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "schema_version": {
+                  "const": 1
+                }
+              }
+            }
+          ]
+        },
+        "hooks": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "pre_install": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/hook"
+                },
+                {
+                  "properties": {
+                    "path": {
+                      "const": "hooks/pre-install.sh"
+                    }
+                  }
+                }
+              ]
+            },
+            "post_install": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/hook"
+                },
+                {
+                  "properties": {
+                    "path": {
+                      "const": "hooks/post-install.sh"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "required": [
+                      "refresh_config"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schema_version": {
+                "const": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "minimum_deployctl_version": {
+                "const": "1.0.0"
+              }
+            },
+            "not": {
+              "required": [
+                "hooks"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "schema_version": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "hooks"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "hooks": {
+                      "required": [
+                        "pre_install"
+                      ],
+                      "properties": {
+                        "pre_install": {
+                          "required": [
+                            "refresh_config"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "minimum_deployctl_version": {
+                      "const": "1.6.0"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "minimum_deployctl_version": {
+                      "const": "1.5.0"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "application": {
+          "type": "string",
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*(?![\\s\\S])"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 96,
+          "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^([a-f0-9]{40,64})?$"
+        },
+        "minimum_deployctl_version": {
+          "const": "1.20.0"
+        },
+        "capabilities": {
+          "const": [
+            "multi_service_v1"
+          ]
+        },
+        "deployment": {
+          "allOf": [
+            {
+              "$ref": "deployment.schema.json"
+            },
+            {
+              "properties": {
+                "schema_version": {
+                  "const": 2
+                },
+                "services": {
+                  "additionalProperties": {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "build"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "mirror"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                },
+                "jobs": {
+                  "additionalProperties": {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "build"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "mirror"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "application",
+        "version",
+        "minimum_deployctl_version",
+        "capabilities",
+        "deployment"
+      ]
+    }
   ]
 }

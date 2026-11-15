@@ -1,153 +1,755 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://team-deploy.example/schemas/deployment-v1.json",
-  "title": "Team deployment contract v1",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "application",
-    "container",
-    "health"
-  ],
-  "properties": {
-    "schema_version": {
-      "const": 1
-    },
-    "application": {
-      "type": "string",
-      "maxLength": 48,
-      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
-    },
-    "build": {
+  "title": "Team deployment contract v1/v2",
+  "$defs": {
+    "projectHook": {
       "type": "object",
       "additionalProperties": false,
+      "required": [
+        "script"
+      ],
       "properties": {
-        "dockerfile": {
+        "script": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "not": {
+            "pattern": "^/|[:\\\\\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]|(^|/)\\.\\.(/|$)"
+          }
         },
-        "context": {
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        },
+        "refresh_config": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "application",
+        "container",
+        "health"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "application": {
           "type": "string",
-          "minLength": 1
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
         },
-        "args": {
+        "build": {
           "type": "object",
-          "maxProperties": 128,
-          "propertyNames": {
-            "type": "string",
-            "maxLength": 128,
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?![\\s\\S])"
-          },
-          "additionalProperties": {
-            "type": "string",
-            "maxLength": 4096,
-            "not": {
-              "anyOf": [
+          "additionalProperties": false,
+          "properties": {
+            "dockerfile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "type": "string",
+              "minLength": 1
+            },
+            "args": {
+              "type": "object",
+              "maxProperties": 128,
+              "propertyNames": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?![\\s\\S])"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 4096,
+                "not": {
+                  "anyOf": [
+                    {
+                      "pattern": "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]"
+                    },
+                    {
+                      "pattern": "^\\s|\\s$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "container": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "port"
+          ],
+          "properties": {
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "host_port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "bind_address": {
+              "type": "string",
+              "format": "ipv4"
+            }
+          }
+        },
+        "health": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "readiness_path"
+          ],
+          "properties": {
+            "readiness_path": {
+              "type": "string",
+              "maxLength": 256,
+              "pattern": "^/(?!/)[^?#\\\\\\r\\n]*$"
+            },
+            "startup_timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 600
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memory_limit": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*[kKmMgG]$"
+            },
+            "cpus": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 128
+            }
+          }
+        },
+        "hooks": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pre_install": {
+              "$ref": "#/$defs/projectHook"
+            },
+            "post_install": {
+              "allOf": [
                 {
-                  "pattern": "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]"
+                  "$ref": "#/$defs/projectHook"
                 },
                 {
-                  "pattern": "^\\s|\\s$"
+                  "not": {
+                    "required": [
+                      "refresh_config"
+                    ]
+                  }
                 }
               ]
+            }
+          }
+        },
+        "required_config": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z_][A-Z0-9_]*$",
+            "not": {
+              "const": "APP_VERSION"
             }
           }
         }
       }
     },
-    "container": {
+    {
       "type": "object",
       "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "application": {
+          "type": "string",
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*(?![\\s\\S])"
+        },
+        "platform": {
+          "enum": [
+            "linux/amd64",
+            "linux/arm64"
+          ]
+        },
+        "primary_endpoint": {
+          "type": "string"
+        },
+        "services": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 48,
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "build": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "dockerfile": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "context": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "args": {
+                    "type": "object",
+                    "maxProperties": 128,
+                    "propertyNames": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?![\\s\\S])"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "not": {
+                        "anyOf": [
+                          {
+                            "pattern": "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]"
+                          },
+                          {
+                            "pattern": "^\\s|\\s$"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "image": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}(?![\\s\\S])"
+              },
+              "mirror": {
+                "const": "project"
+              },
+              "command": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 128,
+                "items": {
+                  "type": "string",
+                  "maxLength": 4096,
+                  "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*(?![\\s\\S])"
+                }
+              },
+              "environment": {
+                "type": "object",
+                "maxProperties": 128,
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])"
+                },
+                "additionalProperties": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "literal": {
+                          "type": "string",
+                          "maxLength": 4096,
+                          "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "literal"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "config": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "config"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "secret": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "secret"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "secret_files": {
+                "type": "object",
+                "maxProperties": 128,
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^$\\\\:]+(?![\\s\\S])"
+                }
+              },
+              "volumes": {
+                "type": "object",
+                "maxProperties": 32,
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 48,
+                  "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*(?![\\s\\S])"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^$\\\\:]+(?![\\s\\S])"
+                }
+              },
+              "resources": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "memory_limit": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,8}[kKmMgG](?![\\s\\S])"
+                  },
+                  "cpus": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 128
+                  }
+                },
+                "required": []
+              },
+              "depends_on": {
+                "type": "object",
+                "maxProperties": 64,
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 48,
+                  "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*(?![\\s\\S])"
+                },
+                "additionalProperties": {
+                  "enum": [
+                    "healthy",
+                    "succeeded"
+                  ]
+                }
+              },
+              "permission_profile": {
+                "enum": [
+                  "restricted",
+                  "database-init"
+                ]
+              },
+              "lifecycle": {
+                "enum": [
+                  "application",
+                  "persistent"
+                ]
+              },
+              "health": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "http": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "pattern": "^/[^?#\\\\$]*(?![\\s\\S])"
+                  },
+                  "exec": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 128,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*(?![\\s\\S])"
+                    }
+                  },
+                  "startup_timeout_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 600
+                  }
+                },
+                "required": [],
+                "oneOf": [
+                  {
+                    "required": [
+                      "http"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "exec"
+                    ]
+                  }
+                ]
+              },
+              "endpoints": {
+                "type": "object",
+                "maxProperties": 16,
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 48,
+                  "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*(?![\\s\\S])"
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "container_port": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    },
+                    "host_port": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    },
+                    "bind_address": {
+                      "type": "string",
+                      "format": "ipv4"
+                    }
+                  },
+                  "required": [
+                    "container_port",
+                    "host_port"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "lifecycle",
+              "health"
+            ],
+            "oneOf": [
+              {
+                "required": [
+                  "build"
+                ]
+              },
+              {
+                "required": [
+                  "image"
+                ]
+              }
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "mirror"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "image"
+                  ]
+                }
+              }
+            ]
+          },
+          "minProperties": 1
+        },
+        "jobs": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 48,
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "build": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "dockerfile": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "context": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "args": {
+                    "type": "object",
+                    "maxProperties": 128,
+                    "propertyNames": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?![\\s\\S])"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "not": {
+                        "anyOf": [
+                          {
+                            "pattern": "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]"
+                          },
+                          {
+                            "pattern": "^\\s|\\s$"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "image": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}(?![\\s\\S])"
+              },
+              "mirror": {
+                "const": "project"
+              },
+              "command": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 128,
+                "items": {
+                  "type": "string",
+                  "maxLength": 4096,
+                  "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*(?![\\s\\S])"
+                }
+              },
+              "environment": {
+                "type": "object",
+                "maxProperties": 128,
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])"
+                },
+                "additionalProperties": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "literal": {
+                          "type": "string",
+                          "maxLength": 4096,
+                          "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "literal"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "config": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "config"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "secret": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "secret"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "secret_files": {
+                "type": "object",
+                "maxProperties": 128,
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^$\\\\:]+(?![\\s\\S])"
+                }
+              },
+              "volumes": {
+                "type": "object",
+                "maxProperties": 32,
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 48,
+                  "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*(?![\\s\\S])"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^$\\\\:]+(?![\\s\\S])"
+                }
+              },
+              "resources": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "memory_limit": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,8}[kKmMgG](?![\\s\\S])"
+                  },
+                  "cpus": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 128
+                  }
+                },
+                "required": []
+              },
+              "depends_on": {
+                "type": "object",
+                "maxProperties": 64,
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 48,
+                  "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*(?![\\s\\S])"
+                },
+                "additionalProperties": {
+                  "enum": [
+                    "healthy",
+                    "succeeded"
+                  ]
+                }
+              },
+              "permission_profile": {
+                "enum": [
+                  "restricted",
+                  "database-init"
+                ]
+              },
+              "trigger": {
+                "enum": [
+                  "bootstrap",
+                  "explicit"
+                ]
+              },
+              "timeout_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 7200
+              },
+              "rollback_compatible": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "trigger",
+              "command"
+            ],
+            "oneOf": [
+              {
+                "required": [
+                  "build"
+                ]
+              },
+              {
+                "required": [
+                  "image"
+                ]
+              }
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "mirror"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "image"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "volumes": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 48,
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "retain": {
+                "const": true
+              }
+            },
+            "required": [
+              "retain"
+            ]
+          }
+        }
+      },
       "required": [
-        "port"
-      ],
-      "properties": {
-        "port": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 65535
-        },
-        "host_port": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 65535
-        },
-        "bind_address": {
-          "type": "string",
-          "format": "ipv4"
-        }
-      }
-    },
-    "health": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "readiness_path"
-      ],
-      "properties": {
-        "readiness_path": {
-          "type": "string",
-          "maxLength": 256,
-          "pattern": "^/(?!/)[^?#\\\\\\r\\n]*$"
-        },
-        "startup_timeout_seconds": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 600
-        }
-      }
-    },
-    "resources": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "memory_limit": {
-          "type": "string",
-          "pattern": "^[1-9][0-9]*[kKmMgG]$"
-        },
-        "cpus": {
-          "type": "number",
-          "minimum": 0.1,
-          "maximum": 128
-        }
-      }
-    },
-    "hooks": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "pre_install": {"$ref": "#/$defs/projectHook"},
-        "post_install": {"allOf": [{"$ref": "#/$defs/projectHook"}, {"not": {"required": ["refresh_config"]}}]}
-      }
-    },
-    "required_config": {
-      "type": "array",
-      "maxItems": 128,
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "pattern": "^[A-Z_][A-Z0-9_]*$",
-        "not": {
-          "const": "APP_VERSION"
-        }
-      }
+        "schema_version",
+        "application",
+        "platform",
+        "services"
+      ]
     }
-  },
-  "$defs": {
-    "projectHook": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["script"],
-      "properties": {
-        "script": {
-          "type": "string",
-          "minLength": 1,
-          "not": {"pattern": "^/|[:\\\\\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]|(^|/)\\.\\.(/|$)"}
-        },
-        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
-        "refresh_config": {"type": "boolean"}
-      }
-    }
-  }
+  ]
 }
