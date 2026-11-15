@@ -49,10 +49,7 @@ def _check_bundle(path, content):
             raise ValueError('service bundle secret permissions are too broad')
 
 
-def prepare_service_bundle(root, name, spec, values):
-    validate_name(name, 'service')
-    root = _directory(root)
-    home = _directory(root / 'services' / name)
+def _bundle_content(spec, values):
     environment, files = service_values(spec, values)
     for key, value in environment.items():
         if '\n' in value or '\r' in value:
@@ -61,6 +58,23 @@ def prepare_service_bundle(root, name, spec, values):
     for key, value in files.items(): content['secrets/' + key] = value.encode()
     manifest = {name: hashlib.sha256(raw).hexdigest() for name, raw in content.items()}
     content['manifest.json'] = json.dumps(manifest, sort_keys=True).encode()
+    return content
+
+
+def verify_service_bundle(root, name, spec, values):
+    validate_name(name, 'service')
+    target = Path(root).absolute() / 'services' / name / service_fingerprint(spec, values)
+    reject_links(target)
+    if not target.is_dir(): raise ValueError('service bundle missing')
+    _check_bundle(target, _bundle_content(spec, values))
+    return target
+
+
+def prepare_service_bundle(root, name, spec, values):
+    validate_name(name, 'service')
+    root = _directory(root)
+    home = _directory(root / 'services' / name)
+    content = _bundle_content(spec, values)
     target = home / service_fingerprint(spec, values)
     reject_links(target)
     if target.exists():

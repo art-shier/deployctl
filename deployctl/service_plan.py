@@ -76,8 +76,6 @@ def plan_services(release, observed, configurations):
             volumes[name] = 'reuse'
     for name in sorted(set(prior_volumes) - set(volumes)):
         volumes[name] = 'retained-unreferenced'
-    for spec in config.get('jobs', {}).values():
-        service_values(spec, configurations)
     applicable = (all(action in {'create', 'update', 'start', 'unchanged'} for action in services.values()) and
                   all(action in {'create', 'reuse', 'retained-unreferenced'} for action in volumes.values()))
     return {'services': services, 'volumes': volumes, 'fingerprints': fingerprints,

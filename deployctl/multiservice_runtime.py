@@ -48,8 +48,10 @@ class ServiceExecutor:
                     continue
                 if name in changes:
                     journal['attempted'].append(name)
-                    record('applying', 'up', name)
-                    self.driver.up(name)
+                    action = 'start' if changes[name] == 'start' else 'up'
+                    record('applying', action, name)
+                    if action == 'start': self.driver.start(name)
+                    else: self.driver.up(name)
                 record('checking', 'healthy', name)
                 self.driver.healthy(name)
                 journal['completed'].append(name)

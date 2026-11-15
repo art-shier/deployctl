@@ -290,6 +290,9 @@ class Manager:
                 and value.get('binding') is None and isinstance(value.get('transaction'), dict)):
             _, candidate = self.stored_release(home, value['transaction'].get('to'), app)
             value['binding'] = self.binding(candidate)
+        if isinstance(value, dict) and value.get('schema_version') == 3:
+            from .stack_manager import validate_stack_state
+            return validate_stack_state(value, app, env)
         return normalize_state(value, app, env)
 
     def save(self, home, state, event):
@@ -452,7 +455,7 @@ class Manager:
 
     def deploy(self, app, env, package, upgrade=False, port=None, bind=None,
                runtime_env=None, unset_env=None, install_params=None, managed_runtime=None,
-               managed_params=None, management_source=None, deployment_defaults=None):
+               managed_params=None, management_source=None, deployment_defaults=None, managed_configuration=None, job_sources=None, requested_jobs=None):
         updates = validate_values(runtime_env or {}, 'env-var')
         unset = list(unset_env or [])
         validate_unset(unset)
@@ -475,6 +478,16 @@ class Manager:
                 raise ValueError('application is already installed; use upgrade')
             with self.progress.stage('Reading release'):
                 directory, release = self.stage(home, package, app)
+            if release['schema_version'] == 3 or state['schema_version'] == 3:
+                from .stack_manager import StackManager
+                if managed_runtime is not None:
+                    raise ValueError('multi-service managed configuration requires explicit secret classification')
+                return StackManager(self, home, folder, app, env).deploy(state, release,
+                    managed_configuration=managed_configuration, updates=updates, unset=unset,
+                    defaults=defaults, port=port, bind=bind, management=management, params=params,
+                    job_sources=job_sources, requested_jobs=requested_jobs)
+            if managed_configuration is not None or job_sources or requested_jobs:
+                raise ValueError('service configuration/jobs require a multi-service release')
             with self.progress.stage('Validating configuration'):
                 if params and not release.get('hooks'):
                     raise ValueError('installation parameters require a package declaring hooks')
@@ -606,10 +619,41 @@ class Manager:
                 self.save(home, state, 'deployment_succeeded')
             return state
 
+    def plan(self, app, env, package, upgrade=False, port=None, bind=None,
+             runtime_env=None, unset_env=None, install_params=None, managed_runtime=None,
+             managed_params=None, management_source=None, deployment_defaults=None,
+             managed_configuration=None, job_sources=None, requested_jobs=None):
+        validate_name(app); validate_name(env, 'environment', 32)
+        home = self.root / app / env; folder = self.config_root / app / env
+        reject_links(home); reject_links(folder)
+        state = self.state(home, app, env)
+        if state['transaction']: raise RuntimeError('pending deployment; recovery required')
+        if upgrade and not state['current']: raise ValueError('application is not installed; use install first')
+        if not upgrade and state['current']: raise ValueError('application is already installed; use upgrade')
+        if managed_runtime is not None: raise ValueError('stack plan requires explicit secret classification')
+        updates = validate_values(runtime_env or {}, 'env-var')
+        unset = list(unset_env or []); validate_unset(unset)
+        if unset and not upgrade: raise ValueError('unset-env is only available for upgrade')
+        from .platform_client import validate_defaults
+        defaults = validate_defaults(deployment_defaults or {})
+        if defaults and not management_source: raise ValueError('deployment defaults require management provenance')
+        with tempfile.TemporaryDirectory(prefix='ctl-plan-') as directory:
+            release = unpack_release(package, Path(directory) / 'package')
+            if release['application'] != app: raise ValueError('release application mismatch')
+            from .stack_manager import StackManager
+            return StackManager(self, home, folder, app, env).deploy(state, release,
+                managed_configuration=managed_configuration, updates=updates, unset=unset,
+                defaults=defaults, port=port, bind=bind, management=management_source,
+                params=merge_install_params(install_params or {}, managed_params),
+                job_sources=job_sources, requested_jobs=requested_jobs, preview=True)
+
     def rollback(self, app, env):
         home, folder = self.paths(app, env)
         with service_lock(home / '.lock'):
             state = self.state(home, app, env)
+            if state['schema_version'] == 3:
+                from .stack_manager import StackManager
+                return StackManager(self, home, folder, app, env).rollback(state)
             pending = state['transaction']
             target = pending['from'] if pending else state['previous']
             project = project_name(app, env)
@@ -644,10 +688,15 @@ class Manager:
             self.save(home, state, 'rollback_succeeded')
             return state
 
-    def operate(self, app, env, action, tail=100):
+    def operate(self, app, env, action, tail=100, service=None):
         home, folder = self.paths(app, env)
         with service_lock(home / '.lock'):
             state = self.state(home, app, env)
+            if state['schema_version'] == 3:
+                from .stack_manager import StackManager
+                return StackManager(self, home, folder, app, env).operate(state, action, tail, service)
+            if service is not None and service != 'app':
+                raise ValueError('legacy deployment only contains service app')
             if state['transaction'] and action not in ('status', 'logs'):
                 raise RuntimeError('pending deployment; use rollback first')
             active = state['transaction']['to'] if state['transaction'] else state['current']

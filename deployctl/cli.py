@@ -107,6 +107,9 @@ def parser():
         command.add_argument('--config-root', default=os.environ.get('DEPLOY_CONFIG_ROOT', '/etc/deployctl'))
         if name in ('install', 'upgrade'):
             command.add_argument('--quiet', action='store_true', help='hide progress; preserve result and errors')
+            command.add_argument('--job-source', action='append', default=[], metavar='NAME=SHA256', help='verified backup identity for a bootstrap job')
+            command.add_argument('--run-job', action='append', default=[], metavar='NAME', help='select an explicit one-shot job')
+            command.add_argument('--plan', action='store_true', help='preview multi-service changes without changing deployed resources')
             command.add_argument('--release', help='legacy local archive or HTTPS URL')
             command.add_argument('--version', help='managed release version; default: environment target')
             command.add_argument('--target-dir', help='static public directory when no platform default is configured; saved on first install')
@@ -123,6 +126,8 @@ def parser():
         if name in ('install','upgrade'):
             command.add_argument('--port', type=int, help='override host port; preserved across upgrades')
             command.add_argument('--bind', help='override IPv4 bind address; default 127.0.0.1')
+        if name in ('status', 'logs', 'restart', 'stop'):
+            command.add_argument('--service', help='select a managed service')
         if name == 'logs':
             command.add_argument('--tail', type=int, default=100)
     return result
@@ -256,6 +261,20 @@ def main(argv=None):
                 if args.release:
                     if args.target_dir is not None:raise ValueError('--target-dir applies to managed static projects; legacy --release is Docker only')
                     if local_deployment_type(args.root,args.application,args.env)=='static':raise ValueError('static projects require managed releases; --release is Docker only')
+                job_options = {}
+                if args.job_source or args.run_job:
+                    import re
+                    sources = {}
+                    for assignment in args.job_source:
+                        name, separator, digest = assignment.partition('=')
+                        validate_name(name, 'job')
+                        if not separator or not re.fullmatch('[a-f0-9]{64}', digest):
+                            raise ValueError('--job-source requires NAME=SHA256')
+                        if name in sources: raise ValueError('duplicate job source')
+                        sources[name] = digest
+                    for name in args.run_job: validate_name(name, 'job')
+                    if len(set(args.run_job)) != len(args.run_job): raise ValueError('duplicate selected job')
+                    job_options = {'job_sources':sources, 'requested_jobs':args.run_job}
                 runtime_env = parse_assignments(args.env_var, 'env-var')
                 install_params = parse_assignments(args.set, 'installation parameters', reserve_platform=False)
                 unset_env = getattr(args, 'unset_env', [])
@@ -284,6 +303,7 @@ def main(argv=None):
                         args.env = resolution['environment']
                         static=resolution.get('deployment_type')=='static'
                         if static:
+                            if args.plan or job_options:raise ValueError('plan/job options require a multi-service Docker release')
                             if args.release:raise ValueError('--release does not apply to static projects')
                             if args.env_var or args.set or unset_env or args.port is not None or args.bind is not None:
                                 raise ValueError('Docker env/install parameters and port/bind flags do not apply to static files')
@@ -306,17 +326,34 @@ def main(argv=None):
                                 package = client.download_release(resolution,cache,progress=progress)
                         else:
                             import hashlib
-                            if manifest['image'] != resolution['release']['image'] or hashlib.sha256(package.read_bytes()).hexdigest()!=resolution['release']['sha256']:
+                            from .platform_client import release_matches
+                            if not release_matches(manifest, resolution) or hashlib.sha256(package.read_bytes()).hexdigest()!=resolution['release']['sha256']:
                                 raise ValueError('explicit package differs from the registered platform release')
                         cfg = resolution['configuration']
-                        managed = {'managed_runtime':cfg['runtime_env'], 'managed_params':cfg['install_params'],
+                        managed = {'managed_params':cfg['install_params'],
                                    'deployment_defaults':cfg['deployment_defaults'], 'management_source':{
                                    'origin':client.server,'project':args.application,'environment':args.env,
                                    'release_id':resolution['release']['id'],'revision_id':cfg['id']}}
+                        if resolution['schema_version'] == 3:
+                            managed['managed_configuration'] = {'config': cfg['config'], 'secrets': cfg['secrets']}
+                        else: managed['managed_runtime'] = cfg['runtime_env']
                     from contextlib import nullcontext
                     manager=Manager(args.root,args.config_root)
                     manager.progress=progress
-                    registry_context = client.registry_config(resolution['release']['image']) if client else nullcontext(None)
+                    if args.plan:
+                        plan = manager.plan(args.application, args.env, package,
+                                            upgrade=args.command == 'upgrade',
+                                            port=args.port, bind=args.bind, runtime_env=runtime_env,
+                                            unset_env=unset_env, install_params=install_params, **managed, **job_options)
+                        print(json.dumps(plan, ensure_ascii=False, sort_keys=True))
+                        return 0
+                    if client:
+                        from .platform_client import release_images
+                        images = release_images(resolution['release'])
+                        if len({image.split('@')[0] for image in images.values()}) != 1:
+                            raise ValueError('managed service images must share the authorized project repository')
+                        registry_context = client.registry_config(next(iter(images.values())))
+                    else: registry_context = nullcontext(None)
                     from contextlib import ExitStack
                     with ExitStack() as stack:
                         with progress.stage('Preparing Registry authentication'):
@@ -326,7 +363,7 @@ def main(argv=None):
                             state = manager.deploy(args.application, args.env, package,
                                            upgrade=args.command == 'upgrade',
                                            port=getattr(args, 'port', None), bind=getattr(args, 'bind', None),
-                                           runtime_env=runtime_env, unset_env=unset_env, install_params=install_params, **managed)
+                                           runtime_env=runtime_env, unset_env=unset_env, install_params=install_params, **managed, **job_options)
                         except (ValueError,OSError,RuntimeError):
                             if client:
                                 with progress.stage('Submitting failure receipt (best effort)'):
@@ -348,7 +385,10 @@ def main(argv=None):
                 manager=local_manager(args.root,args.config_root,args.application,args.env)
                 if args.command == 'logs' and not 1 <= args.tail <= 10000:
                     raise ValueError('--tail must be 1..10000')
-                print(manager.operate(args.application, args.env, args.command, getattr(args, 'tail', 100)))
+                selector = {'service': args.service} if getattr(args, 'service', None) else {}
+                if selector and local_deployment_type(args.root, args.application, args.env) == 'static':
+                    raise ValueError('--service only applies to Docker services')
+                print(manager.operate(args.application, args.env, args.command, getattr(args, 'tail', 100), **selector))
         return 0
     except (ValueError, OSError, RuntimeError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
@@ -395,7 +435,7 @@ def local_deployment_type(root,app,env):
     validate_name(env,'environment',32)
     path=Path(root)/app/env/'state.json';reject_links(path)
     if not path.exists():return 'docker'
-    if not path.is_file() or path.stat().st_size>65536:raise ValueError('invalid local deployment state')
+    if not path.is_file() or path.stat().st_size>4*1024*1024:raise ValueError('invalid local deployment state')
     try:state=json.loads(path.read_text(encoding='utf-8'))
     except (UnicodeError,json.JSONDecodeError):raise ValueError('invalid local deployment state') from None
     if not isinstance(state,dict) or state.get('application')!=app or state.get('environment')!=env:raise ValueError('mismatched local deployment state')

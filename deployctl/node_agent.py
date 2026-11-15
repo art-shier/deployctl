@@ -238,9 +238,11 @@ class RuntimeExecutor:
                     with self.registry_config(task) as docker_config:
                         manager.driver.docker_config = docker_config
                         try:
+                            configuration = ({'managed_configuration': {'config': cfg['config'], 'secrets': cfg['secrets']}}
+                                             if resolution['schema_version'] == 3 else {'managed_runtime': cfg['runtime_env']})
                             manager.deploy(task['project'], task['environment'], package,
                                 upgrade=task['action'] == 'upgrade', port=task.get('host_port'),
-                                bind=task.get('bind_address'), managed_runtime=cfg['runtime_env'],
+                                bind=task.get('bind_address'), **configuration,
                                 managed_params=cfg['install_params'], deployment_defaults=cfg['deployment_defaults'],
                                 management_source={'origin': self.client.server, 'project': task['project'],
                                     'environment': task['environment'], 'release_id': resolution['release']['id'],
@@ -272,6 +274,16 @@ class RuntimeExecutor:
                     result['health'] = 'unknown' if state['transaction'] else 'not_installed'
                     return result
                 result['actual_version'] = current['version']
+                if state['schema_version'] == 3:
+                    from .stack_manager import StackManager
+                    binding = state['binding']
+                    result['binding'] = {'host_port': binding['port'], 'bind_address': binding['address']} if binding else None
+                    if state['transaction']: return result
+                    observed = StackManager(self.manager, home, folder, instance['project'], instance['environment']).status(state)
+                    services = list(observed['services'].values())
+                    result['health'] = ('healthy' if services and all(item['healthy'] for item in services)
+                                        else 'stopped' if any(not item['running'] for item in services) else 'unhealthy')
+                    return result
                 binding = current['binding']
                 result['binding'] = {'host_port': binding['port'], 'bind_address': binding['address']}
                 if state['transaction']:

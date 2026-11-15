@@ -75,7 +75,7 @@ def release_matches(manifest, resolution):
         d = manifest['deployment']
         actual = {name: node['image'] for name, node in {**d['services'], **d['jobs']}.items()}
         return actual == release_images(resolution['release'])
-    return resolution['schema_version'] == 1 and manifest['image'] == resolution['release'].get('image')
+    return resolution.get('schema_version', 1) == 1 and manifest['image'] == resolution['release'].get('image')
 
 
 def validate_resolution(value, project, environment=None, requested_version=None):
