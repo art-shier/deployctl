@@ -96,19 +96,23 @@ type Revision struct {
 	GroupSource            *GroupSource  `json:"-"`
 }
 type Release struct {
-	DeploymentType string    `json:"deployment_type,omitempty"`
-	ArchiveFormat  string    `json:"archive_format,omitempty"`
-	ExpandedSize   int64     `json:"expanded_size,omitempty"`
-	EntryCount     int       `json:"entry_count,omitempty"`
-	ID             string    `json:"id"`
-	Project        string    `json:"project"`
-	Version        string    `json:"version"`
-	Commit         string    `json:"commit"`
-	Image          string    `json:"image"`
-	SHA256         string    `json:"sha256"`
-	Size           int64     `json:"size"`
-	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"created_at"`
+	SchemaVersion           int               `json:"schema_version,omitempty"`
+	Images                  map[string]string `json:"images,omitempty"`
+	Capabilities            []string          `json:"capabilities,omitempty"`
+	MinimumDeployctlVersion string            `json:"minimum_deployctl_version,omitempty"`
+	DeploymentType          string            `json:"deployment_type,omitempty"`
+	ArchiveFormat           string            `json:"archive_format,omitempty"`
+	ExpandedSize            int64             `json:"expanded_size,omitempty"`
+	EntryCount              int               `json:"entry_count,omitempty"`
+	ID                      string            `json:"id"`
+	Project                 string            `json:"project"`
+	Version                 string            `json:"version"`
+	Commit                  string            `json:"commit"`
+	Image                   string            `json:"image"`
+	SHA256                  string            `json:"sha256"`
+	Size                    int64             `json:"size"`
+	Status                  string            `json:"status"`
+	CreatedAt               time.Time         `json:"created_at"`
 }
 type Receipt struct {
 	ID          string    `json:"id"`

@@ -5,9 +5,9 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"maps"
 	"regexp"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/art-shier/deployctl/control-server/internal/auth"
@@ -428,10 +428,10 @@ func (s *Store) PublishReleaseAuthorized(ctx context.Context, r domain.Release, 
 		return r, domain.ErrInvalid
 	}
 	if kind == "docker" {
-		if domain.ValidateImage(r.Image) != nil || r.Size > 10*1024*1024 || r.ArchiveFormat != "tar.gz" {
+		if r.ValidateDockerImages() != nil || r.Size > 10*1024*1024 || r.ArchiveFormat != "tar.gz" {
 			return r, domain.ErrInvalid
 		}
-	} else if r.Image != "" || r.Size > 256*1024*1024 || r.ExpandedSize < 0 || r.ExpandedSize > 1024*1024*1024 || r.EntryCount < 1 || r.EntryCount > 50000 || r.ArchiveFormat != "zip" && r.ArchiveFormat != "tar.gz" {
+	} else if r.Image != "" || r.SchemaVersion != 0 || len(r.Images) != 0 || len(r.Capabilities) != 0 || r.MinimumDeployctlVersion != "" || r.Size > 256*1024*1024 || r.ExpandedSize < 0 || r.ExpandedSize > 1024*1024*1024 || r.EntryCount < 1 || r.EntryCount > 50000 || r.ArchiveFormat != "zip" && r.ArchiveFormat != "tar.gz" {
 		return r, domain.ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -446,7 +446,7 @@ func (s *Store) PublishReleaseAuthorized(ctx context.Context, r domain.Release, 
 	if p.DeploymentType != kind {
 		return r, domain.ErrInvalid
 	}
-	if kind == "docker" && strings.Split(r.Image, "@")[0] != p.ImageRepository {
+	if kind == "docker" && r.ImageRepository() != p.ImageRepository {
 		return r, domain.ErrInvalid
 	}
 	if err = lockRepositories(ctx, tx, p.ImageRepository); err != nil {
@@ -460,7 +460,7 @@ func (s *Store) PublishReleaseAuthorized(ctx context.Context, r domain.Release, 
 	old, err := scanRelease(tx.QueryRow(ctx, "SELECT data,status FROM ctl_releases WHERE project=$1 AND version=$2", r.Project, r.Version))
 	isNew := errors.Is(err, domain.ErrNotFound)
 	if err == nil {
-		if old.SHA256 != r.SHA256 || old.Image != r.Image || old.Status != "published" || old.DeploymentType != r.DeploymentType || old.ArchiveFormat != r.ArchiveFormat || old.Commit != r.Commit || old.Size != r.Size || kind == "static" && (old.ExpandedSize != r.ExpandedSize || old.EntryCount != r.EntryCount) {
+		if old.SHA256 != r.SHA256 || old.Image != r.Image || old.SchemaVersion != r.SchemaVersion || !maps.Equal(old.Images, r.Images) || !slices.Equal(old.Capabilities, r.Capabilities) || old.MinimumDeployctlVersion != r.MinimumDeployctlVersion || old.Status != "published" || old.DeploymentType != r.DeploymentType || old.ArchiveFormat != r.ArchiveFormat || old.Commit != r.Commit || old.Size != r.Size || kind == "static" && (old.ExpandedSize != r.ExpandedSize || old.EntryCount != r.EntryCount) {
 			return r, domain.ErrConflict
 		}
 		r = old

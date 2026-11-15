@@ -99,7 +99,21 @@ func Validate(reader io.Reader, expectedSHA, project string) (ValidatedPackage, 
 	if e1 != nil || e2 != nil || !bytes.Equal(a, b) {
 		return out, domain.ErrInvalid
 	}
-	release := domain.Release{Project: project, Version: manifest["version"].(string), Image: manifest["image"].(string), SHA256: checksum, Size: int64(len(raw))}
+	release := domain.Release{Project: project, Version: manifest["version"].(string), SHA256: checksum, Size: int64(len(raw))}
+	if integer(manifest["schema_version"], 3, 3) {
+		release.SchemaVersion = 3
+		release.MinimumDeployctlVersion = manifest["minimum_deployctl_version"].(string)
+		release.Capabilities = []string{"multi_service_v1"}
+		release.Images = map[string]string{}
+		d := manifest["deployment"].(map[string]any)
+		for _, kind := range []string{"services", "jobs"} {
+			for name, node := range d[kind].(map[string]any) {
+				release.Images[name] = node.(map[string]any)["image"].(string)
+			}
+		}
+	} else {
+		release.Image = manifest["image"].(string)
+	}
 	if c, ok := manifest["commit"].(string); ok {
 		release.Commit = c
 	}

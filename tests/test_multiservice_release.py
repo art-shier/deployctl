@@ -66,3 +66,29 @@ def test_compose_does_not_expand_application_command_dollars(tmp_path):
     archive = build_release(data, {'api': API_IMAGE, 'postgres': IMAGE}, 'v2.0.0', tmp_path)
     release = unpack_release(archive, tmp_path / 'unpacked')
     assert render_compose(release)['services']['api']['command'][-1] == 'echo "$$DB_HOST"'
+
+
+def test_multiple_endpoint_order_survives_canonical_yaml(tmp_path):
+    data = source()
+    data['services']['api']['health'] = {'exec': ['check']}
+    data['services']['api']['endpoints'] = {
+        'z-admin': {'container_port': 9000, 'host_port': 9000},
+        'a-public': {'container_port': 8080, 'host_port': 8081},
+    }
+    data['primary_endpoint'] = 'api.a-public'
+    archive = build_release(data, {'api': API_IMAGE, 'postgres': IMAGE}, 'v2.0.0', tmp_path)
+    release = unpack_release(archive, tmp_path / 'unpacked')
+    assert render_compose(release)['services']['api']['ports'] == ['127.0.0.1:8081:8080', '127.0.0.1:9000:9000']
+
+
+@pytest.mark.parametrize('version', ['v2.0.0', 'v2.0.1'])
+def test_shared_go_fixtures_are_current_python_packages(tmp_path, version):
+    from pathlib import Path
+    import yaml
+    fixture = Path(__file__).resolve().parents[1] / 'control-server/internal/artifacts/testdata/multiservice'
+    original = fixture / f'lifelog-{version}.tar.gz'
+    manifest = unpack_release(original, tmp_path / 'unpacked')
+    nodes = {**manifest['deployment']['services'], **manifest['deployment']['jobs']}
+    config = yaml.safe_load((fixture / f'{version}.source.yaml').read_text())
+    built = build_release(config, {key: node['image'] for key, node in nodes.items()}, version, tmp_path / 'build')
+    assert built.read_bytes() == original.read_bytes()

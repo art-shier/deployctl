@@ -239,6 +239,7 @@ func (s *Server) nodeWrap(h func(http.ResponseWriter, *http.Request, string) err
 }
 func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request, node string) error {
 	var in struct {
+		Capabilities    []string             `json:"capabilities"`
 		Metrics         *domain.NodeMetrics  `json:"metrics"`
 		AgentVersion    string               `json:"agent_version"`
 		Platform        string               `json:"platform"`
@@ -248,7 +249,7 @@ func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request, node stri
 	if err := decode(w, r, &in); err != nil {
 		return err
 	}
-	enabled, instances, err := s.store.HeartbeatNode(r.Context(), node, in.AgentVersion, in.Platform, in.DockerAvailable, in.Instances, in.Metrics)
+	enabled, instances, err := s.store.HeartbeatNodeCapabilities(r.Context(), node, in.AgentVersion, in.Platform, in.DockerAvailable, in.Instances, in.Capabilities, in.Metrics)
 	if err != nil {
 		return err
 	}
@@ -336,7 +337,7 @@ func (s *Server) nodeTaskRegistry(w http.ResponseWriter, r *http.Request, node s
 	if err != nil {
 		return err
 	}
-	repository := strings.Split(release.Image, "@")[0]
+	repository := release.ImageRepository()
 	host, path, ok := strings.Cut(repository, "/")
 	if !ok {
 		return domain.ErrInvalid

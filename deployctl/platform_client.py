@@ -49,24 +49,57 @@ def validate_defaults(value):
     return dict(value)
 
 
+def release_images(release):
+    """Read image inventory without silently treating a stack as one image."""
+    if 'images' not in release:
+        image = release.get('image')
+        if not isinstance(image, str) or not DIGEST_IMAGE.fullmatch(image):
+            raise ValueError('invalid resolved image')
+        return {'app': image}
+    images = release['images']
+    if 'image' in release or not isinstance(images, dict) or not 1 <= len(images) <= 64:
+        raise ValueError('invalid resolved image inventory')
+    for name, image in images.items():
+        validate_name(name, 'service', 48)
+        if not isinstance(image, str) or not DIGEST_IMAGE.fullmatch(image):
+            raise ValueError('invalid resolved service image')
+    return dict(images)
+
+
+def release_matches(manifest, resolution):
+    if (manifest['application'], manifest['version']) != (resolution['project'], resolution['release']['version']):
+        return False
+    if manifest['schema_version'] == 3:
+        if resolution['schema_version'] != 3:
+            return False
+        d = manifest['deployment']
+        actual = {name: node['image'] for name, node in {**d['services'], **d['jobs']}.items()}
+        return actual == release_images(resolution['release'])
+    return resolution['schema_version'] == 1 and manifest['image'] == resolution['release'].get('image')
+
+
 def validate_resolution(value, project, environment=None, requested_version=None):
     static=isinstance(value,dict) and type(value.get('schema_version')) is int and value['schema_version']==2
+    multi=isinstance(value,dict) and type(value.get('schema_version')) is int and value['schema_version']==3
     fields={'schema_version','minimum_client_version','project','environment','release','configuration'}
+    if multi:fields.add('capabilities')
     if static:fields.add('deployment_type')
     mapping(value,fields,fields,'resolution')
-    if type(value['schema_version']) is not int or value['schema_version'] not in (1,2) or value['project']!=project or static and value['deployment_type']!='static':
+    if type(value['schema_version']) is not int or value['schema_version'] not in (1,2,3) or value['project']!=project or static and value['deployment_type']!='static':
         raise ValueError('unsupported or mismatched resolution')
+    if multi and (value['capabilities'] != ['multi_service_v1'] or value['minimum_client_version'] != '1.20.0'):
+        raise ValueError('unsupported multi-service resolution capability/version')
     minimum = value['minimum_client_version']
     if not isinstance(minimum,str) or not re.fullmatch(r'\d+\.\d+\.\d+', minimum) or tuple(map(int,minimum.split('.')))>tuple(map(int,__version__.split('.'))):
         raise ValueError('platform requires a newer CLI')
     validate_name(value['environment'],'environment',32)
     if environment and value['environment']!=environment: raise ValueError('resolution environment mismatch')
     release_fields={'id','version','package_path','sha256'}
-    release_fields.update({'archive_format','size','expanded_size','entry_count','commit'} if static else {'image'})
+    release_fields.update({'archive_format','size','expanded_size','entry_count','commit'} if static else ({'images'} if multi else {'image'}))
     release = mapping(value['release'],release_fields,release_fields,'release')
     validate_id(release['id']); version(release['version'])
     if requested_version and release['version']!=requested_version: raise ValueError('resolution version mismatch')
-    if not static and (not isinstance(release['image'],str) or not DIGEST_IMAGE.fullmatch(release['image'])): raise ValueError('invalid resolved image')
+    if not static: release_images(release)
     if release['package_path']!=f"/api/v1/projects/{project}/artifacts/{release['id']}": raise ValueError('invalid artifact path')
     if not isinstance(release['sha256'],str) or not re.fullmatch('[a-f0-9]{64}', release['sha256']): raise ValueError('invalid checksum')
     if static:
@@ -80,6 +113,16 @@ def validate_resolution(value, project, environment=None, requested_version=None
         validate_id(cfg['id']);integer(cfg['revision'],1,2**63-1,'configuration revision')
         defaults=mapping(cfg['deployment_defaults'],{'target_dir'},set(),'static defaults')
         if 'target_dir' in defaults:validate_target_dir(defaults['target_dir'])
+        return value
+    if multi:
+        fields = {'id', 'revision', 'config', 'secrets', 'install_params', 'deployment_defaults'}
+        cfg = mapping(value['configuration'], fields, fields, 'service configuration')
+        validate_id(cfg['id']); integer(cfg['revision'], 1, 2**63-1, 'configuration revision')
+        validate_values(cfg['config'], 'managed config'); validate_values(cfg['secrets'], 'managed secrets')
+        if set(cfg['config']) & set(cfg['secrets']):
+            raise ValueError('ambiguous configuration/secret classification')
+        validate_values(cfg['install_params'], 'managed install parameters', False)
+        validate_defaults(cfg['deployment_defaults'])
         return value
     cfg = mapping(value['configuration'], {'id','revision','runtime_env','install_params','deployment_defaults'}, {'id','revision','runtime_env','install_params','deployment_defaults'}, 'configuration')
     validate_id(cfg['id']); integer(cfg['revision'],1,2**63-1,'configuration revision')
@@ -163,7 +206,7 @@ class PlatformClient:
         from .release import unpack_release
         with tempfile.TemporaryDirectory(prefix='verify-',dir=cache) as folder:
             manifest=unpack_release(path,Path(folder)/'package')
-        if (manifest['application'],manifest['version'],manifest['image'])!=(resolution['project'],resolution['release']['version'],resolution['release']['image']):
+        if not release_matches(manifest, resolution):
             raise ValueError('resolved release does not match package')
         return path
 
@@ -275,6 +318,13 @@ class PlatformClient:
         release['package_path']=f"/api/v1/projects/{project}/artifacts/{release['id']}"
         resolution={'schema_version':1,'minimum_client_version':'1.7.0','project':project,'environment':'recovery',
                     'release':release,'configuration':{'id':'0'*32,'revision':1,'runtime_env':{},'install_params':{},'deployment_defaults':{}}}
+        if type(record.get('schema_version')) is int and record['schema_version'] == 3:
+            release.pop('image')
+            release['images'] = record.get('images')
+            resolution.update(schema_version=3, minimum_client_version=record.get('minimum_deployctl_version'),
+                              capabilities=record.get('capabilities'))
+            resolution['configuration'].pop('runtime_env')
+            resolution['configuration'].update(config={}, secrets={})
         validate_resolution(resolution,project,'recovery',release_version)
         with tempfile.TemporaryDirectory(prefix='ctl-resume-') as cache:
             path=self.download_release(resolution,cache)

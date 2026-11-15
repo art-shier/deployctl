@@ -149,6 +149,9 @@ func normalizeDeployment(value any, project string) (map[string]any, error) {
 	return map[string]any{"schema_version": 1, "application": project, "build": normalizedBuild, "container": map[string]any{"port": container["port"], "host_port": hostPort, "bind_address": bind}, "health": map[string]any{"readiness_path": path, "startup_timeout_seconds": timeout}, "resources": map[string]any{"memory_limit": memory, "cpus": cpu}, "required_config": required}, nil
 }
 func validateManifest(value any, project string, content map[string][]byte) (map[string]any, error) {
+	if m, ok := value.(map[string]any); ok && integer(m["schema_version"], 3, 3) {
+		return validateMultiManifest(value, project, content)
+	}
 	m, ok := mapping(value, "schema_version application version image commit minimum_deployctl_version deployment hooks", "schema_version application version image minimum_deployctl_version deployment")
 	if !ok || !integer(m["schema_version"], 1, 2) || m["application"] != project || domain.ValidateName(project, 48) != nil {
 		return nil, domain.ErrInvalid
@@ -220,6 +223,9 @@ func validateManifest(value any, project string, content map[string][]byte) (map
 	return m, nil
 }
 func renderCompose(m map[string]any) map[string]any {
+	if integer(m["schema_version"], 3, 3) {
+		return renderMultiCompose(m)
+	}
 	d := m["deployment"].(map[string]any)
 	container := d["container"].(map[string]any)
 	resource := d["resources"].(map[string]any)

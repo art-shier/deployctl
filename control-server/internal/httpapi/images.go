@@ -53,8 +53,11 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request, p auth.Principal
 	}
 	for i := range images {
 		for _, release := range releases {
-			if strings.HasSuffix(release.Image, "@"+images[i].Digest) {
-				images[i].Versions = append(images[i].Versions, release.Version)
+			for _, image := range release.ImageReferences() {
+				if strings.HasSuffix(image, "@"+images[i].Digest) {
+					images[i].Versions = append(images[i].Versions, release.Version)
+					break
+				}
 			}
 		}
 	}

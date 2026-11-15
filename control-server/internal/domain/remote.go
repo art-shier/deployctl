@@ -47,8 +47,9 @@ func (m NodeMetrics) Validate() error {
 }
 
 type Node struct {
-	Metrics   *NodeMetrics `json:"metrics"`
-	MetricsAt *time.Time   `json:"metrics_at"`
+	Capabilities []string     `json:"capabilities,omitempty"`
+	Metrics      *NodeMetrics `json:"metrics"`
+	MetricsAt    *time.Time   `json:"metrics_at"`
 
 	NodeInput
 	PendingAuthorization bool       `json:"pending_authorization"`

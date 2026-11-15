@@ -323,6 +323,13 @@ func observe(ctx context.Context, tx pgx.Tx, node string, o domain.Observation) 
 	return err
 }
 func (s *Store) HeartbeatNode(ctx context.Context, id, agent, platform string, docker bool, observations []domain.Observation, metrics ...*domain.NodeMetrics) (bool, []domain.Instance, error) {
+	return s.HeartbeatNodeCapabilities(ctx, id, agent, platform, docker, observations, nil, metrics...)
+}
+func (s *Store) HeartbeatNodeCapabilities(ctx context.Context, id, agent, platform string, docker bool, observations []domain.Observation, capabilities []string, metrics ...*domain.NodeMetrics) (bool, []domain.Instance, error) {
+	if domain.ValidateCapabilities(capabilities) != nil {
+		return false, nil, domain.ErrInvalid
+	}
+
 	if len(metrics) > 1 {
 		return false, nil, domain.ErrInvalid
 	}
@@ -356,6 +363,7 @@ func (s *Store) HeartbeatNode(ctx context.Context, id, agent, platform string, d
 	}
 	n.AgentVersion = agent
 	n.Platform = platform
+	n.Capabilities = append([]string(nil), capabilities...)
 	n.DockerAvailable = docker
 	b, _ := json.Marshal(n)
 	if _, err = tx.Exec(ctx, "UPDATE ctl_nodes SET data=$2 WHERE id=$1", id, b); err != nil {
@@ -401,7 +409,7 @@ func remotePrincipal(ctx context.Context, tx pgx.Tx, actor string) (auth.Princip
 	}
 	return auth.Principal{ID: t.ID, Role: t.Role, Project: t.Project, Projects: t.Projects, ExplicitProjects: t.Projects, Groups: t.Groups, ExcludedProjects: t.ExcludedProjects, Environments: t.Environments}, nil
 }
-func remoteAuthorization(ctx context.Context, tx pgx.Tx, n domain.Node, t domain.Task) error {
+func (s *Store) remoteAuthorization(ctx context.Context, tx pgx.Tx, n domain.Node, t domain.Task) error {
 	p, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL FOR SHARE", t.Project))
 	if err != nil {
 		return err
@@ -417,6 +425,25 @@ func remoteAuthorization(ctx context.Context, tx pgx.Tx, n domain.Node, t domain
 		}
 		if instance.PendingTransaction {
 			return domain.ErrForbidden
+		}
+	}
+	if t.Action != "rollback" {
+		var ciphertext []byte
+		e := tx.QueryRow(ctx, "SELECT ciphertext FROM ctl_remote_tasks WHERE id=$1", t.ID).Scan(&ciphertext)
+		if e == nil {
+			raw, e := s.cipher.Open(ciphertext, "ctl-remote-task/"+t.ID)
+			if e != nil {
+				return e
+			}
+			var frozen frozenTask
+			if e = json.Unmarshal(raw, &frozen); e != nil {
+				return e
+			}
+			if !n.SupportsRelease(frozen.Resolved.Release) {
+				return domain.ErrForbidden
+			}
+		} else if !errors.Is(e, pgx.ErrNoRows) {
+			return e
 		}
 	}
 	if !n.Allows(p, t.Environment) || !principal.CanInGroup("resolve", p.Slug, p.Group, t.Environment) {
@@ -481,7 +508,7 @@ func (s *Store) CreateTask(ctx context.Context, project string, request domain.T
 	}
 	task = domain.Task{ID: domain.NewID(), NodeID: n.ID, Project: project, Environment: request.Environment, Action: request.Action, Actor: principal.ID, RequestID: request.RequestID, Status: "queued", Stage: "accepted", CreatedAt: time.Now().UTC()}
 	task.UpdatedAt = task.CreatedAt
-	if err = remoteAuthorization(ctx, tx, n, task); err != nil {
+	if err = s.remoteAuthorization(ctx, tx, n, task); err != nil {
 		return task, err
 	}
 	p, err := scanProject(tx.QueryRow(ctx, "SELECT data FROM ctl_projects WHERE slug=$1 AND deleted_at IS NULL", project))
@@ -524,6 +551,9 @@ func (s *Store) CreateTask(ctx context.Context, project string, request domain.T
 		if e != nil {
 			return task, e
 		}
+		if !n.SupportsRelease(release) {
+			return task, domain.ErrForbidden
+		}
 		frozen.Resolved = Resolved{Project: p, Revision: rev, Release: release}
 		task.Version = release.Version
 	}
@@ -559,7 +589,7 @@ func (s *Store) agentTask(ctx context.Context, tx pgx.Tx, t domain.Task) (domain
 	out.BindAddress = f.Request.BindAddress
 	if t.Action != "rollback" {
 		r, v := f.Resolved.Release, f.Resolved.Revision
-		out.Resolution = map[string]any{"schema_version": 1, "minimum_client_version": "1.7.0", "project": t.Project, "environment": t.Environment, "release": map[string]any{"id": r.ID, "version": r.Version, "image": r.Image, "sha256": r.SHA256, "package_path": "/api/v1/node/tasks/" + t.ID + "/package"}, "configuration": map[string]any{"id": v.ID, "revision": v.Revision, "runtime_env": domain.Values(v.Configuration.RuntimeEnv), "install_params": domain.Values(v.Configuration.InstallParams), "deployment_defaults": v.Configuration.DeploymentDefaults}}
+		out.Resolution = r.DockerResolution(t.Environment, "/api/v1/node/tasks/"+t.ID+"/package", v)
 	}
 	return out, nil
 }
@@ -590,7 +620,7 @@ func (s *Store) PollNode(ctx context.Context, node string) (*domain.AgentTask, e
 			}
 			if time.Since(t.CreatedAt) >= 24*time.Hour {
 				finishTask(&t, "expired")
-			} else if e := remoteAuthorization(ctx, tx, n, t); e != nil {
+			} else if e := s.remoteAuthorization(ctx, tx, n, t); e != nil {
 				if !remoteDenied(e) {
 					return nil, e
 				}
@@ -643,7 +673,7 @@ func (s *Store) PollNode(ctx context.Context, node string) (*domain.AgentTask, e
 	for _, t = range queue {
 		if time.Since(t.CreatedAt) >= 24*time.Hour {
 			finishTask(&t, "expired")
-		} else if e := remoteAuthorization(ctx, tx, n, t); e != nil {
+		} else if e := s.remoteAuthorization(ctx, tx, n, t); e != nil {
 			if !remoteDenied(e) {
 				return nil, e
 			}
@@ -699,7 +729,7 @@ func (s *Store) StartNodeTask(ctx context.Context, node, id string) (domain.Agen
 			}
 			return out, domain.ErrConflict
 		}
-		if err = remoteAuthorization(ctx, tx, n, t); err != nil {
+		if err = s.remoteAuthorization(ctx, tx, n, t); err != nil {
 			if !remoteDenied(err) {
 				return out, err
 			}
@@ -840,7 +870,7 @@ func (s *Store) NodeTaskMaterial(ctx context.Context, node, id string) (domain.R
 		if time.Since(t.CreatedAt) >= 24*time.Hour {
 			return release, domain.ErrConflict
 		}
-		if err = remoteAuthorization(ctx, tx, n, t); err != nil {
+		if err = s.remoteAuthorization(ctx, tx, n, t); err != nil {
 			return release, err
 		}
 	}
@@ -902,7 +932,7 @@ func (s *Store) invalidateUnstartedTasks(ctx context.Context, tx pgx.Tx, n domai
 	for _, t := range tasks {
 		if time.Since(t.CreatedAt) >= 24*time.Hour {
 			finishTask(&t, "expired")
-		} else if e := remoteAuthorization(ctx, tx, n, t); e != nil {
+		} else if e := s.remoteAuthorization(ctx, tx, n, t); e != nil {
 			if !remoteDenied(e) {
 				return e
 			}

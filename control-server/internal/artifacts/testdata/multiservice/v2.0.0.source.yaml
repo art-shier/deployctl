@@ -1,0 +1,40 @@
+application: lifelog
+platform: linux/amd64
+primary_endpoint: api.http
+schema_version: 2
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres: healthy
+    endpoints:
+      http:
+        container_port: 8080
+        host_port: 8081
+    environment:
+      DB_HOST:
+        literal: postgres
+      DB_PASSWORD:
+        secret: db_password
+    health:
+      http: /health/ready
+    lifecycle: application
+  postgres:
+    health:
+      exec:
+      - pg_isready
+      - -U
+      - postgres
+    image: registry.example/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    lifecycle: persistent
+    mirror: project
+    permission_profile: database-init
+    secret_files:
+      pg_password: /run/secrets/pg-password
+    volumes:
+      data: /var/lib/postgresql
+volumes:
+  data:
+    retain: true

@@ -18,7 +18,7 @@ from . import __version__
 from .host_metrics import HostMetrics
 from .node_logs import NodeLogs
 from .contract import validate_name
-from .platform_client import PlatformClient, PlatformError, validate_defaults, validate_origin, validate_resolution, validate_token
+from .platform_client import PlatformClient, PlatformError, validate_defaults, validate_origin, validate_resolution, validate_token, release_images
 from .platform_credentials import Credentials
 from .progress import Progress
 from .runtime import DockerDriver, Manager, http_ready, project_name, service_lock
@@ -204,7 +204,10 @@ class RuntimeExecutor:
         if not token:
             yield None
             return
-        image_host = task['resolution']['release']['image'].split('/')[0]
+        hosts = {image.split('/')[0] for image in release_images(task['resolution']['release']).values()}
+        if len(hosts) != 1:
+            raise ValueError('task registry inventory spans multiple hosts')
+        image_host = next(iter(hosts))
         if credentials.get('registry_host') != image_host or not isinstance(token, str) or len(token) > 16384:
             raise ValueError('task registry identity mismatch')
         with tempfile.TemporaryDirectory(prefix='ctl-node-registry-') as folder:

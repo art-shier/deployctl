@@ -87,7 +87,7 @@ def render_multiservice_compose(release):
             service['profiles'] = ['jobs']
         else:
             if node['endpoints']:
-                service['ports'] = [f"{e['bind_address']}:{e['host_port']}:{e['container_port']}" for e in node['endpoints'].values()]
+                service['ports'] = [f"{e['bind_address']}:{e['host_port']}:{e['container_port']}" for _, e in sorted(node['endpoints'].items())]
             if 'exec' in node['health']:
                 service['healthcheck'] = {'test': ['CMD', *[arg.replace('$', '$$') for arg in node['health']['exec']]], 'interval': '5s', 'timeout': '5s', 'retries': 12}
         compose['services'][name] = service

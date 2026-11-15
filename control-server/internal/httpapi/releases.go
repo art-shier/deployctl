@@ -164,18 +164,20 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, p auth.Principa
 		if project.DeploymentType == "static" {
 			return artifacts.PublishTempFile(s.options.ArtifactsDir, temporary, pack.Release)
 		}
-		var err error
-		if proof != "" {
-			verifier, ok := s.options.Verifier.(ProofManifestVerifier)
-			if !ok {
-				return domain.ErrInvalid
+		for _, image := range pack.Release.ImageReferences() {
+			var err error
+			if proof != "" {
+				verifier, ok := s.options.Verifier.(ProofManifestVerifier)
+				if !ok {
+					return domain.ErrInvalid
+				}
+				err = verifier.CheckManifestWithToken(r.Context(), image, project.ImageRepository, proof)
+			} else {
+				err = s.options.Verifier.CheckManifest(r.Context(), image, project.ImageRepository)
 			}
-			err = verifier.CheckManifestWithToken(r.Context(), pack.Release.Image, project.ImageRepository, proof)
-		} else {
-			err = s.options.Verifier.CheckManifest(r.Context(), pack.Release.Image, project.ImageRepository)
-		}
-		if err != nil {
-			return err
+			if err != nil {
+				return err
+			}
 		}
 		return artifacts.PublishFile(s.options.ArtifactsDir, *pack)
 	}
@@ -233,10 +235,7 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request, p auth.Principa
 		})
 		return nil
 	}
-	reply(w, 200, map[string]any{"schema_version": 1, "minimum_client_version": "1.7.0", "project": slug, "environment": body.Environment,
-		"release":       map[string]any{"id": release.ID, "version": release.Version, "image": release.Image, "package_path": "/api/v1/projects/" + slug + "/artifacts/" + release.ID, "sha256": release.SHA256},
-		"configuration": map[string]any{"id": rev.ID, "revision": rev.Revision, "runtime_env": domain.Values(rev.Configuration.RuntimeEnv), "install_params": domain.Values(rev.Configuration.InstallParams), "deployment_defaults": rev.Configuration.DeploymentDefaults},
-	})
+	reply(w, 200, release.DockerResolution(body.Environment, "/api/v1/projects/"+slug+"/artifacts/"+release.ID, rev))
 	return nil
 }
 func (s *Server) artifact(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
