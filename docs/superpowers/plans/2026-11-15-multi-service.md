@@ -84,3 +84,12 @@ Files: final review report; Lifelog deployment declaration, release workflow and
 
 ## Execution ledger
 2026-11-15: Design approved by user '继续'. Existing isolated ctl worktree clean at 3f16662; implementation begins here. Ruling: native execution selected using developer autonomy instruction; no repeated execution-method approval. No production mutations until tested release and concrete cutover preparation.
+
+2026-11-15 implementation checkpoint:
+- Source contract validator complete locally: valid normalization, typed DAG and rejection tests (2d620d3).
+- Package generation/extraction and JSON schemas implemented (5d2c506); CI/mirror and Go parity still outstanding, so Task 2 is not complete.
+- Pure plans and protected stable service bundles implemented (66108c4); manager integration and observed identity reconciliation still outstanding.
+- Targeted executor and Docker adapter under development; only fake-driver tests executed, no real Docker evidence yet.
+- Focused contracts/package/config tests: 56 passed + 30 subtests. Local Python test env /private/tmp/ctl-multiservice-venv; use TMPDIR=/private/tmp to avoid macOS /var symlink rejection. Broad suite reached 82 passes before pre-existing process-group cleanup PermissionError on macOS; do not alter unrelated signal code to mask environment failure.
+- Docker binary unavailable locally; Linux Docker validation required before shipping. No production changes or published version.
+- Ruling: planned schema-3 minimum version is 1.20.0 with multi_service_v1 capability; this is a candidate floor, not a released-version claim. Confirm release numbering before publication.
