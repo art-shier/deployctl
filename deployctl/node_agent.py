@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import signal
 import stat
 import sys
@@ -108,6 +109,17 @@ def validate_task(value, node_id):
     validate_name(value.get('environment'), 'environment', 32)
     overrides = {k: value[k] for k in ('host_port', 'bind_address') if value.get(k) is not None}
     validate_defaults(overrides)
+    sources, requested = value.get('job_sources', {}), value.get('requested_jobs', [])
+    if not isinstance(sources, dict) or len(sources) > 128 or not isinstance(requested, list) or len(requested) > 128:
+        raise ValueError('invalid job inputs')
+    for name, digest in sources.items():
+        validate_name(name)
+        if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
+            raise ValueError('invalid job source identity')
+    for name in requested: validate_name(name)
+    if len(set(requested)) != len(requested): raise ValueError('duplicate selected job')
+    if (sources or requested) and (value['action'] == 'rollback' or (value.get('resolution') or {}).get('schema_version') != 3):
+        raise ValueError('job inputs require a multi-service deployment')
     if value['action'] == 'rollback':
         if value.get('resolution') or overrides:
             raise ValueError('rollback must use local verified snapshot')
@@ -127,7 +139,11 @@ def validate_task(value, node_id):
 def fingerprint(task):
     fields = ('id', 'node_id', 'instance_id', 'project', 'environment', 'action',
               'resolution', 'host_port', 'bind_address', 'version')
-    return hashlib.sha256(json.dumps({k: task.get(k) for k in fields}, sort_keys=True).encode()).hexdigest()
+    frozen = {k: task.get(k) for k in fields}
+    # Keep old pending-task fingerprints stable when there are no job inputs.
+    for key in ('job_sources', 'requested_jobs'):
+        if task.get(key): frozen[key] = task[key]
+    return hashlib.sha256(json.dumps(frozen, sort_keys=True).encode()).hexdigest()
 
 
 def task_instance(task):
@@ -240,6 +256,9 @@ class RuntimeExecutor:
                         try:
                             configuration = ({'managed_configuration': {'config': cfg['config'], 'secrets': cfg['secrets']}}
                                              if resolution['schema_version'] == 3 else {'managed_runtime': cfg['runtime_env']})
+                            if task.get('job_sources') or task.get('requested_jobs'):
+                                configuration.update(job_sources=task.get('job_sources', {}),
+                                                     requested_jobs=task.get('requested_jobs', []))
                             manager.deploy(task['project'], task['environment'], package,
                                 upgrade=task['action'] == 'upgrade', port=task.get('host_port'),
                                 bind=task.get('bind_address'), **configuration,

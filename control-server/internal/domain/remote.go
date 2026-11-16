@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+var jobSourceDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
 var remoteID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 type NodeInput struct {
@@ -126,16 +128,37 @@ func (o Observation) Validate() error {
 }
 
 type TaskRequest struct {
-	NodeID      string  `json:"node_id"`
-	Environment string  `json:"environment"`
-	Action      string  `json:"action"`
-	Version     string  `json:"version,omitempty"`
-	RequestID   string  `json:"request_id"`
-	HostPort    *int    `json:"host_port,omitempty"`
-	BindAddress *string `json:"bind_address,omitempty"`
+	JobSources    map[string]string `json:"job_sources,omitempty"`
+	RequestedJobs []string          `json:"requested_jobs,omitempty"`
+	NodeID        string            `json:"node_id"`
+	Environment   string            `json:"environment"`
+	Action        string            `json:"action"`
+	Version       string            `json:"version,omitempty"`
+	RequestID     string            `json:"request_id"`
+	HostPort      *int              `json:"host_port,omitempty"`
+	BindAddress   *string           `json:"bind_address,omitempty"`
 }
 
 func (r TaskRequest) Validate() error {
+	if len(r.JobSources) > 128 || len(r.RequestedJobs) > 128 {
+		return ErrInvalid
+	}
+	for name, digest := range r.JobSources {
+		if ValidateName(name, 48) != nil || !jobSourceDigest.MatchString(digest) {
+			return ErrInvalid
+		}
+	}
+	seen := map[string]bool{}
+	for _, name := range r.RequestedJobs {
+		if ValidateName(name, 48) != nil || seen[name] {
+			return ErrInvalid
+		}
+		seen[name] = true
+	}
+	if r.Action == "rollback" && (len(r.JobSources) > 0 || len(r.RequestedJobs) > 0) {
+		return ErrInvalid
+	}
+
 	if !remoteID.MatchString(r.NodeID) || !remoteID.MatchString(r.RequestID) || ValidateName(r.Environment, 32) != nil || !slices.Contains([]string{"install", "upgrade", "rollback"}, r.Action) {
 		return ErrInvalid
 	}
@@ -183,6 +206,8 @@ type Task struct {
 	Result      *TaskResult `json:"result"`
 }
 type AgentTask struct {
+	JobSources    map[string]string `json:"job_sources,omitempty"`
+	RequestedJobs []string          `json:"requested_jobs,omitempty"`
 	Task
 	Resolution  map[string]any `json:"resolution,omitempty"`
 	HostPort    *int           `json:"host_port"`

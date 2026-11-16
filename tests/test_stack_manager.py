@@ -335,3 +335,20 @@ def test_cli_forwards_explicit_job_source_without_changing_install_command(runti
     assert preview.call_args.kwargs['job_sources'] == {'restore':'a'*64}
     assert preview.call_args.kwargs['requested_jobs'] == ['restore']
     assert not engine.calls
+
+
+def test_agent_forwards_source_identity_and_runs_restore_once(runtime, tmp_path):
+    from deployctl.node_agent import RuntimeExecutor
+    from unittest.mock import Mock
+    manager, engine = runtime
+    client = Mock(); client.server = 'https://ctl.test'; client.download_release.return_value = job_package(tmp_path)
+    client.json.return_value = {'registry_host':'registry.example', 'token':''}
+    cfg = {'id':'b'*32, 'revision':1, **values(), 'install_params':{}, 'deployment_defaults':{}}
+    cfg['secrets']['RESTORE_TOKEN'] = 'bootstrap-only-key'
+    task = {'id':'a'*32, 'instance_id':'c'*32, 'action':'install', 'project':'lifelog', 'environment':'prod',
+            'job_sources':{'restore':'a'*64}, 'requested_jobs':['restore'],
+            'resolution':{'schema_version':3, 'configuration':cfg, 'release':{'id':'d'*32}}}
+    with patch('deployctl.stack_jobs.JobDockerAdapter', JobAdapter):
+        result = RuntimeExecutor(manager, client).execute(task, lambda stage: None)
+    assert result['health'] == 'healthy'
+    assert [call for call in engine.calls if call[0]=='job'] == [('job','restore')]

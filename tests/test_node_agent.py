@@ -374,3 +374,19 @@ class AgentTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_job_inputs_are_part_of_frozen_task_identity():
+    original = task()
+    changed = copy.deepcopy(original)
+    changed['job_sources'] = {'restore':'a'*64}
+    assert agent.fingerprint(original) != agent.fingerprint(changed)
+    changed = copy.deepcopy(original); changed['requested_jobs'] = ['restore']
+    assert agent.fingerprint(original) != agent.fingerprint(changed)
+
+
+def test_legacy_task_cannot_accept_job_inputs():
+    import pytest
+    original = task(); original['job_sources'] = {'restore':'a'*64}
+    with pytest.raises(ValueError, match='multi-service'):
+        agent.validate_task(original, NODE)

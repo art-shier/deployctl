@@ -551,6 +551,10 @@ func (s *Store) CreateTask(ctx context.Context, project string, request domain.T
 		if e != nil {
 			return task, e
 		}
+		if release.SchemaVersion != 3 && (len(request.JobSources) > 0 || len(request.RequestedJobs) > 0) {
+			return task, domain.ErrInvalid
+		}
+
 		if !n.SupportsRelease(release) {
 			return task, domain.ErrForbidden
 		}
@@ -585,6 +589,8 @@ func (s *Store) agentTask(ctx context.Context, tx pgx.Tx, t domain.Task) (domain
 	if err = json.Unmarshal(b, &f); err != nil {
 		return out, err
 	}
+	out.JobSources = f.Request.JobSources
+	out.RequestedJobs = f.Request.RequestedJobs
 	out.HostPort = f.Request.HostPort
 	out.BindAddress = f.Request.BindAddress
 	if t.Action != "rollback" {
