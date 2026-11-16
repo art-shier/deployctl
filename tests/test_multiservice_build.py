@@ -181,3 +181,30 @@ def test_component_build_overrides_are_scoped_and_literal(tmp_path):
     assert 'VERSION' not in config['services']['api']['build']['args']
     with pytest.raises(ValueError): component_build_args(config, '{"postgres":{"VERSION":"v1"}}')
     with pytest.raises(ValueError): component_build_args(config, '{"missing":{"VERSION":"v1"}}')
+
+
+def test_reusable_workflow_builds_prepared_component_arguments(tmp_path,monkeypatch):
+    from pathlib import Path
+    import types,yaml
+    from scripts import prepare_build, build_multiservice
+    monkeypatch.chdir(tmp_path)
+    (tmp_path/'Dockerfile').write_text('FROM scratch\n')
+    (tmp_path/'deployment.yaml').write_text(yaml.safe_dump(source()))
+    env={'DEPLOYMENT_FILE':'deployment.yaml','RELEASE_VERSION':'v1.2.3','REGISTRY':'registry.example',
+         'IMAGE_NAME':'project','GITHUB_REPOSITORY':'team/project','GITHUB_OUTPUT':str(tmp_path/'output'),
+         'BUILD_ARGS':'','SERVICE_BUILD_ARGS':'{"api":{"VERSION":"v1.2.3"}}'}
+    for key,value in env.items(): monkeypatch.setenv(key,value)
+    assert prepare_build.main()==0
+    workflow=yaml.safe_load((Path(__file__).resolve().parents[1]/'.github/workflows/build-release.yml').read_text())
+    step=next(s for s in workflow['jobs']['release']['steps'] if s.get('id')=='multi')
+    monkeypatch.setenv('DEPLOYMENT_FILE',step['env']['DEPLOYMENT_FILE'])
+    monkeypatch.setenv('IMAGE_REPOSITORY','registry.example/project')
+    seen=[]
+    class Tools:
+        def build(self,build,tag,platform):
+            seen.append(build['args']);return 'registry.example/project@sha256:'+'c'*64
+        def mirror(self,*args):return 'registry.example/project@sha256:'+'a'*64
+    monkeypatch.setattr(build_multiservice,'ImageTools',lambda *args:Tools())
+    monkeypatch.setattr(build_multiservice.subprocess,'run',lambda *args,**kwargs:types.SimpleNamespace(stdout='f'*40))
+    assert build_multiservice.main()==0
+    assert seen==[{'VERSION':'v1.2.3'}]

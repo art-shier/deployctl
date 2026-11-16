@@ -420,7 +420,10 @@ class StackManager:
                     if not info['container_id']: raise ValueError('rollback container missing')
                     prior.update(info)
                 continue
-            if not info['container_id']: continue
+            if not info['container_id']:
+                if prior and prior['lifecycle']=='persistent' and name in journal.get('maintenance',{}).get('services',[]):
+                    prior.update(container_id=None,running=False,healthy=False)
+                continue
             spec = snapshot.release['deployment']['services'][name]
             state['services'][name] = dict(info,lifecycle=spec['lifecycle'],snapshot=snapshot.ref,
                 fingerprint=service_fingerprint(spec,snapshot.values))
@@ -495,7 +498,7 @@ class StackManager:
                 raise ValueError('rollback target requires maintenance or recovery')
             state['transaction'] = {'target':snapshot.ref,'origin':state['current'],'journal':{
                 'id':uuid.uuid4().hex,'phase':'retiring','action':None,'previous':copy.deepcopy(state['services']),
-                'attempted':[],'completed':[],'jobs':{},'rollback_barrier':False,'retiring':extras}}
+                'attempted':[],'completed':[],'jobs':{},'rollback_barrier':True,'retiring':extras}}
             self.save(state)
             return self.finish_retirement(state)
         return self.apply(state, snapshot)

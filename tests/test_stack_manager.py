@@ -565,3 +565,40 @@ def test_rollback_stops_added_application_and_later_upgrade_reuses_its_inventory
     assert not engine.containers['worker']['running']
     install(manager,added,upgrade=True)
     assert engine.containers['worker']['running'] and engine.containers['postgres']==pg
+
+
+def test_maintenance_reconciles_missing_container_only_with_durable_recreation_intent(runtime,tmp_path):
+    from deployctl.service_state import write_inventory
+    manager,engine=runtime;install(manager,package(tmp_path))
+    cfg=source();cfg['services']['postgres']['resources']={'memory_limit':'768m'}
+    target=build_release(cfg,{'api':API_IMAGE,'postgres':IMAGE},'v2.1.0',tmp_path/'maintenance-gap')
+    request={'services':['postgres'],'backup_sha256':'a'*64}
+    plan=manager.plan('lifelog','prod',target,upgrade=True,managed_configuration=values(),maintenance=request)
+    request['plan_id']=plan['maintenance']['plan_id'];home,_=manager.paths('lifelog','prod');durable=[]
+    original=Adapter.up
+    def interrupted(adapter,name):
+        if name=='postgres':
+            durable.append(manager.state(home,'lifelog','prod'))
+            engine.containers.pop(name)
+            raise RuntimeError('removed before create')
+        return original(adapter,name)
+    with patch.object(Adapter,'up',interrupted),pytest.raises(RuntimeError):
+        install(manager,target,upgrade=True,maintenance=request)
+    write_inventory(home/'state.json',durable[-1])
+    result=manager.recover('lifelog','prod',durable[-1]['transaction']['journal']['id'])
+    assert result['transaction'] is None and result['services']['postgres']['healthy']
+
+
+def test_failed_rollback_retirement_keeps_pending_recovery(runtime,tmp_path):
+    manager,engine=runtime;install(manager,package(tmp_path))
+    cfg=source();cfg['services']['worker']=copy.deepcopy(cfg['services']['api'])
+    cfg['services']['worker'].pop('endpoints',None);cfg['services']['worker']['health']={'exec':['true']}
+    newer=build_release(cfg,{'api':API_IMAGE.replace('b'*64,'c'*64),'postgres':IMAGE,'worker':API_IMAGE},'v2.1.0',tmp_path/'retire-failure')
+    install(manager,newer,upgrade=True);engine.fail='v2.0.0'
+    with pytest.raises(RuntimeError): manager.rollback('lifelog','prod')
+    home,_=manager.paths('lifelog','prod');pending=manager.state(home,'lifelog','prod')
+    assert pending['transaction'] and pending['transaction']['journal']['rollback_barrier']
+    engine.fail=None
+    result=manager.recover('lifelog','prod',pending['transaction']['journal']['id'])
+    assert result['current']['version']=='v2.0.0' and result['transaction'] is None
+    assert not engine.containers['worker']['running']

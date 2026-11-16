@@ -196,7 +196,10 @@ class NodeLogs:
             from .stack_jobs import JobDockerAdapter
             stack = StackManager(manager, home, self.config_root / project / environment, project, environment)
             if service is None:
-                service = next((name for name,item in state['services'].items() if item['lifecycle']=='application'), None)
+                result = []
+                for name,item in state['services'].items():
+                    if not item.get('retired'): result.extend(self.containers(project,environment,name))
+                return result
             if service in state['services']:
                 item = state['services'][service]
                 snapshot = stack.load(item['snapshot'])
@@ -212,7 +215,7 @@ class NodeLogs:
                 identity = driver.inspect('container',adapter.name(item['container']))['Id']
             else: raise ValueError('unknown managed log service')
             if not identity: return []
-            return [{'id':identity, 'version':snapshot.ref['version'], '_secrets':list(snapshot.values['secrets'].values())}]
+            return [{'id':identity, 'version':snapshot.ref['version'], 'service':service, '_secrets':list(snapshot.values['secrets'].values())}]
         if service not in (None,'app'): raise ValueError('legacy deployment has only app logs')
         output, truncated = bounded_command(['docker', 'ps', '-a', '--filter',
             'label=com.docker.compose.project=' + project_name(project, environment), '--filter',
@@ -358,9 +361,17 @@ class NodeLogs:
                     result['error'] = 'container_unavailable'
                     return result
                 # Runtime query targets the managed app container, never a supplied ID.
-                if len(containers) != 1:
+                if len(containers) != 1 and not all(item.get('service') for item in containers):
                     raise RuntimeError('ambiguous_container')
-                text, clipped = self.runtime_text(containers[0], request)
+                chunks=[]; clipped=False; remaining=QUERY_BYTES
+                for item in containers:
+                    if remaining <= 1024:
+                        clipped=True; break
+                    part, shortened = self.runtime_text(item,request,remaining-256)
+                    if len(containers)>1: part='['+item['service']+']\n'+part
+                    chunks.append(part); remaining -= len(part.encode())+1
+                    clipped = clipped or shortened
+                text='\n'.join(chunks)
                 # Docker tail may have omitted earlier lines; make that boundary explicit.
                 clipped = clipped or len(text.splitlines()) >= request.get('tail', 200)
             result['text'], limited = select_text(text, request)
