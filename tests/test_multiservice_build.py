@@ -139,3 +139,33 @@ def test_multi_build_args_override_rejected_before_workflow_outputs(tmp_path,mon
         monkeypatch.setenv(key,value)
     assert main()==1
     assert not (tmp_path/'outputs').exists()
+
+
+@pytest.mark.parametrize('fail',[False,True])
+def test_workflow_entrypoint_publishes_only_complete_inventory(tmp_path,monkeypatch,fail):
+    import types,yaml
+    from scripts import build_multiservice as entry
+    from deployctl.release import unpack_release
+    monkeypatch.chdir(tmp_path)
+    (tmp_path/'Dockerfile').write_text('FROM scratch\n')
+    (tmp_path/'deployment.yaml').write_text(yaml.safe_dump(source()))
+    for key,value in {'DEPLOYMENT_FILE':'deployment.yaml','RELEASE_VERSION':'v1.0.0',
+                      'IMAGE_REPOSITORY':'registry.example/project','GITHUB_OUTPUT':str(tmp_path/'outputs')}.items():
+        monkeypatch.setenv(key,value)
+    class Tools:
+        def build(self,*args): return 'registry.example/project@sha256:'+'c'*64
+        def mirror(self,*args):
+            if fail: raise RuntimeError('registry unavailable')
+            return 'registry.example/project@sha256:'+'a'*64
+    monkeypatch.setattr(entry,'ImageTools',lambda *args:Tools())
+    monkeypatch.setattr(entry.subprocess,'run',lambda *args,**kwargs:types.SimpleNamespace(stdout='f'*40))
+    assert entry.main() == (1 if fail else 0)
+    if fail:
+        assert not (tmp_path/'dist').exists() and not (tmp_path/'outputs').exists()
+    else:
+        images=json.loads((tmp_path/'outputs').read_text().split('=',1)[1])
+        package=next((tmp_path/'dist').glob('*.tar.gz'))
+        release=unpack_release(package,tmp_path/'unpack')
+        assert set(images)=={'api','postgres'}
+        assert release['deployment']['services']['api']['image']==images['api']
+        assert release['commit']=='f'*40
