@@ -78,7 +78,7 @@ def _journal(value):
         return
 
     phases = ('prepared','pulling','resources','job-running','job-succeeded','applying',
-              'checking','checked','quiescing','quiesced','succeeded','rolling-back','rolled-back','recovery-required','stop','restart')
+              'checking','checked','quiescing','quiesced','succeeded','rolling-back','rolled-back','recovery-required','retiring','stop','restart')
     if phase not in phases or type(value.get('rollback_barrier')) is not bool: raise ValueError('invalid transaction phase/barrier')
     action = value.get('action')
     if action is not None:
@@ -90,7 +90,12 @@ def _journal(value):
         mapping(value, {'phase','action','rollback_barrier'}, {'phase','action','rollback_barrier'}, 'operation journal')
         return
     fields = {'id','phase','action','previous','attempted','completed','jobs','rollback_barrier'}
-    mapping(value,fields|{'maintenance'},fields,'deployment journal')
+    mapping(value,fields|{'maintenance','retiring'},fields,'deployment journal')
+    if 'retiring' in value:
+        names=value['retiring']
+        if not isinstance(names,list) or len(names)>128 or any(not isinstance(n,str) for n in names) or len(set(names))!=len(names):
+            raise ValueError('invalid retiring service list')
+        for name in names: validate_name(name,'retiring service')
     if 'maintenance' in value:
         m=value['maintenance']
         mapping(m,{'services','backup_sha256','plan_id'},{'services','backup_sha256','plan_id'},'maintenance')
@@ -131,7 +136,8 @@ def validate_stack_state(state, app, env):
             if not isinstance(item, dict): raise ValueError('invalid stack inventory record')
     for item in state['services'].values():
         fields = {'snapshot','lifecycle','fingerprint','container_id','running','healthy'}
-        mapping(item,fields,fields,'service inventory')
+        mapping(item,fields|{'retired'},fields,'service inventory')
+        if 'retired' in item and type(item['retired']) is not bool: raise ValueError('invalid retired service marker')
         if type(item['running']) is not bool or type(item['healthy']) is not bool: raise ValueError('invalid service health')
         _digest(item['fingerprint'])
         validate_stack_ref(item.get('snapshot'))
@@ -368,6 +374,58 @@ class StackManager:
         snapshot = create_stack_snapshot(self.folder, effective, values, overrides, management, active_jobs=selection['active'], generation=state.get('generation'))
         return self.apply(state, snapshot, selection, maintenance=maintenance)
 
+    def reconcile_intended_resources(self, state, snapshot):
+        """Recover the exact write intent persisted before Docker mutations."""
+        tx = state['transaction']
+        if not tx or tx['target'] != snapshot.ref:
+            raise ValueError('resource reconciliation requires the pending target')
+        journal = tx['journal']
+        if journal['phase'] in ('prepared','pulling'): return
+        if journal['phase'] not in ('resources','job-running','job-succeeded','applying','checking','checked',
+                                     'quiescing','quiesced','succeeded','recovery-required','rolling-back','rolled-back'):
+            return
+        driver = self.driver(snapshot,state)
+        # Observe before the transaction refused pre-existing unregistered
+        # resources. Only the journal's declared target names may now be claimed.
+        if state['network'] is None:
+            resource = driver.inspect('network',driver.network)
+            if resource is not None:
+                driver._owned(resource,'network','app')
+                if not resource.get('Id'): raise ValueError('invalid intended network')
+                state['network'] = {'name':driver.network,'identity':resource['Id']}
+        for name in snapshot.release['deployment']['volumes']:
+            if name in state['volumes']: continue
+            actual = driver.project+'-'+name
+            resource = driver.inspect('volume',actual)
+            if resource is not None:
+                driver._owned(resource,'volume',name)
+                if not resource.get('CreatedAt'): raise ValueError('invalid intended volume')
+                state['volumes'][name] = {'name':actual,'identity':resource['CreatedAt'],'present':True}
+        for name in journal['attempted']:
+            if name not in snapshot.release['deployment']['services']: raise ValueError('unknown attempted service')
+            prior = state['services'].get(name)
+            try:
+                info = driver.observe(name)
+            except ValueError:
+                if prior is None: raise
+                old = self.driver(self.load(prior['snapshot']),state)
+                try:
+                    old.observe(name,expected_id=prior['container_id'])
+                except ValueError:
+                    if prior['lifecycle'] != 'application' or journal['phase'] not in ('rolling-back','rolled-back','recovery-required'):
+                        raise
+                    # Automatic rollback may itself replace the old container
+                    # before its success checkpoint. Verify the frozen old spec.
+                    info = old.observe(name)
+                    if not info['container_id']: raise ValueError('rollback container missing')
+                    prior.update(info)
+                continue
+            if not info['container_id']: continue
+            spec = snapshot.release['deployment']['services'][name]
+            state['services'][name] = dict(info,lifecycle=spec['lifecycle'],snapshot=snapshot.ref,
+                fingerprint=service_fingerprint(spec,snapshot.values))
+        self.save(state)
+
     def recover(self, state, operation):
         from .stack_jobs import bind_job_runner, select_jobs, target_volumes, volume_identities
         tx = state['transaction']
@@ -377,8 +435,15 @@ class StackManager:
         if tx['journal'].get('phase') == 'restoring':
             from .stack_restore import resume_restore
             return resume_restore(self, state)
+        if tx['journal']['phase'] == 'retiring':
+            return self.finish_retirement(state)
         snapshot = self.load(tx['target'])
         self.manager.driver.check()
+        self.reconcile_intended_resources(state, snapshot)
+        if tx['journal']['phase'] == 'rolled-back':
+            if state['current']: self.observe(state,self.load(state['current']))
+            state['transaction']=None; self.save(state)
+            return state
         _, driver, _ = self.observe(state, snapshot)
         jobs = snapshot.release['deployment']['jobs']
         active, sources = [], {}
@@ -407,15 +472,47 @@ class StackManager:
 
     def rollback(self, state):
         tx = state['transaction']
+        if tx and tx['journal']['phase']=='retiring': return self.finish_retirement(state)
         if tx and tx['journal'].get('rollback_barrier'):
             raise ValueError('data-changing job requires verified recovery; automatic rollback prohibited')
+        if tx: self.reconcile_intended_resources(state,self.load(tx['target']))
         target = tx['origin'] if tx else state['previous']
         if not target:
             raise ValueError('no previous stack snapshot; retained resources require explicit recovery')
         if target.get('generation') != state.get('generation'):
             raise ValueError('cross-generation rollback requires verified data restoration')
         snapshot = self.load(target)
+        extras = sorted(set(state['services']) - set(snapshot.release['deployment']['services']))
+        extras = [name for name in extras if not state['services'][name].get('retired')]
+        if extras:
+            import uuid
+            observed, _, _ = self.observe(state,snapshot)
+            for name in extras:
+                if observed['services'][name]['lifecycle'] != 'application':
+                    raise ValueError('rollback cannot retire a persistent service')
+                observed['services'][name].update(retired=True,running=False,healthy=False)
+            if not plan_services(snapshot.release,observed,snapshot.values)['applicable']:
+                raise ValueError('rollback target requires maintenance or recovery')
+            state['transaction'] = {'target':snapshot.ref,'origin':state['current'],'journal':{
+                'id':uuid.uuid4().hex,'phase':'retiring','action':None,'previous':copy.deepcopy(state['services']),
+                'attempted':[],'completed':[],'jobs':{},'rollback_barrier':False,'retiring':extras}}
+            self.save(state)
+            return self.finish_retirement(state)
         return self.apply(state, snapshot)
+
+    def finish_retirement(self,state):
+        tx=state['transaction']; snapshot=self.load(tx['target'])
+        _, _, drivers=self.observe(state,snapshot)
+        for name in tx['journal']['retiring']:
+            if state['services'][name]['lifecycle'] != 'application':
+                raise ValueError('cannot retire persistent service')
+            tx['journal']['action']={'kind':'stop','service':name}; self.save(state)
+            drivers[name].stop(name)
+            info=drivers[name].observe(name,expected_id=state['services'][name]['container_id'])
+            if info['running']: raise ValueError('retiring service did not stop')
+            state['services'][name].update(info,retired=True)
+            self.save(state)
+        return self.apply(state,snapshot)
 
     def status(self, state):
         target = state['transaction']['target'] if state['transaction'] else state['current']
@@ -439,7 +536,9 @@ class StackManager:
             raise ValueError('application has no successful stack deployment')
         snapshot = self.load(state['current'])
         _, driver, old_drivers = self.observe(state, snapshot)
-        names = [service] if service else list(state['services'])
+        if service and action in ('stop','restart') and state['services'][service].get('retired'):
+            raise ValueError('retired service can only be enabled by a release declaring it')
+        names = [service] if service else [name for name,item in state['services'].items() if not item.get('retired')]
         if action == 'logs':
             if type(tail) is not int or not 1 <= tail <= 10000: raise ValueError('log tail must be 1..10000')
             output = []

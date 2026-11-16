@@ -13,6 +13,29 @@ INDEX_TYPES = {'application/vnd.oci.image.index.v1+json','application/vnd.docker
 IMAGE_TYPES = {'application/vnd.oci.image.manifest.v1+json','application/vnd.docker.distribution.manifest.v2+json'}
 
 
+def component_build_args(config, raw=''):
+    """Explicit component-keyed ordinary build values; never shell interpolation."""
+    from .contract import validate_build_args
+    config = validate_multiservice_deployment(config)
+    if not isinstance(raw,str) or len(raw.encode()) > 65536:
+        raise ValueError('service-build-args must be JSON of at most 64 KiB')
+    def unique(pairs):
+        result = {}
+        for key,value in pairs:
+            if key in result: raise ValueError('duplicate service build argument key')
+            result[key] = value
+        return result
+    extra = json.loads(raw,object_pairs_hook=unique) if raw.strip() else {}
+    if not isinstance(extra,dict) or len(extra)>128: raise ValueError('invalid service-build-args')
+    nodes = {**config['services'],**config['jobs']}
+    for name,args in extra.items():
+        if name not in nodes or 'build' not in nodes[name]:
+            raise ValueError('service-build-args must select a declared build component')
+        build = nodes[name]['build']
+        build['args'] = validate_build_args({**build.get('args',{}),**validate_build_args(args)})
+    return validate_multiservice_deployment(config)
+
+
 def delivery_plan(config, root, repository, release_version):
     config = validate_multiservice_deployment(config); version(release_version)
     if not isinstance(repository,str) or not REPOSITORY.fullmatch(repository): raise ValueError('invalid project image repository')

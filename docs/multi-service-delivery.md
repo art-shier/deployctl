@@ -18,3 +18,11 @@ Builds use Docker Buildx. Registry copies use Skopeo with TLS verification and t
 The package and GitHub release are generated only after every image succeeds. A failed operation may leave uploaded images in the project repository, but does not publish a partial release. No runtime secrets or install parameters are used as build arguments.
 
 Linux CI exercises a real application build, two registries with different credentials, literal build argument transport, digest-preserving image copy, exported blob hashes and extraction of the complete schema-3 package. Separate runtime fixtures verify PostgreSQL retention and interrupted restore recovery.
+
+Reusable workflows can provide ordinary dynamic values (for example the release
+version) with `service-build-args`, a JSON object keyed by declared build service
+or job name, whose values are argument maps. These override that component's
+`build.args`; unknown components, image-only components, duplicate JSON keys and
+invalid arguments fail before any build. Values are passed literally, never as
+shell fragments. Do not use this input for credentials. Legacy `build-args`
+continues to target the single-image build unchanged.

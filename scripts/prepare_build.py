@@ -24,11 +24,12 @@ def main():
         if not re.fullmatch(r'[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*', image_name):
             raise ValueError('Invalid image repository path')
         if config['schema_version'] == 2:
-            from deployctl.multiservice_build import delivery_plan
+            from deployctl.multiservice_build import delivery_plan, component_build_args
             if os.environ.get('BUILD_ARGS','').strip():
                 raise ValueError('multi-service build-args must be declared per service in build.args')
             if os.environ.get('PLATFORMS',config['platform']) != config['platform']:
                 raise ValueError('workflow platforms differs from deployment platform')
+            config = component_build_args(config, os.environ.get('SERVICE_BUILD_ARGS',''))
             plan = delivery_plan(config,Path.cwd(),registry+'/'+image_name,os.environ['RELEASE_VERSION'])
             Path('normalized.json').write_text(json.dumps(config),encoding='utf-8')
             Path('image-plan.json').write_text(json.dumps(plan),encoding='utf-8')
@@ -36,6 +37,8 @@ def main():
                 for key,value in {'schema_version':2,'application':config['application'],'image_name':plan['repository']}.items():
                     print(f'{key}={value}',file=out)
             return 0
+        if os.environ.get('SERVICE_BUILD_ARGS','').strip():
+            raise ValueError('service-build-args requires a multi-service declaration')
         for key in ('dockerfile', 'context'):
             candidate = Path(config['build'][key]).resolve()
             if not candidate.is_relative_to(Path.cwd().resolve()) or not candidate.exists():

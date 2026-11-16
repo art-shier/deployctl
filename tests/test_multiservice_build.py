@@ -169,3 +169,15 @@ def test_workflow_entrypoint_publishes_only_complete_inventory(tmp_path,monkeypa
         assert set(images)=={'api','postgres'}
         assert release['deployment']['services']['api']['image']==images['api']
         assert release['commit']=='f'*40
+
+
+def test_component_build_overrides_are_scoped_and_literal(tmp_path):
+    from deployctl.multiservice_build import component_build_args
+    from test_multiservice_contract import source
+    config = source()
+    config['services']['api']['build']['args'] = {'KEEP':'yes'}
+    result = component_build_args(config, '{"api":{"VERSION":"v1.2.3","TEXT":"$(literal)"}}')
+    assert result['services']['api']['build']['args'] == {'KEEP':'yes','VERSION':'v1.2.3','TEXT':'$(literal)'}
+    assert 'VERSION' not in config['services']['api']['build']['args']
+    with pytest.raises(ValueError): component_build_args(config, '{"postgres":{"VERSION":"v1"}}')
+    with pytest.raises(ValueError): component_build_args(config, '{"missing":{"VERSION":"v1"}}')

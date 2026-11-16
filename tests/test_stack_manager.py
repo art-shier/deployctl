@@ -514,3 +514,54 @@ def test_cross_generation_rollback_is_refused(runtime, tmp_path):
     stack = StackManager(manager, home, folder, 'lifelog', 'prod')
     with pytest.raises(ValueError, match='cross-generation'):
         stack.rollback(state)
+
+
+@pytest.mark.parametrize('installed', [False, True])
+def test_recover_after_real_crash_between_up_and_inventory_checkpoint(runtime,tmp_path,installed):
+    from deployctl.service_state import write_inventory
+    manager,engine=runtime
+    if installed: install(manager,package(tmp_path))
+    home,_=manager.paths('lifelog','prod'); durable=[]
+    original=Adapter.up
+    def replaced(adapter,name):
+        if name=='api': durable.append(manager.state(home,'lifelog','prod'))
+        return original(adapter,name)
+    with patch.object(Adapter,'up',replaced):
+        install(manager,package(tmp_path,'v2.1.0',API_IMAGE.replace('b'*64,'c'*64)),upgrade=installed)
+    crashed=durable[-1]
+    write_inventory(home/'state.json',crashed)
+    result=manager.recover('lifelog','prod',crashed['transaction']['journal']['id'])
+    assert result['transaction'] is None and result['services']['api']['healthy']
+
+
+def test_recover_after_real_crash_during_resource_creation(runtime,tmp_path):
+    from deployctl.service_state import write_inventory
+    manager,engine=runtime;home,_=manager.paths('lifelog','prod');durable=[]
+    original=Adapter.ensure_resources
+    def allocated(adapter):
+        durable.append(manager.state(home,'lifelog','prod'))
+        original(adapter)
+        raise RuntimeError('simulated loss after allocation')
+    with patch.object(Adapter,'ensure_resources',allocated),pytest.raises(RuntimeError):
+        install(manager,package(tmp_path))
+    crashed=durable[-1];write_inventory(home/'state.json',crashed)
+    result=manager.recover('lifelog','prod',crashed['transaction']['journal']['id'])
+    assert result['transaction'] is None and result['services']['postgres']['healthy']
+
+
+def test_rollback_stops_added_application_and_later_upgrade_reuses_its_inventory(runtime,tmp_path):
+    manager,engine=runtime;install(manager,package(tmp_path)); pg=copy.deepcopy(engine.containers['postgres'])
+    cfg=source();cfg['services']['worker']=copy.deepcopy(cfg['services']['api'])
+    cfg['services']['worker'].pop('endpoints',None)
+    cfg['services']['worker']['health']={'exec':['true']}
+    added=build_release(cfg,{'api':API_IMAGE,'postgres':IMAGE,'worker':API_IMAGE},'v2.1.0',tmp_path/'extra')
+    install(manager,added,upgrade=True)
+    result=manager.rollback('lifelog','prod')
+    assert not engine.containers['worker']['running']
+    assert result['services']['worker']['retired']
+    with patch.object(Adapter,'compose',lambda self,*args:self.engine.calls.append(tuple(args)),create=True):
+        manager.operate('lifelog','prod','restart')
+    assert ('restart','--no-deps','worker') not in engine.calls
+    assert not engine.containers['worker']['running']
+    install(manager,added,upgrade=True)
+    assert engine.containers['worker']['running'] and engine.containers['postgres']==pg

@@ -113,12 +113,67 @@ def main():
             assert docker('exec',maintained_pg['Id'],'psql','-U','postgres','-Atc','SELECT value FROM retained_probe') == 'survives'
             assert container(project,'api')['State']['Running']
             print('PASS: reviewed persistent maintenance preserves database data and resumes applications')
+            verify_hard_crash_and_service_retirement(manager, maintained, {'api':api,'postgres':postgres}, values, base, projects)
+
 
     finally:
         # This script owns only this randomly named fixture project. Production
         # runtime never performs volume cleanup; disposable CI cleanup does.
         for project in projects:
             cleanup(project)
+
+
+def verify_hard_crash_and_service_retirement(manager, config, images, values, base, projects):
+    from deployctl.service_docker import ServiceDockerDriver
+    app = config['application']; project = project_name(app,'test')
+    pg = container(project,'postgres')['Id']
+    changed = copy.deepcopy(config)
+    changed['services']['api']['environment']['REVISION']['literal'] = 'crash-candidate'
+    package = build_release(changed,images,'v1.0.4',base/'hard-crash')
+    pid = os.fork()
+    if pid == 0:
+        original = ServiceDockerDriver.up
+        def interrupted(driver,name):
+            original(driver,name)
+            if name == 'api': os._exit(83)
+        ServiceDockerDriver.up = interrupted
+        manager.deploy(app,'test',package,upgrade=True,managed_configuration=values)
+        os._exit(1)
+    _,status = os.waitpid(pid,0)
+    assert os.waitstatus_to_exitcode(status)==83
+    home,_ = manager.paths(app,'test'); state = manager.state(home,app,'test')
+    replaced = container(project,'api')['Id']
+    manager.recover(app,'test',state['transaction']['journal']['id'])
+    assert container(project,'api')['Id']==replaced
+    assert container(project,'postgres')['Id']==pg
+    worker = copy.deepcopy(changed)
+    worker['services']['worker'] = copy.deepcopy(worker['services']['api'])
+    worker_package = build_release(worker,dict(images,worker=images['api']),'v1.0.5',base/'added-worker')
+    manager.deploy(app,'test',worker_package,upgrade=True,managed_configuration=values)
+    manager.rollback(app,'test')
+    assert not container(project,'worker')['State']['Running']
+    manager.operate(app,'test','restart')
+    assert not container(project,'worker')['State']['Running']
+    manager.deploy(app,'test',worker_package,upgrade=True,managed_configuration=values)
+    assert container(project,'worker')['State']['Running']
+    assert container(project,'postgres')['Id']==pg
+    initial = copy.deepcopy(config); initial['application'] += '-initial'
+    initial_app=initial['application']; projects.append(project_name(initial_app,'test'))
+    initial_package=build_release(initial,images,'v1.0.0',base/'initial-crash')
+    pid=os.fork()
+    if pid==0:
+        original=ServiceDockerDriver.ensure_resources
+        def interrupted(driver):
+            original(driver); os._exit(84)
+        ServiceDockerDriver.ensure_resources=interrupted
+        manager.deploy(initial_app,'test',initial_package,managed_configuration=values)
+        os._exit(1)
+    _,status=os.waitpid(pid,0)
+    assert os.waitstatus_to_exitcode(status)==84
+    home,_=manager.paths(initial_app,'test'); state=manager.state(home,initial_app,'test')
+    result=manager.recover(initial_app,'test',state['transaction']['journal']['id'])
+    assert result['transaction'] is None
+    print('PASS: actual process loss after replacement/resource creation and rollback retirement/re-enable of added application')
 
 
 def cleanup(project):

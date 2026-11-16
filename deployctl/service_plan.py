@@ -62,6 +62,8 @@ def plan_services(release, observed, configurations):
             action = 'unchanged'
         services[name] = action
     for name in sorted(set(prior) - set(services)):
+        if prior[name].get('retired') and not prior[name].get('running'):
+            continue
         services[name] = 'removal-required'
     prior_volumes = observed.get('volumes', {})
     for name in sorted(config['volumes']):

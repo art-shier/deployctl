@@ -32,6 +32,10 @@ on:
         description: Optional KEY=value lines overriding deployment.yaml build.args; ordinary values only
         type: string
         default: ''
+      service-build-args:
+        description: Optional JSON mapping service/job names to ordinary build arguments (schema 2 only)
+        type: string
+        default: ''
       test-command:
         description: Optional project test command, run before building
         type: string
@@ -101,6 +105,7 @@ jobs:
           REGISTRY: ${{ inputs.registry }}
           IMAGE_NAME: ${{ inputs.image-name }}
           BUILD_ARGS: ${{ inputs.build-args }}
+          SERVICE_BUILD_ARGS: ${{ inputs.service-build-args }}
           PLATFORMS: ${{ inputs.platforms }}
         run: |
           python "$GITHUB_WORKSPACE/platform/scripts/prepare_build.py"

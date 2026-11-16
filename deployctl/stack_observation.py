@@ -8,6 +8,7 @@ def observe_stack(stack, state):
               'operation_id':journal.get('id',''), 'phase':journal.get('phase',''),
               'recovery_required':bool(tx)}
     for name, item in state['services'].items():
+        if item.get('retired'): continue
         snapshot = stack.load(item['snapshot'])
         spec = snapshot.release['deployment']['services'][name]
         result['services'][name] = {'version':snapshot.ref['version'], 'image':spec['image'],
@@ -16,6 +17,7 @@ def observe_stack(stack, state):
     try:
         observed = stack.status(state)
         for name, item in observed['services'].items():
+            if item.get('retired'): continue
             result['services'][name]['health'] = ('healthy' if item['healthy'] else
                                                  'unhealthy' if item['running'] else 'stopped')
     except (ValueError,RuntimeError,OSError,KeyError,TypeError):

@@ -107,12 +107,12 @@ def restore_stack(stack, state, release, values, sources, requested, plan_id, ov
     # Pull before stopping source writers. No runtime resource is allocated yet.
     driver = candidate.driver(snapshot, target)
     for name in selection['order']: driver.pull(name)
-    candidate.save(target)
     write_inventory(candidate_home / 'source-state.json', state)
     state['transaction'] = {'origin':state['current'], 'target':snapshot.ref,
         'journal':{'id':generation, 'phase':'restoring', 'action':None, 'rollback_barrier':True,
                    'restore':{'plan_id':plan_id, 'selection':selection, 'stage':'freezing'}}}
     stack.save(state)
+    candidate.save(target)
     return resume_restore(stack, state)
 
 
@@ -123,6 +123,13 @@ def resume_restore(stack, state):
     generation = journal['id']
     candidate_home = stack.home / 'restorations' / generation
     candidate = StackManager(stack.manager, candidate_home, stack.folder, stack.app, stack.env)
+    if not (candidate_home / 'state.json').exists():
+        if meta['stage'] != 'freezing':
+            raise ValueError('restoration candidate inventory missing')
+        from .stack_manager import empty_stack_state
+        target = empty_stack_state(stack.app,stack.env)
+        target['generation'] = generation
+        candidate.save(target)
     target = stack.manager.state(candidate_home, stack.app, stack.env)
     snapshot = stack.load(tx['target'])
     expected = select_jobs(snapshot.release, {}, snapshot.values, meta['selection']['sources'], meta['selection']['active'])
@@ -156,6 +163,7 @@ def resume_restore(stack, state):
             # The frozen selection belongs to this freshly allocated generation.
             # JobRunner reconciles recorded executions and starts only jobs that
             # have no durable execution record; failed/unknown attempts refuse.
+            candidate.reconcile_intended_resources(target, snapshot)
             candidate.apply(target, snapshot, meta['selection'], resuming=True)
         else:
             candidate.apply(target, snapshot, meta['selection'])

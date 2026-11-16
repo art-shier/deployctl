@@ -41,7 +41,7 @@ def test_restore_cli_has_reviewed_plan_and_source_flags():
     assert args.plan and args.plan_id == 'b'*64
 
 
-@pytest.mark.parametrize("interrupt", ["freeze", "before-job"])
+@pytest.mark.parametrize("interrupt", ["freeze", "before-job", "before-candidate-save"])
 def test_restore_promotes_new_generation_and_retains_source_after_freeze_interruption(tmp_path, interrupt):
     from unittest.mock import patch
     from deployctl.runtime import Manager
@@ -74,8 +74,14 @@ def test_restore_promotes_new_generation_and_retains_source_after_freeze_interru
                 'fingerprint':service_fingerprint(spec,snapshot.values),'snapshot':snapshot.ref}
             save(state)
         return run
+    original_save = StackManager.save
+    def save_guard(stack, state):
+        if fail[0] and interrupt == 'before-candidate-save' and stack.home.parent.name == 'restorations':
+            fail[0] = False
+            raise RuntimeError('interrupted freeze preparation')
+        return original_save(stack,state)
     manager = Manager(tmp_path/'apps',tmp_path/'config',driver=Engine())
-    with patch('deployctl.stack_manager.ServiceDockerDriver',IsolatedAdapter), patch('deployctl.stack_jobs.bind_job_runner',bind):
+    with patch('deployctl.stack_manager.ServiceDockerDriver',IsolatedAdapter), patch('deployctl.stack_jobs.bind_job_runner',bind), patch.object(StackManager,'save',save_guard):
         state = install(manager,package(tmp_path))
         home, folder = manager.paths('lifelog','prod')
         stack = StackManager(manager,home,folder,'lifelog','prod')
