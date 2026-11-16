@@ -80,10 +80,12 @@ def verify_remote_multiservice(owner, origin, base, application, image, root, co
         'primary_endpoint':'api.http','volumes':{'data':{'retain':True}},'services':{
             'api':{'lifecycle':'application','image':image,'environment':{'APP_VERSION':{'literal':'v3.0.0'}},
                    'depends_on':{'cache':'healthy'},'endpoints':{'http':{'container_port':8080,'host_port':port,'bind_address':'127.0.0.1'}},
-                   'health':{'readiness_path':'/health/ready'}},
+                   'health':{'http':'/health/ready'}},
             'cache':{'lifecycle':'persistent','image':image,'volumes':{'data':'/data'},
                      'command':['python','-u','-c','import time; print("cache-started"); time.sleep(3600)'],
                      'health':{'exec':['python','-c','pass']}}}}
+    from deployctl.multiservice_contract import validate_multiservice_deployment
+    validate_multiservice_deployment(config)
     node=owner.json('POST','/api/v1/node-enrollments',{})
     home=base/'multi-agent'; node_id=enroll(origin,node['enrollment_token'],home)
     owner.json('PATCH',f'/api/v1/nodes/{node_id}',{'name':'Multi CI node','enabled':True,'groups':[],
