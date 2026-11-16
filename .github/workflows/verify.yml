@@ -62,6 +62,10 @@ jobs:
       - run: python scripts/docker_integration.py
       - name: Retained PostgreSQL multi-service lifecycle
         run: python scripts/multiservice_docker_integration.py
+      - name: Install image copy tool
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Multi-image build and authenticated mirror
+        run: python scripts/multiservice_build_integration.py
       - name: Actual cold and cached image pull progress
         run: python scripts/docker_progress_smoke.py
       - name: Prepare build argument fixture with the release preparation script

@@ -53,6 +53,9 @@ on:
         value: ${{ jobs.release.outputs.application }}
       image:
         value: ${{ jobs.release.outputs.image }}
+      images:
+        description: Service/job keyed immutable image inventory for multi-service releases
+        value: ${{ jobs.release.outputs.images }}
 
 permissions:
   contents: write
@@ -69,6 +72,7 @@ jobs:
       sha256: ${{ steps.publish.outputs.sha256 }}
       application: ${{ steps.config.outputs.application }}
       image: ${{ steps.package.outputs.image }}
+      images: ${{ steps.multi.outputs.images }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -97,6 +101,7 @@ jobs:
           REGISTRY: ${{ inputs.registry }}
           IMAGE_NAME: ${{ inputs.image-name }}
           BUILD_ARGS: ${{ inputs.build-args }}
+          PLATFORMS: ${{ inputs.platforms }}
         run: |
           python "$GITHUB_WORKSPACE/platform/scripts/prepare_build.py"
       - name: Project tests
@@ -113,6 +118,7 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
           password: ${{ secrets.REGISTRY_TOKEN || github.token }}
       - name: Build immutable image
+        if: steps.config.outputs.schema_version != '2'
         id: image
         uses: docker/build-push-action@v6
         with:
@@ -125,6 +131,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Generate standard package
+        if: steps.config.outputs.schema_version != '2'
         id: package
         working-directory: source
         env:
@@ -137,6 +144,19 @@ jobs:
             --image "$IMAGE" --version "$RELEASE_VERSION" \
             --commit "$(git rev-parse HEAD)" --output dist
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+      - name: Install digest-preserving image copier
+        if: steps.config.outputs.schema_version == '2'
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Build and mirror multi-service images
+        if: steps.config.outputs.schema_version == '2'
+        id: multi
+        working-directory: source
+        env:
+          PYTHONPATH: ${{ github.workspace }}/platform
+          DEPLOYMENT_FILE: ${{ inputs.deployment-file }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          IMAGE_REPOSITORY: ${{ steps.config.outputs.image_name }}
+        run: python "$GITHUB_WORKSPACE/platform/scripts/build_multiservice.py"
       - name: Publish GitHub Release
         id: publish
         working-directory: source

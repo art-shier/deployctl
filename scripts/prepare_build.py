@@ -23,6 +23,19 @@ def main():
             raise ValueError('Invalid registry host')
         if not re.fullmatch(r'[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*', image_name):
             raise ValueError('Invalid image repository path')
+        if config['schema_version'] == 2:
+            from deployctl.multiservice_build import delivery_plan
+            if os.environ.get('BUILD_ARGS','').strip():
+                raise ValueError('multi-service build-args must be declared per service in build.args')
+            if os.environ.get('PLATFORMS',config['platform']) != config['platform']:
+                raise ValueError('workflow platforms differs from deployment platform')
+            plan = delivery_plan(config,Path.cwd(),registry+'/'+image_name,os.environ['RELEASE_VERSION'])
+            Path('normalized.json').write_text(json.dumps(config),encoding='utf-8')
+            Path('image-plan.json').write_text(json.dumps(plan),encoding='utf-8')
+            with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8',newline='\n') as out:
+                for key,value in {'schema_version':2,'application':config['application'],'image_name':plan['repository']}.items():
+                    print(f'{key}={value}',file=out)
+            return 0
         for key in ('dockerfile', 'context'):
             candidate = Path(config['build'][key]).resolve()
             if not candidate.is_relative_to(Path.cwd().resolve()) or not candidate.exists():
@@ -31,6 +44,7 @@ def main():
         encoded = render_build_args(arguments)
         delimiter = 'BUILD_ARGS_' + uuid.uuid4().hex
         outputs = {
+            'schema_version': str(config['schema_version']),
             'application': config['application'],
             'context': 'source/' + config['build']['context'],
             'dockerfile': 'source/' + config['build']['dockerfile'],
