@@ -71,6 +71,7 @@ def main():
                 assert json.loads(docker('volume','inspect',project+'-data'))[0] == volume, 'volume changed'
                 assert docker('exec',pg['Id'],'psql','-U','postgres','-Atc',
                               'SELECT value FROM retained_probe') == 'survives', 'database contents changed'
+            verify_restore(config, {'api':api,'postgres':postgres}, values, pg, base, projects)
             changed = copy.deepcopy(config)
             changed['services']['api']['environment']['REVISION']['literal'] = 'two'
             second = release(changed, 'v1.0.1')
@@ -96,7 +97,6 @@ def main():
             manager.operate(app,'test','restart'); unchanged_database()
             home, _ = manager.paths(app,'test')
             assert manager.state(home,app,'test')['transaction'] is None
-            verify_restore(config, {'api':api,'postgres':postgres}, values, pg, base, projects)
             print('PASS: real app upgrade, rollback, failed upgrade and stop/restart preserve PostgreSQL container, mounts, volume and SQL data')
     finally:
         # This script owns only this randomly named fixture project. Production
@@ -127,8 +127,8 @@ def verify_restore(source, images, values, source_pg, base, projects):
                        'PGPASSWORD':{'secret':'password'},'BACKUP_SHA256':{'literal':digest}},
         'secret_files':{'dump':'/run/secrets/backup.sql'},
         'command':['sh','-ec',
-            'test "$(sha256sum /run/secrets/backup.sql | cut -d " " -f1)" = "$BACKUP_SHA256"; '
-            'test "$(psql -Atc "SELECT count(*) FROM pg_tables WHERE schemaname=\'public\'")" = 0; '
+            'test "$(sha256sum /run/secrets/backup.sql | cut -d " " -f1)" = "$BACKUP_SHA256"; echo backup-sha-verified; '
+            'test "$(psql -Atc "SELECT count(*) FROM pg_tables WHERE schemaname=\'public\'")" = 0; echo empty-target-verified; '
             'psql -v ON_ERROR_STOP=1 -f /run/secrets/backup.sql; '
             'test "$(psql -Atc "SELECT value FROM retained_probe")" = survives']}}
     config['services']['api']['depends_on'] = {'restore':'succeeded'}
@@ -152,7 +152,12 @@ def verify_restore(source, images, values, source_pg, base, projects):
             os._exit(1)
         os._exit(2)
     _, status = os.waitpid(pid,0)
-    assert os.waitstatus_to_exitcode(status) == 79, 'fixture did not reach post-restore crash point'
+    if os.waitstatus_to_exitcode(status) != 79:
+        identity = container(project,'restore')['Id']
+        logs = subprocess.run(['docker','logs',identity],capture_output=True,text=True)
+        output = (logs.stdout+logs.stderr).replace(values['secrets']['password'],'[REDACTED]')
+        print(output,flush=True)
+        raise AssertionError('fixture did not reach post-restore crash point')
     home, _ = manager.paths(app,'test'); state = manager.state(home,app,'test')
     assert state['jobs']['restore']['status'] == 'running'
     before = container(project,'restore')['Id']; postgres = container(project,'postgres')['Id']

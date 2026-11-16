@@ -1,6 +1,7 @@
 """Application-scoped multi-service transactions; caller holds the instance lock."""
 import copy
 import re
+import math
 
 from .contract import mapping, validate_name
 from .multiservice_release import validate_multiservice_release
@@ -16,6 +17,67 @@ def empty_stack_state(app, env):
     return {'schema_version': 3, 'multi_service': True, 'application': app, 'environment': env,
             'current': None, 'previous': None, 'transaction': None, 'binding': None,
             'services': {}, 'volumes': {}, 'jobs': {}, 'network': None}
+
+
+def _text(value, field, maximum=1024):
+    if not isinstance(value, str) or not value or len(value) > maximum or '\x00' in value:
+        raise ValueError('invalid '+field)
+
+
+def _digest(value):
+    if not isinstance(value, str) or not re.fullmatch('[a-f0-9]{64}', value):
+        raise ValueError('invalid inventory digest')
+
+
+def _resource(item, present=False):
+    fields = {'name','identity'} | ({'present'} if present else set())
+    mapping(item, fields, fields, 'resource identity')
+    _text(item['name'],'resource name'); _text(item['identity'],'resource identity')
+    if present and type(item['present']) is not bool: raise ValueError('invalid resource presence')
+
+
+def _job_record(item):
+    fields = {'id','container','target','source','status','deadline_at','target_volumes','fingerprint','snapshot'}
+    mapping(item, fields, fields, 'job record')
+    _digest(item['id']); _digest(item['fingerprint']); _digest(item['source'])
+    if item['container'] != 'job-'+item['id'][:32]: raise ValueError('invalid job container identity')
+    _text(item['target'],'job target',128*1024)
+    if item['status'] not in ('starting','running','succeeded','failed','unknown'): raise ValueError('invalid job status')
+    deadline = item['deadline_at']
+    if type(deadline) not in (int,float) or not math.isfinite(deadline) or deadline <= 0: raise ValueError('invalid job deadline')
+    validate_stack_ref(item['snapshot'])
+    if not isinstance(item['target_volumes'],dict) or len(item['target_volumes']) > 128: raise ValueError('invalid job volumes')
+    for name, value in item['target_volumes'].items():
+        validate_name(name,'volume'); _resource(value)
+
+
+def _journal(value):
+    if not isinstance(value,dict): raise ValueError('invalid transaction journal')
+    phase = value.get('phase')
+    phases = ('prepared','pulling','resources','job-running','job-succeeded','applying',
+              'checking','checked','succeeded','rolling-back','rolled-back','recovery-required','stop','restart')
+    if phase not in phases or type(value.get('rollback_barrier')) is not bool: raise ValueError('invalid transaction phase/barrier')
+    action = value.get('action')
+    if action is not None:
+        mapping(action, {'kind','service'}, {'kind','service'}, 'journal action')
+        if action['kind'] not in ('pull','ensure-resources','job','up','start','healthy','restore','stop','restart'):
+            raise ValueError('invalid transaction action')
+        if action['service'] is not None: validate_name(action['service'],'service')
+    if phase in ('stop','restart'):
+        mapping(value, {'phase','action','rollback_barrier'}, {'phase','action','rollback_barrier'}, 'operation journal')
+        return
+    fields = {'id','phase','action','previous','attempted','completed','jobs','rollback_barrier'}
+    mapping(value,fields,fields,'deployment journal')
+    if not isinstance(value['id'],str) or not re.fullmatch('[a-f0-9]{32}',value['id']): raise ValueError('invalid operation identity')
+    for key in ('attempted','completed'):
+        if not isinstance(value[key],list) or len(value[key]) > 128: raise ValueError('invalid journal service list')
+        for name in value[key]: validate_name(name,'service')
+        if len(set(value[key])) != len(value[key]): raise ValueError('duplicate journal service')
+    if not isinstance(value['previous'],dict) or len(value['previous']) > 128: raise ValueError('invalid previous services')
+    if not isinstance(value['jobs'],dict) or len(value['jobs']) > 128: raise ValueError('invalid journal jobs')
+    for name,status in value['jobs'].items():
+        validate_name(name,'job')
+        if status not in ('unknown','succeeded'): raise ValueError('invalid journal job status')
 
 
 def validate_stack_state(state, app, env):
@@ -34,17 +96,27 @@ def validate_stack_state(state, app, env):
             validate_name(name, kind)
             if not isinstance(item, dict): raise ValueError('invalid stack inventory record')
     for item in state['services'].values():
+        fields = {'snapshot','lifecycle','fingerprint','container_id','running','healthy'}
+        mapping(item,fields,fields,'service inventory')
+        if type(item['running']) is not bool or type(item['healthy']) is not bool: raise ValueError('invalid service health')
+        _digest(item['fingerprint'])
         validate_stack_ref(item.get('snapshot'))
         if item.get('lifecycle') not in ('application', 'persistent') or not re.fullmatch('[a-f0-9]{64}', item.get('fingerprint', '')):
             raise ValueError('invalid applied service reference')
         if item.get('container_id') is not None and not isinstance(item['container_id'], str):
             raise ValueError('invalid service container identity')
+    if state['network'] is not None: _resource(state['network'])
+    for item in state['volumes'].values(): _resource(item, present=True)
+    for item in state['jobs'].values(): _job_record(item)
+    if state['binding'] is not None:
+        from .platform_client import validate_defaults
+        mapping(state['binding'],{'port','address'},{'port','address'},'stack binding')
+        validate_defaults({'host_port':state['binding']['port'],'bind_address':state['binding']['address']})
     if state['transaction'] is not None:
         tx = mapping(state['transaction'], {'target', 'origin', 'journal'}, {'target', 'origin', 'journal'}, 'stack transaction')
         validate_stack_ref(tx['target'])
         if tx['origin'] is not None: validate_stack_ref(tx['origin'])
-        if not isinstance(tx['journal'], dict) or not isinstance(tx['journal'].get('phase'), str):
-            raise ValueError('invalid stack transaction journal')
+        _journal(tx['journal'])
     return copy.deepcopy(state)
 
 

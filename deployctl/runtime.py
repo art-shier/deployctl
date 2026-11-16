@@ -283,6 +283,9 @@ class Manager:
     def state(self, home, app, env):
         path = home / 'state.json'
         reject_links(path)
+        from .service_state import MAX_STATE
+        if path.exists() and (not path.is_file() or path.stat().st_size > MAX_STATE):
+            raise ValueError('invalid state file or size limit exceeded')
         value = json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
         # v1 did not save a binding before the first successful install. Its
         # interrupted candidate used the release defaults; infer only in memory.
