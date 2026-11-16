@@ -68,7 +68,7 @@ for (const width of [1440, 390]) {
       await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth),
     ).toBe(true);
     await page.screenshot({
-      path: `/private/tmp/ctl-release-images-${width}.png`,
+      path: test.info().outputPath(`release-images-${width}.png`),
     });
   });
 }
