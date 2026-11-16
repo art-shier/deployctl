@@ -62,7 +62,9 @@ def main():
             def unchanged_database():
                 actual = container(project,'postgres')
                 assert actual['Id'] == pg['Id'], 'database container recreated'
-                assert actual['Mounts'] == pg['Mounts'], 'database mounts changed'
+                expected_mounts = sorted(pg['Mounts'], key=lambda item: item['Destination'])
+                actual_mounts = sorted(actual['Mounts'], key=lambda item: item['Destination'])
+                assert actual_mounts == expected_mounts, f'database mounts changed: {expected_mounts!r} -> {actual_mounts!r}'
                 assert json.loads(docker('volume','inspect',project+'-data'))[0] == volume, 'volume changed'
                 assert docker('exec',pg['Id'],'psql','-U','postgres','-Atc',
                               'SELECT value FROM retained_probe') == 'survives', 'database contents changed'
