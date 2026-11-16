@@ -132,3 +132,60 @@ def verify_remote_multiservice(owner, origin, base, application, image, root, co
         for kind in ('network','volume'):
             for name in docker(kind,'ls','--filter','label=io.team-deploy.project='+project,'--format','{{.Name}}').split():
                 docker(kind,'rm',name)
+
+
+def verify_legacy_stack_cutover(base, deployment, image):
+    """Real stopped legacy snapshot -> new generation at the same app/env/port."""
+    import copy, hashlib, socket, subprocess
+    from deployctl.runtime import DockerDriver, project_name
+    class CachedDocker(DockerDriver):
+        def _stream_pull(self, args, environment=None, timeout=None):
+            # Authentication/pulls already exercised by the remote fixture; this
+            # isolated cutover uses precisely the verified cached fixture image.
+            subprocess.run(['docker','image','inspect',image],check=True,capture_output=True)
+    def docker(*args):return subprocess.run(['docker',*args],check=True,capture_output=True,text=True).stdout.strip()
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1',0)); port=sock.getsockname()[1]
+    app='legacy-cutover-'+uuid.uuid4().hex[:10];project=project_name(app,'prod');projects=[project]
+    manager=Manager(base/'legacy-runtime',base/'legacy-config',driver=CachedDocker())
+    old=copy.deepcopy(deployment);old['application']=app;old.pop('hooks',None);old['container']['host_port']=port
+    old['required_config']=[]
+    legacy_package=build_release(old,image,'v1.0.0',base/'legacy-packages')
+    source='verified-fixture-data';digest=hashlib.sha256(source.encode()).hexdigest()
+    config={'schema_version':2,'application':app,'primary_endpoint':'api.http','volumes':{'data':{'retain':True}},
+        'services':{
+            'api':{'image':image,'lifecycle':'application','depends_on':{'restore':'succeeded','cache':'healthy'},
+                'endpoints':{'http':{'container_port':8080,'host_port':port}},'health':{'http':'/health/ready'}},
+            'cache':{'image':image,'lifecycle':'persistent','volumes':{'data':'/app'},'depends_on':{'restore':'succeeded'},
+                'command':['python','-c','import time;time.sleep(3600)'],'health':{'exec':['python','-c','pass']}}},
+        'jobs':{'restore':{'image':image,'trigger':'bootstrap','volumes':{'data':'/app'},
+            'command':['python','-c',f'import hashlib,pathlib; v={source!r}; assert hashlib.sha256(v.encode()).hexdigest()=={digest!r}; pathlib.Path("/app/restored").write_text(v)']}}}
+    package=build_release(config,dict.fromkeys(['api','cache','restore'],image),'v2.0.0',base/'legacy-packages')
+    try:
+        manager.deploy(app,'prod',legacy_package)
+        old_id=docker('ps','-aq','--filter','label=com.docker.compose.project='+project,'--filter','label=com.docker.compose.service=app')
+        try:manager.plan(app,'prod',package,upgrade=True,managed_configuration={'config':{},'secrets':{}},job_sources={'restore':digest},restoration={'plan_id':None})
+        except ValueError as error:assert 'stopped' in str(error)
+        else:raise AssertionError('running legacy source accepted')
+        manager.operate(app,'prod','stop')
+        args={'upgrade':True,'managed_configuration':{'config':{},'secrets':{}},'job_sources':{'restore':digest}}
+        plan=manager.plan(app,'prod',package,restoration={'plan_id':None},**args)
+        target_project=project[:50]+'-g'+plan['generation'];projects.append(target_project)
+        state=manager.deploy(app,'prod',package,restoration={'plan_id':plan['plan_id']},**args)
+        assert state['current']['version']=='v2.0.0' and state['previous'] is None and state['transaction'] is None
+        assert state['binding']['port']==port
+        assert json.loads(docker('inspect',old_id))[0]['State']['Running'] is False
+        cache=docker('ps','-aq','--filter','label=com.docker.compose.project='+target_project,'--filter','label=com.docker.compose.service=cache')
+        assert docker('exec',cache,'cat','/app/restored')==source
+        next_package=build_release(config,dict.fromkeys(['api','cache','restore'],image),'v2.0.1',base/'legacy-packages')
+        manager.deploy(app,'prod',next_package,upgrade=True,managed_configuration={'config':{},'secrets':{}})
+        assert docker('ps','-aq','--filter','label=com.docker.compose.project='+target_project,'--filter','label=com.docker.compose.service=cache')==cache
+        print('PASS: legacy snapshot explicit cutover preserves app/environment/endpoint, retains stopped source, verifies restore and next upgrade retains data')
+    finally:
+        for name in projects:
+            ids=docker('ps','-aq','--filter','label=com.docker.compose.project='+name).split()
+            if ids:docker('rm','-f',*ids)
+            for kind in ('network','volume'):
+                labels=['io.team-deploy.project='+name,'com.docker.compose.project='+name]
+                for label in labels:
+                    for resource in docker(kind,'ls','--filter','label='+label,'--format','{{.Name}}').split():docker(kind,'rm',resource)

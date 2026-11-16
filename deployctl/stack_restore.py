@@ -13,6 +13,37 @@ def _hash(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
+def legacy_inventory(stack, state):
+    """An explicit legacy cutover may retain, never adopt, a stopped source."""
+    from .deployment_state import normalize_state
+    state = normalize_state(state, stack.app, stack.env)
+    ref = state['current']
+    if not ref or ref['legacy'] or state['transaction']:
+        raise ValueError('legacy restore requires an established snapshot and no pending operation')
+    directory, release, snapshot, environment = stack.manager.reference_environment(stack.home, stack.folder, ref, stack.app)
+    ids = stack.manager.driver.compose(directory, stack.project, environment, 'ps', '--all', '-q', 'app').splitlines()
+    if len(ids) != 1: raise ValueError('legacy source container missing or ambiguous')
+    resources = json.loads(stack.manager.driver._run(['docker','inspect',ids[0]]))
+    if not isinstance(resources,list) or len(resources)!=1: raise ValueError('legacy source container ambiguous')
+    resource = resources[0]; conf = resource.get('Config') or {}; labels = conf.get('Labels') or {}
+    required = {'com.docker.compose.project':stack.project, 'com.docker.compose.service':'app',
+                'io.team-deploy.application':stack.app, 'io.team-deploy.version':ref['version'],
+                'io.team-deploy.configuration':ref['configuration']}
+    if not resource.get('Id') or conf.get('Image') != release['image'] or any(labels.get(k)!=v for k,v in required.items()):
+        raise ValueError('legacy source container identity mismatch')
+    if (resource.get('State') or {}).get('Running') is not False:
+        raise ValueError('legacy application must be stopped before planning restoration')
+    mounts = sorted(resource.get('Mounts') or [],key=lambda m:m.get('Destination',''))
+    volumes = []
+    for mount in mounts:
+        if mount.get('Type') == 'volume':
+            raw = json.loads(stack.manager.driver._run(['docker','volume','inspect',mount['Name']]))
+            if len(raw)!=1 or not raw[0].get('CreatedAt'): raise ValueError('legacy source volume identity missing')
+            volumes.append({'name':mount['Name'],'identity':raw[0]['CreatedAt']})
+    return {'container_id':resource['Id'], 'fingerprint':_hash({'config':conf,'host':resource.get('HostConfig'),
+            'mounts':mounts,'volumes':volumes}), 'volumes':volumes}
+
+
 def source_inventory(stack, state):
     """Allow absence after a disaster, but never accept changed ownership/identity."""
     result = {'services': {}, 'volumes': {}, 'network': None}
@@ -39,8 +70,8 @@ def source_inventory(stack, state):
     return result
 
 
-def plan_restore(stack, state, release, values, sources, requested, overrides=None, management=None):
-    if state['schema_version'] != 3 or not state['current']:
+def plan_restore(stack, state, release, values, sources, requested, overrides=None, management=None, legacy=None):
+    if state['schema_version'] != 3 or (not state['current'] and legacy is None):
         raise ValueError('restore requires an established multi-service installation')
     if state['transaction']:
         raise ValueError('pending transaction requires recovery before a new restoration')
@@ -78,20 +109,24 @@ def plan_restore(stack, state, release, values, sources, requested, overrides=No
         if {'port':endpoint['host_port'], 'address':endpoint['bind_address']} != state['binding']:
             raise ValueError('restore must preserve the published endpoint')
     stack.manager.driver.check()
-    observed = source_inventory(stack, state)
+    observed = legacy_inventory(stack, legacy) if legacy is not None else source_inventory(stack, state)
     digest = _hash({'state':state, 'observed':observed, 'release':release,
-                    'values':values, 'selection':selection, 'overrides':overrides, 'management':management})
-    return {'plan_id':digest, 'generation':digest[:32], 'version':release['version'],
+                    'values':values, 'selection':selection, 'overrides':overrides, 'management':management, 'legacy':legacy})
+    result = {'plan_id':digest, 'generation':digest[:32], 'version':release['version'],
             'jobs':selection['active'], 'order':selection['order'],
             'retained_volumes':sorted(item['name'] for item in state['volumes'].values()),
-            'source_services':observed['services']}
+            'source_services':observed.get('services',{})}
+    if legacy is not None:
+        result['legacy_source'] = observed
+        result['retained_volumes'] = [item['name'] for item in observed['volumes']]
+    return result
 
 
-def restore_stack(stack, state, release, values, sources, requested, plan_id, overrides=None, management=None):
+def restore_stack(stack, state, release, values, sources, requested, plan_id, overrides=None, management=None, legacy=None):
     from .stack_manager import StackManager, empty_stack_state
     from .stack_snapshot import create_stack_snapshot
     from .service_state import write_inventory
-    plan = plan_restore(stack, state, release, values, sources, requested, overrides, management)
+    plan = plan_restore(stack, state, release, values, sources, requested, overrides, management, legacy)
     if plan_id != plan['plan_id']:
         raise ValueError('restore plan changed or plan_id missing; preview again')
     generation = plan['generation']
@@ -107,10 +142,12 @@ def restore_stack(stack, state, release, values, sources, requested, plan_id, ov
     # Pull before stopping source writers. No runtime resource is allocated yet.
     driver = candidate.driver(snapshot, target)
     for name in selection['order']: driver.pull(name)
-    write_inventory(candidate_home / 'source-state.json', state)
+    write_inventory(candidate_home / 'source-state.json', legacy if legacy is not None else state)
     state['transaction'] = {'origin':state['current'], 'target':snapshot.ref,
         'journal':{'id':generation, 'phase':'restoring', 'action':None, 'rollback_barrier':True,
                    'restore':{'plan_id':plan_id, 'selection':selection, 'stage':'freezing'}}}
+    if legacy is not None:
+        state['transaction']['journal']['restore']['legacy'] = {'state_sha256':_hash(legacy), 'observed':plan['legacy_source']}
     stack.save(state)
     candidate.save(target)
     return resume_restore(stack, state)
@@ -137,10 +174,18 @@ def resume_restore(stack, state):
         raise ValueError('restoration selection differs from frozen snapshot')
     if target.get('generation') != generation:
         raise ValueError('restoration candidate generation mismatch')
+    if 'legacy' in meta:
+        from .runtime_snapshot import reject_links
+        from .service_state import MAX_STATE
+        path = candidate_home / 'source-state.json'; reject_links(path)
+        if not path.is_file() or path.stat().st_size > MAX_STATE: raise ValueError('legacy source audit missing')
+        legacy = json.loads(path.read_text())
+        if _hash(legacy) != meta['legacy']['state_sha256'] or legacy_inventory(stack,legacy) != meta['legacy']['observed']:
+            raise ValueError('legacy source changed during restoration')
     if meta['stage'] == 'freezing':
         # Stop verified application writers first, then persistent services.
         # Missing resources are expected in disaster recovery; replacements are not.
-        source_inventory(stack, state)
+        if 'legacy' not in meta: source_inventory(stack, state)
         for lifecycle in ('application', 'persistent'):
             for name, item in state['services'].items():
                 if item['lifecycle'] != lifecycle: continue

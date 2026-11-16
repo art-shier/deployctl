@@ -28,7 +28,7 @@ from deployctl.contract import read_yaml
 from deployctl.runtime import project_name
 from deployctl import __version__
 from platform_management_integration import verify_management
-from remote_agent_docker_integration import verify_remote_agent, verify_remote_multiservice
+from remote_agent_docker_integration import verify_remote_agent, verify_remote_multiservice, verify_legacy_stack_cutover
 
 
 def run(*argv,input=None,env=None,check=True):
@@ -222,6 +222,7 @@ set -Eeuo pipefail
             cli('install',other,'--prod','--port',port(),*flags)
             verify_remote_agent(owner, origin, base, other, other_cfg, other_image, root, config_root)
             verify_remote_multiservice(owner, origin, base, other, other_image, root, config_root)
+            verify_legacy_stack_cutover(base, other_cfg, other_image)
             other_state_path=root/other/'prod/state.json';other_state=json.loads(other_state_path.read_text())
             assert other_state['current']['version']=='v1.0.0' and other_state['transaction'] is None
             moved=owner.json('GET',f'/api/v1/projects/{other}')

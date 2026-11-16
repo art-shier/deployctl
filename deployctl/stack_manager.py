@@ -61,7 +61,14 @@ def _journal(value):
         if not value['id'] or value['rollback_barrier'] is not True or value['action'] is not None:
             raise ValueError('invalid restoration journal')
         meta = value['restore']
-        mapping(meta, {'plan_id','selection','stage'}, {'plan_id','selection','stage'}, 'restoration metadata')
+        mapping(meta, {'plan_id','selection','stage','legacy'}, {'plan_id','selection','stage'}, 'restoration metadata')
+        if 'legacy' in meta:
+            old = mapping(meta['legacy'], {'state_sha256','observed'}, {'state_sha256','observed'}, 'legacy restoration')
+            _digest(old['state_sha256'])
+            obs = mapping(old['observed'], {'container_id','fingerprint','volumes'}, {'container_id','fingerprint','volumes'}, 'legacy source observation')
+            _digest(obs['container_id']); _digest(obs['fingerprint'])
+            if not isinstance(obs['volumes'],list) or len(obs['volumes'])>128: raise ValueError('invalid legacy volumes')
+            for volume in obs['volumes']: _resource(volume)
         _digest(meta['plan_id'])
         if meta['plan_id'][:32] != value['id'] or meta['stage'] not in ('freezing','restoring'):
             raise ValueError('invalid restoration identity/stage')
@@ -302,10 +309,14 @@ class StackManager:
                defaults=None, port=None, bind=None, management=None, params=None, job_sources=None, requested_jobs=None, preview=False, maintenance=None, restoration=None):
         if release['schema_version'] != 3:
             raise ValueError('legacy release cannot replace managed multi-service resources')
+        legacy = None
         if state['schema_version'] != 3:
             if state['current'] or state['previous']:
-                raise ValueError('legacy installation requires explicit migration into a new managed stack')
+                if restoration is None:
+                    raise ValueError('legacy installation requires explicit migration into a new managed stack')
+                legacy = copy.deepcopy(state)
             state = empty_stack_state(self.app, self.env)
+            if legacy: state['binding'] = copy.deepcopy(legacy['binding'])
         if params: raise ValueError('installation inputs require explicit job bindings')
         previous = self.load(state['current']) if state['current'] else None
         if managed_configuration is None:
@@ -349,9 +360,9 @@ class StackManager:
             mapping(restoration, {'plan_id'}, {'plan_id'}, 'restoration request')
             if maintenance: raise ValueError('restoration cannot be combined with maintenance')
             if preview:
-                return plan_restore(self, state, effective, values, job_sources, requested_jobs, overrides, management)
+                return plan_restore(self, state, effective, values, job_sources, requested_jobs, overrides, management, legacy)
             return restore_stack(self, state, effective, values, job_sources, requested_jobs,
-                                 restoration['plan_id'], overrides, management)
+                                 restoration['plan_id'], overrides, management, legacy)
         from .stack_jobs import select_jobs
         selection = select_jobs(effective, state, values, job_sources, requested_jobs)
         if preview:

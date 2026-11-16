@@ -46,3 +46,26 @@ may be stale. `ctl recover APP --env ENV --operation ID` reconciles an interrupt
 restoration; failed or ambiguous import outcomes still require investigation.
 These commands do not adopt legacy hook-managed containers or silently reuse an
 existing volume.
+
+## Explicit cutover from a legacy single-service installation
+
+The same `restore --plan` / `restore --plan-id` flow can migrate an established
+snapshot-based single-service installation while preserving its application,
+environment and public binding. First quiesce all application-specific external
+writers, take and verify the final backup, then `ctl stop APP --env ENV`. A running,
+missing or changed legacy app container is rejected before planning. Ordinary
+`upgrade` continues to reject cross-schema migration.
+
+The reviewed plan binds the old snapshot, stopped container and mounted volume
+identities. The source state is retained privately under the restoration audit;
+a durable schema-3 parent operation precedes candidate creation. Recovery checks
+that the old source remains stopped and unchanged. New resources use a separate
+generation and never adopt the old hook-managed database or volumes. The old
+container and data remain available for investigation. Successful promotion has
+no previous deployment, preventing rollback onto potentially stale legacy data.
+The next ordinary upgrade uses the same application/environment and new volumes.
+
+External databases and hook-created sidecars are outside ctl's legacy inventory.
+Their write freeze and backup correctness must be established by the operator
+and application restore program; stopping the HTTP container alone is not proof
+that every external writer has stopped.
