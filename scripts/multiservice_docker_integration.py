@@ -121,6 +121,7 @@ def verify_restore(source, images, values, source_pg, base, projects):
     app = config['application']; project = project_name(app,'test'); projects.append(project)
     config['volumes']['restore-scratch'] = {'retain':True}
     config['jobs'] = {'restore':{'image':images['postgres'],'trigger':'bootstrap',
+        'permission_profile':'database-init',
         'depends_on':{'postgres':'healthy'}, 'timeout_seconds':60,
         'volumes':{'restore-scratch':'/var/lib/postgresql'},
         'environment':{'PGHOST':{'literal':'postgres'},'PGUSER':{'literal':'postgres'},
