@@ -18,3 +18,31 @@ The restore program must validate the backup checksum, empty target and restored
 This recovery command does not adopt unregistered containers, restore missing volumes, retry failed imports, or perform database version maintenance. Those cases require an isolated candidate and explicit verified recovery workflow; they must not be bypassed by deleting state, volumes or the pending transaction. Stop/restart interruption journals are not deployment operation IDs.
 
 The Linux fixture `scripts/multiservice_docker_integration.py` exercises a real `pg_dump`, source checksum, empty target, SQL data verification, process loss before success acknowledgement, and subsequent upgrade after removing backup credentials.
+
+## Persistent maintenance and isolated disaster restoration
+
+`ctl maintain APP --env ENV --release PACKAGE --service postgres --backup-sha256 SHA --plan`
+previews same-image, same-volume database configuration maintenance. Apply the
+same arguments with `--plan-id ID` returned by the preview, without `--plan`.
+Applications are stopped before the persistent change and restarted after its
+health check. Keep the verified backup available: a SHA records operator input,
+it does not itself prove an external backup can be restored.
+
+For an established multi-service deployment whose data volume is lost, use a
+release declaring the restoration jobs and required backup configuration:
+
+```
+ctl restore APP --env ENV --release PACKAGE --job-source restore=SHA --plan
+ctl restore APP --env ENV --release PACKAGE --job-source restore=SHA --plan-id ID
+```
+
+Restoration allocates an isolated resource generation and preserves old volumes
+and containers. Every application must depend on the restoration jobs. Those
+jobs must validate the backup contents and restored data before succeeding.
+The source is stopped before the candidate starts on the public binding. A
+successful candidate becomes the current deployment; normal upgrades continue
+using its volumes. Cross-generation rollback is blocked because the old data
+may be stale. `ctl recover APP --env ENV --operation ID` reconciles an interrupted
+restoration; failed or ambiguous import outcomes still require investigation.
+These commands do not adopt legacy hook-managed containers or silently reuse an
+existing volume.

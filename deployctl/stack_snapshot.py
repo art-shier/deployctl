@@ -34,8 +34,21 @@ def validate_stack_values(values):
     return copy.deepcopy(values)
 
 
+def validate_generation(generation):
+    if generation is not None and (not isinstance(generation, str) or not re.fullmatch('[a-f0-9]{32}', generation)):
+        raise ValueError('invalid stack generation')
+    return generation
+
+
+def snapshot_root(root, generation=None):
+    validate_generation(generation)
+    root = Path(root).absolute()
+    return root / 'generations' / generation if generation is not None else root
+
+
 def validate_stack_ref(ref):
-    mapping(ref, {'version', 'snapshot'}, {'version', 'snapshot'}, 'stack reference')
+    mapping(ref, {'version', 'snapshot', 'generation'}, {'version', 'snapshot'}, 'stack reference')
+    validate_generation(ref.get('generation'))
     version(ref['version'])
     if not isinstance(ref['snapshot'], str) or not re.fullmatch('[a-f0-9]{64}', ref['snapshot']):
         raise ValueError('invalid stack snapshot reference')
@@ -86,14 +99,16 @@ def _compose(release, active_jobs):
 
 def load_stack_snapshot(root, ref, application):
     ref = validate_stack_ref(ref)
-    root = Path(root).absolute()
+    root = snapshot_root(root, ref.get('generation'))
     directory = root / 'stacks' / ref['snapshot']
     raw = _read(directory / 'snapshot.json')
     if hashlib.sha256(raw).hexdigest() != ref['snapshot']:
         raise ValueError('stack snapshot integrity failure')
     try: data = json.loads(raw)
     except (UnicodeError, ValueError) as exc: raise ValueError('invalid stack snapshot JSON') from exc
-    mapping(data, {'release', 'values', 'overrides', 'management', 'active_jobs'}, {'release', 'values', 'overrides', 'management', 'active_jobs'}, 'stack snapshot')
+    mapping(data, {'release', 'values', 'overrides', 'management', 'active_jobs', 'generation'}, {'release', 'values', 'overrides', 'management', 'active_jobs'}, 'stack snapshot')
+    if data.get('generation') != ref.get('generation'):
+        raise ValueError('stack generation identity mismatch')
     release = validate_multiservice_release(data['release'])
     if release['application'] != application or release['version'] != ref['version']:
         raise ValueError('stack snapshot identity mismatch')
@@ -112,7 +127,8 @@ def load_stack_snapshot(root, ref, application):
     return StackSnapshot(ref, directory, release, values, bundles, overrides, data['management'])
 
 
-def create_stack_snapshot(root, release, values, overrides=None, management=None, active_jobs=None):
+def create_stack_snapshot(root, release, values, overrides=None, management=None, active_jobs=None, generation=None):
+    validate_generation(generation)
     release = validate_multiservice_release(release)
     values = validate_stack_values(values)
     from .runtime_config import validate_values
@@ -120,15 +136,18 @@ def create_stack_snapshot(root, release, values, overrides=None, management=None
     active_jobs = list(release['deployment']['jobs']) if active_jobs is None else list(active_jobs)
     nodes = _nodes(release, active_jobs)
     data = {'release': release, 'values': values, 'overrides': overrides, 'management': management, 'active_jobs': active_jobs}
+    if generation is not None: data['generation'] = generation
     raw = json.dumps(data, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
     if len(raw) > MAX_STATE: raise ValueError('stack snapshot exceeds size limit')
     digest = hashlib.sha256(raw).hexdigest()
     ref = {'version': release['version'], 'snapshot': digest}
-    root = _directory(root)
+    if generation is not None: ref['generation'] = generation
+    base_root = root
+    root = _directory(snapshot_root(root, generation))
     home = _directory(root / 'stacks')
     target = home / digest
     reject_links(target)
-    if target.exists(): return load_stack_snapshot(root, ref, release['application'])
+    if target.exists(): return load_stack_snapshot(base_root, ref, release['application'])
     config = release['deployment']
     for name, spec in nodes.items():
         prepare_service_bundle(root, name, spec, values)
@@ -140,4 +159,4 @@ def create_stack_snapshot(root, release, values, overrides=None, management=None
         if not target.exists(): pending.rename(target); _sync_directory(home)
     finally:
         if pending.exists(): shutil.rmtree(pending)
-    return load_stack_snapshot(root, ref, release['application'])
+    return load_stack_snapshot(base_root, ref, release['application'])

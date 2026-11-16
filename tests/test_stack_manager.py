@@ -429,3 +429,88 @@ def test_database_identity_is_durable_before_starting_logical_restore(runtime, t
             super().start_job(identity,spec)
     with patch('deployctl.stack_jobs.JobDockerAdapter',InspectJournal):
         manager.deploy('lifelog','prod',pkg,managed_configuration=values(),job_sources={'restore':'a'*64})
+
+
+def test_reviewed_maintenance_quiesces_app_and_preserves_volume(runtime,tmp_path):
+    manager,engine=runtime; install(manager,package(tmp_path))
+    config=source(); config['services']['postgres']['resources']={'cpus':0.5,'memory_limit':'512m'}
+    pkg=build_release(config,{'api':API_IMAGE,'postgres':IMAGE},'v2.1.0',tmp_path/'packages')
+    request={'services':['postgres'],'backup_sha256':'d'*64}
+    before=copy.deepcopy(engine.volumes); pg=engine.containers['postgres']['Id']
+    plan=manager.plan('lifelog','prod',pkg,upgrade=True,managed_configuration=values(),maintenance=request)
+    calls=list(engine.calls)
+    with pytest.raises(ValueError,match='plan'):
+        manager.deploy('lifelog','prod',pkg,upgrade=True,managed_configuration=values(),maintenance=request)
+    assert engine.calls==calls
+    request['plan_id']=plan['maintenance']['plan_id']
+    result=manager.deploy('lifelog','prod',pkg,upgrade=True,managed_configuration=values(),maintenance=request)
+    new=engine.calls[len(calls):]
+    assert new.index(('stop','api')) < new.index(('up','postgres')) < new.index(('start','api'))
+    assert engine.volumes==before and engine.containers['postgres']['Id']!=pg
+    assert result['transaction'] is None
+
+
+def test_maintenance_never_performs_in_place_image_migration(runtime,tmp_path):
+    manager,engine=runtime; install(manager,package(tmp_path))
+    config=source(); changed=IMAGE.replace('a'*64,'e'*64); config['services']['postgres']['image']=changed
+    pkg=build_release(config,{'api':API_IMAGE,'postgres':changed},'v2.1.0',tmp_path/'packages')
+    with pytest.raises(ValueError,match='isolated restore'):
+        manager.plan('lifelog','prod',pkg,upgrade=True,managed_configuration=values(),
+                     maintenance={'services':['postgres'],'backup_sha256':'d'*64})
+
+
+def test_cli_maintenance_requires_explicit_backup_and_reviewed_plan(runtime,tmp_path,capsys):
+    from deployctl.cli import main
+    manager,engine=runtime; install(manager,package(tmp_path))
+    with patch('deployctl.runtime.Manager',return_value=manager), patch.object(manager,'plan',return_value={}) as plan:
+        assert main(['maintain','lifelog','--env','prod','--release',str(package(tmp_path,'v2.1.0')),
+                     '--service','postgres','--backup-sha256','d'*64,'--plan','--quiet'])==0
+    assert plan.call_args.kwargs['upgrade'] is True
+    assert plan.call_args.kwargs['maintenance']=={'services':['postgres'],'backup_sha256':'d'*64,'plan_id':None}
+
+
+def test_maintenance_failure_keeps_pending_and_never_downgrades_database(runtime,tmp_path):
+    manager,engine=runtime; install(manager,package(tmp_path))
+    config=source(); config['services']['postgres']['resources']={'cpus':0.5,'memory_limit':'512m'}
+    pkg=build_release(config,{'api':API_IMAGE,'postgres':IMAGE},'v2.1.0',tmp_path/'packages')
+    request={'services':['postgres'],'backup_sha256':'d'*64}
+    request['plan_id']=manager.plan('lifelog','prod',pkg,upgrade=True,managed_configuration=values(),maintenance=request)['maintenance']['plan_id']
+    original=Adapter.healthy
+    def failed(driver,name):
+        if name=='postgres' and driver.release['version']=='v2.1.0': raise RuntimeError('database unhealthy')
+        return original(driver,name)
+    with patch.object(Adapter,'healthy',failed),pytest.raises(RuntimeError):
+        manager.deploy('lifelog','prod',pkg,upgrade=True,managed_configuration=values(),maintenance=request)
+    home,_=manager.paths('lifelog','prod'); pending=manager.state(home,'lifelog','prod')
+    assert pending['transaction']['journal']['maintenance']['services']==['postgres']
+    assert not engine.containers['api']['running']
+    with pytest.raises(ValueError,match='recovery'): manager.rollback('lifelog','prod')
+    result=manager.recover('lifelog','prod',pending['transaction']['journal']['id'])
+    assert result['transaction'] is None and engine.containers['api']['running']
+
+
+def test_generation_install_and_upgrade_preserve_isolated_resources(runtime, tmp_path):
+    from deployctl.stack_manager import StackManager, empty_stack_state
+    manager, engine = runtime
+    home, folder = manager.paths('lifelog', 'prod')
+    stack = StackManager(manager, home, folder, 'lifelog', 'prod')
+    state = empty_stack_state('lifelog', 'prod'); state['generation'] = 'a'*32
+    stack.save(state)
+    first = install(manager, package(tmp_path))
+    assert first['current']['generation'] == 'a'*32
+    assert all('-g'+'a'*32 in v['name'] for v in first['volumes'].values())
+    pg = copy.deepcopy(engine.containers['postgres'])
+    upgraded = install(manager, package(tmp_path, 'v2.1.0'), upgrade=True)
+    assert upgraded['current']['generation'] == 'a'*32
+    assert engine.containers['postgres'] == pg
+
+
+def test_cross_generation_rollback_is_refused(runtime, tmp_path):
+    from deployctl.stack_manager import StackManager
+    manager, engine = runtime
+    state = install(manager, package(tmp_path))
+    state['previous'] = dict(state['current'], generation='b'*32)
+    home, folder = manager.paths('lifelog', 'prod')
+    stack = StackManager(manager, home, folder, 'lifelog', 'prod')
+    with pytest.raises(ValueError, match='cross-generation'):
+        stack.rollback(state)

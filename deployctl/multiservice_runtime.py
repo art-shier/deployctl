@@ -12,17 +12,19 @@ class ServiceExecutor:
         self.driver = driver
         self.save = save
 
-    def apply(self, plan, services, jobs, previous, rollback_barrier=False):
+    def apply(self, plan, services, jobs, previous, rollback_barrier=False, maintenance=None):
         if not plan.get('applicable'):
             raise ValueError('deployment requires maintenance or recovery before apply')
         changes = {name: action for name, action in plan['services'].items() if action != 'unchanged'}
         if any(action not in ('create', 'update', 'start') for action in changes.values()):
             raise ValueError('unsupported service action')
-        if any(services[name]['lifecycle'] == 'persistent' and action == 'update' for name, action in changes.items()):
+        authorized=set(maintenance['services']) if maintenance else set()
+        if any(services[name]['lifecycle'] == 'persistent' and action == 'update' and name not in authorized for name, action in changes.items()):
             raise ValueError('persistent service requires explicit maintenance')
         journal = {'id': uuid.uuid4().hex, 'phase': 'prepared', 'action': None,
                    'previous': copy.deepcopy(previous), 'attempted': [], 'completed': [],
-                   'jobs': {}, 'rollback_barrier': rollback_barrier}
+                   'jobs': {}, 'rollback_barrier': rollback_barrier or bool(maintenance)}
+        if maintenance: journal['maintenance']=copy.deepcopy(maintenance)
 
         def record(phase, kind=None, name=None):
             journal['phase'] = phase
@@ -36,6 +38,10 @@ class ServiceExecutor:
                 record('pulling', 'pull', name); self.driver.pull(name)
             record('resources', 'ensure-resources')
             self.driver.ensure_resources()
+            if maintenance:
+                for name in reversed(plan['order']):
+                    if name in previous and name in services and services[name]['lifecycle']=='application':
+                        record('quiescing','stop',name); self.driver.stop(name); record('quiesced')
             for name in plan['order']:
                 if name in jobs:
                     journal['jobs'][name] = 'unknown'

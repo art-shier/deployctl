@@ -56,3 +56,20 @@ def test_completed_jobs_do_not_require_credentials_or_compose_env_files(tmp_path
     compose = yaml.safe_load((snapshot.directory/'compose.yaml').read_text())
     assert set(compose['services']) == {'api', 'postgres'}
     assert load_stack_snapshot(tmp_path, snapshot.ref, 'lifelog').release['deployment']['jobs']['restore']
+
+
+def test_recovery_generation_keeps_configuration_and_resource_identity_isolated(tmp_path):
+    from deployctl.stack_snapshot import create_stack_snapshot,load_stack_snapshot
+    first=create_stack_snapshot(tmp_path,full_release(),values())
+    second=create_stack_snapshot(tmp_path,full_release(),values(),generation='a'*32)
+    assert first.ref != second.ref and first.directory != second.directory
+    assert first.bundles['postgres'] != second.bundles['postgres']
+    assert load_stack_snapshot(tmp_path,second.ref,'lifelog').ref == second.ref
+
+
+@pytest.mark.parametrize('generation', ['../escape', '', 'A'*32, 'a'*31, 42])
+def test_generation_rejects_invalid_paths(tmp_path, generation):
+    from deployctl.stack_snapshot import create_stack_snapshot
+    with pytest.raises(ValueError, match='generation'):
+        create_stack_snapshot(tmp_path, full_release(), values(), generation=generation)
+    assert not list(tmp_path.iterdir())

@@ -10,13 +10,13 @@ from .service_docker import ServiceDockerDriver
 from .service_plan import plan_services, service_fingerprint
 from .service_state import write_inventory
 from .stack_snapshot import (create_stack_snapshot, load_stack_snapshot, validate_stack_ref,
-                             validate_stack_values)
+                             validate_stack_values, validate_generation, snapshot_root)
 
 
 def empty_stack_state(app, env):
     return {'schema_version': 3, 'multi_service': True, 'application': app, 'environment': env,
             'current': None, 'previous': None, 'transaction': None, 'binding': None,
-            'services': {}, 'volumes': {}, 'jobs': {}, 'network': None}
+            'services': {}, 'volumes': {}, 'jobs': {}, 'network': None, 'generation': None}
 
 
 def _text(value, field, maximum=1024):
@@ -54,8 +54,31 @@ def _job_record(item):
 def _journal(value):
     if not isinstance(value,dict): raise ValueError('invalid transaction journal')
     phase = value.get('phase')
+    if phase == 'restoring':
+        fields = {'id','phase','action','rollback_barrier','restore'}
+        mapping(value, fields, fields, 'restoration journal')
+        validate_generation(value['id'])
+        if not value['id'] or value['rollback_barrier'] is not True or value['action'] is not None:
+            raise ValueError('invalid restoration journal')
+        meta = value['restore']
+        mapping(meta, {'plan_id','selection','stage'}, {'plan_id','selection','stage'}, 'restoration metadata')
+        _digest(meta['plan_id'])
+        if meta['plan_id'][:32] != value['id'] or meta['stage'] not in ('freezing','restoring'):
+            raise ValueError('invalid restoration identity/stage')
+        selection = meta['selection']
+        mapping(selection, {'active','sources','order'}, {'active','sources','order'}, 'restoration selection')
+        for key in ('active','order'):
+            items = selection[key]
+            if not isinstance(items,list) or len(items)>128 or len(set(items))!=len(items):
+                raise ValueError('invalid restoration job order')
+            for name in items: validate_name(name,'restoration node')
+        if not isinstance(selection['sources'],dict) or set(selection['sources']) != set(selection['active']):
+            raise ValueError('invalid restoration sources')
+        for digest in selection['sources'].values(): _digest(digest)
+        return
+
     phases = ('prepared','pulling','resources','job-running','job-succeeded','applying',
-              'checking','checked','succeeded','rolling-back','rolled-back','recovery-required','stop','restart')
+              'checking','checked','quiescing','quiesced','succeeded','rolling-back','rolled-back','recovery-required','stop','restart')
     if phase not in phases or type(value.get('rollback_barrier')) is not bool: raise ValueError('invalid transaction phase/barrier')
     action = value.get('action')
     if action is not None:
@@ -67,7 +90,13 @@ def _journal(value):
         mapping(value, {'phase','action','rollback_barrier'}, {'phase','action','rollback_barrier'}, 'operation journal')
         return
     fields = {'id','phase','action','previous','attempted','completed','jobs','rollback_barrier'}
-    mapping(value,fields,fields,'deployment journal')
+    mapping(value,fields|{'maintenance'},fields,'deployment journal')
+    if 'maintenance' in value:
+        m=value['maintenance']
+        mapping(m,{'services','backup_sha256','plan_id'},{'services','backup_sha256','plan_id'},'maintenance')
+        _digest(m['backup_sha256']); _digest(m['plan_id'])
+        if not isinstance(m['services'],list) or not m['services'] or len(m['services'])>128: raise ValueError('invalid maintenance services')
+        for name in m['services']: validate_name(name,'service')
     if not isinstance(value['id'],str) or not re.fullmatch('[a-f0-9]{32}',value['id']): raise ValueError('invalid operation identity')
     for key in ('attempted','completed'):
         if not isinstance(value[key],list) or len(value[key]) > 128: raise ValueError('invalid journal service list')
@@ -81,6 +110,9 @@ def _journal(value):
 
 
 def validate_stack_state(state, app, env):
+    state = copy.deepcopy(state)
+    state.setdefault('generation', None)
+    validate_generation(state['generation'])
     fields = set(empty_stack_state(app, env))
     mapping(state, fields, fields, 'stack state')
     if type(state['schema_version']) is not int or state['schema_version'] != 3 or state['multi_service'] is not True:
@@ -89,6 +121,8 @@ def validate_stack_state(state, app, env):
         raise ValueError('stack state belongs to another application/environment')
     for key in ('current', 'previous'):
         if state[key] is not None: validate_stack_ref(state[key])
+    if state['current'] and state['current'].get('generation') != state['generation']:
+        raise ValueError('current stack generation mismatch')
     for kind in ('services', 'volumes', 'jobs'):
         if not isinstance(state[kind], dict) or len(state[kind]) > 128:
             raise ValueError('invalid stack inventory')
@@ -117,6 +151,8 @@ def validate_stack_state(state, app, env):
         validate_stack_ref(tx['target'])
         if tx['origin'] is not None: validate_stack_ref(tx['origin'])
         _journal(tx['journal'])
+        if tx['journal']['phase'] == 'restoring' and tx['target'].get('generation') != tx['journal']['id']:
+            raise ValueError('restoration target generation mismatch')
     return copy.deepcopy(state)
 
 
@@ -131,8 +167,10 @@ class StackManager:
         write_inventory(self.home / 'state.json', state)
 
     def driver(self, snapshot, state):
-        driver = ServiceDockerDriver(self.manager.driver, snapshot.directory, self.project,
-                                     snapshot.release, snapshot.environment(self.project), state)
+        generation = snapshot.ref.get('generation')
+        project = self.project[:50] + '-g' + generation if generation else self.project
+        driver = ServiceDockerDriver(self.manager.driver, snapshot.directory, project,
+                                     snapshot.release, snapshot.environment(project), state)
         driver.snapshot = snapshot
         return driver
 
@@ -151,10 +189,10 @@ class StackManager:
         elif driver.inspect('network', driver.network) is not None:
             raise ValueError('unregistered network exists; explicit recovery required')
         for name in candidate.release['deployment']['volumes']:
-            if name not in state['volumes'] and driver.inspect('volume', self.project+'-'+name) is not None:
+            if name not in state['volumes'] and driver.inspect('volume', driver.project+'-'+name) is not None:
                 raise ValueError('unregistered volume exists; refusing adoption')
         for name, item in state['volumes'].items():
-            actual_name = self.project+'-'+name
+            actual_name = driver.project+'-'+name
             if item.get('name') != actual_name: raise ValueError('volume name/ownership mismatch')
             resource = driver.inspect('volume', actual_name)
             if resource is None or resource.get('CreatedAt') != item.get('identity'):
@@ -198,13 +236,20 @@ class StackManager:
             state['services'][name] = dict(info, lifecycle=spec['lifecycle'], snapshot=snapshot.ref,
                 fingerprint=service_fingerprint(spec, snapshot.values))
 
-    def apply(self, state, snapshot, selection=None):
+    def apply(self, state, snapshot, selection=None, maintenance=None, resuming=False):
         self.manager.driver.check()
         observed, driver, old_drivers = self.observe(state, snapshot)
         plan = plan_services(snapshot.release, observed, snapshot.values)
         from .stack_jobs import select_jobs, bind_job_runner
         selection = selection or select_jobs(snapshot.release, state, snapshot.values)
         plan['order'] = selection['order']
+        if maintenance:
+            from .stack_maintenance import maintenance_plan
+            if selection['active']: raise ValueError('maintenance cannot implicitly run jobs')
+            plan = maintenance_plan(plan,snapshot.release,observed,old_drivers,maintenance)
+            if not resuming and maintenance.get('plan_id') != plan['maintenance']['plan_id']:
+                raise ValueError('maintenance plan changed or plan_id missing; preview again')
+            if resuming: plan['maintenance'] = maintenance
         if not plan['applicable']:
             raise ValueError('service plan requires explicit maintenance or recovery')
         driver.job_runner = bind_job_runner(driver, snapshot, state, selection, self.save)
@@ -214,14 +259,14 @@ class StackManager:
         barrier = bool((state.get('transaction') or {}).get('journal', {}).get('rollback_barrier'))
 
         def journal(value):
-            if value['phase'] == 'checked':
+            if value['phase'] in ('checked','quiesced'):
                 self.capture(state, snapshot, driver, old_drivers)
             state['transaction'] = {'target': snapshot.ref, 'origin': origin, 'journal': value}
             self.save(state)
 
         try:
             ServiceExecutor(driver, journal).apply(plan, snapshot.release['deployment']['services'],
-                {name:snapshot.release['deployment']['jobs'][name] for name in selection['active']}, baseline, rollback_barrier=barrier)
+                {name:snapshot.release['deployment']['jobs'][name] for name in selection['active']}, baseline, rollback_barrier=barrier, maintenance=plan.get('maintenance'))
             self.capture(state, snapshot, driver, old_drivers)
         except BaseException:
             # Do not pretend an interrupted/unknown deployment has rolled back.
@@ -248,7 +293,7 @@ class StackManager:
         return state
 
     def deploy(self, state, release, *, managed_configuration=None, updates=None, unset=None,
-               defaults=None, port=None, bind=None, management=None, params=None, job_sources=None, requested_jobs=None, preview=False):
+               defaults=None, port=None, bind=None, management=None, params=None, job_sources=None, requested_jobs=None, preview=False, maintenance=None, restoration=None):
         if release['schema_version'] != 3:
             raise ValueError('legacy release cannot replace managed multi-service resources')
         if state['schema_version'] != 3:
@@ -293,23 +338,35 @@ class StackManager:
                 if value is not None: endpoint[field] = value
             config['services'][name]['resources'].update({k:v for k,v in defaults.items() if k in ('cpus','memory_limit')})
         effective = validate_multiservice_release(effective)
+        if restoration is not None:
+            from .stack_restore import plan_restore, restore_stack
+            mapping(restoration, {'plan_id'}, {'plan_id'}, 'restoration request')
+            if maintenance: raise ValueError('restoration cannot be combined with maintenance')
+            if preview:
+                return plan_restore(self, state, effective, values, job_sources, requested_jobs, overrides, management)
+            return restore_stack(self, state, effective, values, job_sources, requested_jobs,
+                                 restoration['plan_id'], overrides, management)
         from .stack_jobs import select_jobs
         selection = select_jobs(effective, state, values, job_sources, requested_jobs)
         if preview:
             from .stack_snapshot import StackSnapshot
             nodes = {**effective['deployment']['services'],
                      **{name:effective['deployment']['jobs'][name] for name in selection['active']}}
-            bundles = {name:self.folder / 'services' / name / service_fingerprint(spec, values) for name,spec in nodes.items()}
-            snapshot = StackSnapshot({}, self.home / 'releases' / effective['version'], effective, values, bundles, overrides, management)
+            bundles = {name:snapshot_root(self.folder, state.get('generation')) / 'services' / name / service_fingerprint(spec, values) for name,spec in nodes.items()}
+            snapshot = StackSnapshot({'generation':state['generation']} if state.get('generation') else {}, self.home / 'releases' / effective['version'], effective, values, bundles, overrides, management)
             self.manager.driver.check()
-            observed, _, _ = self.observe(state, snapshot)
+            observed, _, old_drivers = self.observe(state, snapshot)
             plan = plan_services(effective, observed, values)
+            if maintenance:
+                from .stack_maintenance import maintenance_plan
+                if selection['active']: raise ValueError('maintenance cannot implicitly run jobs')
+                plan = maintenance_plan(plan,effective,observed,old_drivers,maintenance)
             plan.pop('fingerprints')
             plan.update(jobs={name:('run' if name in selection['active'] else 'skipped') for name in effective['deployment']['jobs']},
                         order=selection['order'], version=effective['version'])
             return plan
-        snapshot = create_stack_snapshot(self.folder, effective, values, overrides, management, active_jobs=selection['active'])
-        return self.apply(state, snapshot, selection)
+        snapshot = create_stack_snapshot(self.folder, effective, values, overrides, management, active_jobs=selection['active'], generation=state.get('generation'))
+        return self.apply(state, snapshot, selection, maintenance=maintenance)
 
     def recover(self, state, operation):
         from .stack_jobs import bind_job_runner, select_jobs, target_volumes, volume_identities
@@ -317,6 +374,9 @@ class StackManager:
         if (not isinstance(operation, str) or not re.fullmatch('[a-f0-9]{32}', operation)
                 or not tx or tx['journal'].get('id') != operation):
             raise ValueError('recovery operation does not match pending transaction')
+        if tx['journal'].get('phase') == 'restoring':
+            from .stack_restore import resume_restore
+            return resume_restore(self, state)
         snapshot = self.load(tx['target'])
         self.manager.driver.check()
         _, driver, _ = self.observe(state, snapshot)
@@ -343,7 +403,7 @@ class StackManager:
         selection = select_jobs(snapshot.release, state, snapshot.values)
         if selection['active']:
             raise ValueError('unstarted jobs require explicit verified recovery')
-        return self.apply(state, snapshot, selection)
+        return self.apply(state, snapshot, selection, maintenance=tx['journal'].get('maintenance'), resuming=True)
 
     def rollback(self, state):
         tx = state['transaction']
@@ -352,6 +412,8 @@ class StackManager:
         target = tx['origin'] if tx else state['previous']
         if not target:
             raise ValueError('no previous stack snapshot; retained resources require explicit recovery')
+        if target.get('generation') != state.get('generation'):
+            raise ValueError('cross-generation rollback requires verified data restoration')
         snapshot = self.load(target)
         return self.apply(state, snapshot)
 
@@ -359,7 +421,7 @@ class StackManager:
         target = state['transaction']['target'] if state['transaction'] else state['current']
         if not target: return copy.deepcopy(state)
         snapshot = self.load(target)
-        observed, _, _ = self.observe(state, snapshot)
+        observed, _, old_drivers = self.observe(state, snapshot)
         return observed
 
     def operate(self, state, action, tail=100, service=None):
