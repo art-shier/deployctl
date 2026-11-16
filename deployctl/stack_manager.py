@@ -424,6 +424,9 @@ class StackManager:
                 if prior and prior['lifecycle']=='persistent' and name in journal.get('maintenance',{}).get('services',[]):
                     prior.update(container_id=None,running=False,healthy=False)
                 continue
+            if info['running'] and not info['healthy']:
+                driver.healthy(name)
+                info = driver.observe(name,expected_id=info['container_id'])
             spec = snapshot.release['deployment']['services'][name]
             state['services'][name] = dict(info,lifecycle=spec['lifecycle'],snapshot=snapshot.ref,
                 fingerprint=service_fingerprint(spec,snapshot.values))

@@ -28,11 +28,14 @@ from deployctl.contract import read_yaml
 from deployctl.runtime import project_name
 from deployctl import __version__
 from platform_management_integration import verify_management
-from remote_agent_docker_integration import verify_remote_agent
+from remote_agent_docker_integration import verify_remote_agent, verify_remote_multiservice
 
 
 def run(*argv,input=None,env=None,check=True):
     result=subprocess.run([str(x) for x in argv],input=input,env=env,capture_output=True,text=True,cwd=ROOT,timeout=600)
+    if check and result.returncode and tuple(str(x) for x in argv[:2]) == ('docker','build'):
+        # The fixed public example build has no secret args; expose bounded diagnostics.
+        sys.stderr.write(result.stderr[-4096:])
     if check and result.returncode: raise RuntimeError(f'fixture command {argv[0]} failed (exit {result.returncode}); output intentionally private')
     return result
 
@@ -218,6 +221,7 @@ set -Eeuo pipefail
             cli('publish',other,'--version','v1.0.0','--package',other_package,'--channel','stable','--client-config',publisher_config)
             cli('install',other,'--prod','--port',port(),*flags)
             verify_remote_agent(owner, origin, base, other, other_cfg, other_image, root, config_root)
+            verify_remote_multiservice(owner, origin, base, other, other_image, root, config_root)
             other_state_path=root/other/'prod/state.json';other_state=json.loads(other_state_path.read_text())
             assert other_state['current']['version']=='v1.0.0' and other_state['transaction'] is None
             moved=owner.json('GET',f'/api/v1/projects/{other}')

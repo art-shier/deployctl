@@ -68,6 +68,12 @@ class AgentTests(unittest.TestCase):
         self.executor.observe.return_value = self.executor.execute.return_value
         self.worker = agent.Agent(self.home, NODE, self.client, self.executor)
 
+    def test_heartbeat_advertises_verified_multiservice_runtime(self):
+        with patch.object(self.client,'json',wraps=self.client.json) as call:
+            self.worker.heartbeat(sample=False)
+        body=next(args.args[2] for args in call.call_args_list if args.args[1].endswith('/heartbeat'))
+        self.assertIn('multi_service_v1',body['capabilities'])
+
     def test_rejects_foreign_task_and_package_path_before_any_execution(self):
         for key, value in [('node_id', '9' * 32), ('id', '../bad'), ('action', 'shell')]:
             candidate = task()

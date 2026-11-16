@@ -517,7 +517,8 @@ def test_cross_generation_rollback_is_refused(runtime, tmp_path):
 
 
 @pytest.mark.parametrize('installed', [False, True])
-def test_recover_after_real_crash_between_up_and_inventory_checkpoint(runtime,tmp_path,installed):
+@pytest.mark.parametrize('starting', [False, True])
+def test_recover_after_real_crash_between_up_and_inventory_checkpoint(runtime,tmp_path,installed,starting):
     from deployctl.service_state import write_inventory
     manager,engine=runtime
     if installed: install(manager,package(tmp_path))
@@ -530,7 +531,17 @@ def test_recover_after_real_crash_between_up_and_inventory_checkpoint(runtime,tm
         install(manager,package(tmp_path,'v2.1.0',API_IMAGE.replace('b'*64,'c'*64)),upgrade=installed)
     crashed=durable[-1]
     write_inventory(home/'state.json',crashed)
-    result=manager.recover('lifelog','prod',crashed['transaction']['journal']['id'])
+    ready=[not starting]; observe=Adapter.observe; healthy=Adapter.healthy
+    def observed(adapter,name,expected_id=None):
+        result=observe(adapter,name,expected_id)
+        if name=='api' and not ready[0]: result['healthy']=False
+        return result
+    def waited(adapter,name):
+        if name=='api': ready[0]=True
+        return healthy(adapter,name)
+    with patch.object(Adapter,'observe',observed),patch.object(Adapter,'healthy',waited):
+        result=manager.recover('lifelog','prod',crashed['transaction']['journal']['id'])
+    assert ready[0]
     assert result['transaction'] is None and result['services']['api']['healthy']
 
 

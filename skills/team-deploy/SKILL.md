@@ -5,9 +5,11 @@ description: "Use when connecting an agent to ctl, managing authorized projects 
 
 # Team Deploy
 
-使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.19.5，兼容发布包协议v1/v2并支持管理服务自动Release安装及快捷运维命令、项目/项目组管理、发布凭据配置读写、项目组配置继承、可编辑凭据与真实镜像层下载进度；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
+使用已有 Team Deploy 工具和契约完成工作。随附CLI为v1.20.0，兼容发布包协议v1/v2/v3并支持管理服务自动Release安装及快捷运维命令、项目/项目组管理、发布凭据配置读写、项目组配置继承、可编辑凭据与真实镜像层下载进度；skill是agent的操作指南，实际构建和部署由流水线及deployctl执行。
 
 ## 选择任务
+
+- 同一应用包含多个服务/镜像、数据库持久卷、一次性恢复任务：读取 [多服务部署](references/multi-service.md)。使用 schema 2 声明和 schema 3 发布包；不要将数据库塞进应用镜像或重新编写编排钩子。
 
 - 静态站点/前端压缩包发布、指定公开目录或静态升级回滚：读取 [静态部署](references/static-deployment.md)。先查看deployment_type；静态使用独立模板，共享publish/install等命令，本期init仍生成Docker配置。
 
@@ -62,7 +64,7 @@ python "$SKILL_DIR/assets/deployctl.pyz" validate deploy/deployment.yaml
 
 ## 运行约束
 
-- Docker包对应一个无状态HTTP服务，单机替换可能短暂中断；静态包对应一个项目环境的公开文件树；不承诺多机编排或入口健康。
+- 旧 Docker 包对应一个无状态 HTTP 服务；多服务包由 ctl 管理同节点 Compose，持久服务需要明确维护。单机替换可能短暂中断；静态包对应一个项目环境的公开文件树；不承诺多机编排或入口健康。
 - Docker固定镜像digest，所有类型校验包SHA256；不能为绕过失败改用latest、手改Compose/静态链接或删除state.json。
 - 密钥留在服务器配置/凭证管理中，不进入 Git、发布包、命令 URL 或对话输出。raw env_file 保留 `$`；不要加 shell 引号。
 - 快照部署回滚恢复版本、配置和绑定；未捕获的旧历史引用仍用服务器文件。数据库/文件系统等hook副作用需另行恢复。

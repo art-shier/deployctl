@@ -1,6 +1,6 @@
 # ctl multi-service deployment design
 
-Status: proposed design; implementation and production changes not started.
+Status: approved design; implementation and review complete, release acceptance and Lifelog production cutover in progress. See the implementation plan ledger for executed verification.
 
 ## Agreed scope
 One application/environment/node owns multiple services with independent images. Keep existing publish, install, upgrade and online-upgrade entry points; preserve old single-service and static deployments. Lifelog will be redeployed with a new database volume restored from a final frozen-source backup, rather than adopting the existing companion container. First release is single-node Docker Compose; no cross-node scheduling or database HA.
@@ -8,7 +8,7 @@ One application/environment/node owns multiple services with independent images.
 ## Alternatives
 Bundling PostgreSQL into the application container couples lifecycle and is rejected. Project hooks are the current workaround but hide service state and repeat orchestration. Selected direction is a ctl-validated service manifest rendered into Compose, retaining platform ownership and integrity checks; arbitrary user Compose is not accepted.
 
-## Current implementation evidence
+## Baseline implementation evidence (before this change)
 `deployctl/contract.py` accepts deployment schema 1 and release schemas 1/2. `release.py:render_compose` emits one app service. `runtime.py:DockerDriver` hardcodes app in pull/up/inspect/logs/operations and uses remove-orphans/down. `runtime_snapshot.py` creates one shared configuration mount. Go artifact validation independently checks release contracts. All must change together; a CLI-only implementation is insufficient.
 
 ## Contracts and packaging

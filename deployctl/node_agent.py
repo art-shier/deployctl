@@ -523,7 +523,7 @@ class Agent:
         busy = self.worker is not None and self.worker.is_alive()
         observations = [v for k, v in samples.items() if not (busy and k == self.active_instance)]
         body = {'agent_version': __version__, 'platform': platform.system().lower() + '/' + platform.machine(),
-                'docker_available': self.docker_ok, 'instances': observations}
+                'docker_available': self.docker_ok, 'instances': observations, 'capabilities':['multi_service_v1']}
         if self.metrics_supported:
             body['metrics'] = self.host_metrics.sample()
         response = self.client.json('POST', '/api/v1/node/heartbeat', body)
