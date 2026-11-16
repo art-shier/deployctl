@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-async function fixture(page: Page) {
+async function fixture(page: Page, multiService = false) {
   const queries: any[] = [];
   const project = {
     slug: "notes",
@@ -15,6 +15,19 @@ async function fixture(page: Page) {
     if (path === "/api/v1/projects") json = [project];
     if (path === "/api/v1/projects/notes") json = project;
     if (path.endsWith("/environments")) json = ["prod"];
+    if (path.endsWith("/releases") && multiService)
+      json = [
+        {
+          id: "r",
+          version: "v3",
+          status: "published",
+          images: {
+            api: "registry.example/api@sha256:" + "c".repeat(64),
+            postgres: "registry.example/db@sha256:" + "b".repeat(64),
+          },
+          minimum_deployctl_version: "1.20.0",
+        },
+      ];
     if (path.endsWith("/nodes"))
       json = [
         {
@@ -35,6 +48,30 @@ async function fixture(page: Page) {
           project: "notes",
           environment: "prod",
           actual_version: "v2",
+          ...(multiService
+            ? {
+                stack: {
+                  services: {
+                    api: {
+                      version: "v2",
+                      image: "registry.example/api@sha256:" + "a".repeat(64),
+                      lifecycle: "application",
+                      health: "healthy",
+                    },
+                    postgres: {
+                      version: "v1",
+                      image: "registry.example/db@sha256:" + "b".repeat(64),
+                      lifecycle: "persistent",
+                      health: "healthy",
+                    },
+                  },
+                  jobs: { restore: "succeeded" },
+                  operation_id: "",
+                  phase: "",
+                  recovery_required: false,
+                },
+              }
+            : {}),
           health: "healthy",
           observed_at: new Date().toISOString(),
         },
@@ -172,4 +209,31 @@ test("switching source cancels a slow response and does not show stale logs", as
   await expect(page.getByLabel("日志内容")).not.toContainText("stale runtime");
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("multi-service state and selected database logs stay separate", async ({
+  page,
+}) => {
+  const queries = await fixture(page, true);
+  await page.getByLabel("部署版本").selectOption("v3");
+  await page.getByText("查看版本镜像（2 个组件）", { exact: true }).click();
+  await expect(page.getByText(/节点 ctl 至少 1.20.0/)).toBeVisible();
+  await page.getByText("服务状态", { exact: true }).click();
+  await expect(
+    page.getByText("postgres", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(page.getByText("持久服务", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "运行日志", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("服务或任务").selectOption("postgres");
+  await expect.poll(() => queries.at(-1)?.service).toBe("postgres");
+  await dialog.getByLabel("日志来源").selectOption("failure");
+  await expect.poll(() => queries.at(-1)?.source).toBe("failure");
+  expect(queries.at(-1)).not.toHaveProperty("service");
+  await dialog.getByLabel("日志来源").selectOption("runtime");
+  await page.setViewportSize({width:390,height:844});
+  await expect(dialog.getByLabel("服务或任务")).toHaveValue("postgres");
+  await dialog.screenshot({path:test.info().outputPath("multi-service-logs-mobile.png")});
+  await page.keyboard.press("Escape");
+  await page.screenshot({path:test.info().outputPath("multi-service-details-mobile.png"),fullPage:true});
 });

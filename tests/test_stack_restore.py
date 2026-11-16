@@ -41,7 +41,8 @@ def test_restore_cli_has_reviewed_plan_and_source_flags():
     assert args.plan and args.plan_id == 'b'*64
 
 
-def test_restore_promotes_new_generation_and_retains_source_after_freeze_interruption(tmp_path):
+@pytest.mark.parametrize("interrupt", ["freeze", "before-job"])
+def test_restore_promotes_new_generation_and_retains_source_after_freeze_interruption(tmp_path, interrupt):
     from unittest.mock import patch
     from deployctl.runtime import Manager
     from deployctl.stack_restore import plan_restore, restore_stack
@@ -57,11 +58,14 @@ def test_restore_promotes_new_generation_and_retains_source_after_freeze_interru
             info = self.observe(name, expected_id)
             if info['container_id']: self.engine.containers[name]['running'] = False
             calls.append(('freeze',self.project,name))
-            if fail[0]:
+            if fail[0] and interrupt == 'freeze':
                 fail[0] = False
                 raise RuntimeError('interrupted freeze')
     def bind(driver, snapshot, state, selection, save):
         def run(name):
+            if fail[0] and interrupt == 'before-job':
+                fail[0] = False
+                raise RuntimeError('interrupted freeze or before job')
             calls.append(('job',driver.project,name))
             spec = snapshot.release['deployment']['jobs'][name]
             state['jobs'][name] = {'id':'c'*64,'container':'job-'+'c'*32,'target':driver.project,

@@ -40,6 +40,9 @@ def validate_query(request):
     validate_name(request.get('project'))
     validate_name(request.get('environment'), 'environment', 32)
     source = request.get('source', 'runtime')
+    if request.get('service'):
+        validate_name(request['service'], 'service')
+        if source != 'runtime': raise ValueError('service selector requires runtime logs')
     if source not in ('runtime', 'archives', 'archive', 'deployment', 'failure'):
         raise ValueError('invalid log source')
     if source == 'deployment':
@@ -182,8 +185,35 @@ class NodeLogs:
                         handle.write(row.encode())
             self.prune(folder)
 
-    def containers(self, project, environment):
-        from .runtime import project_name
+    def containers(self, project, environment, service=None):
+        from .runtime import project_name, Manager
+        home = self.root / project / environment
+        manager = Manager(self.root, self.config_root or self.root / '.no-configuration')
+        state = manager.state(home, project, environment)
+        if state['schema_version'] == 3:
+            if self.config_root is None: raise ValueError('stack configuration required')
+            from .stack_manager import StackManager
+            from .stack_jobs import JobDockerAdapter
+            stack = StackManager(manager, home, self.config_root / project / environment, project, environment)
+            if service is None:
+                service = next((name for name,item in state['services'].items() if item['lifecycle']=='application'), None)
+            if service in state['services']:
+                item = state['services'][service]
+                snapshot = stack.load(item['snapshot'])
+                driver = stack.driver(snapshot,state)
+                info = driver.observe(service,expected_id=item['container_id'])
+                identity = info['container_id']
+            elif service in state['jobs']:
+                item = state['jobs'][service]
+                snapshot = stack.load(item['snapshot'])
+                driver = stack.driver(snapshot,state)
+                adapter = JobDockerAdapter(driver,service)
+                if adapter.inspect_job(item['container']) is None: return []
+                identity = driver.inspect('container',adapter.name(item['container']))['Id']
+            else: raise ValueError('unknown managed log service')
+            if not identity: return []
+            return [{'id':identity, 'version':snapshot.ref['version'], '_secrets':list(snapshot.values['secrets'].values())}]
+        if service not in (None,'app'): raise ValueError('legacy deployment has only app logs')
         output, truncated = bounded_command(['docker', 'ps', '-a', '--filter',
             'label=com.docker.compose.project=' + project_name(project, environment), '--filter',
             'label=com.docker.compose.service=app', '--no-trunc', '--format',
@@ -206,7 +236,10 @@ class NodeLogs:
             if request.get(key):
                 command.extend(['--' + key, request[key]])
         command.append(container['id'])
-        return bounded_command(command, limit)
+        text, clipped = bounded_command(command, limit)
+        for secret in container.get('_secrets',[]):
+            if secret: text = text.replace(secret,'[REDACTED]')
+        return text, clipped
 
     def atomic_write(self, path, raw):
         fd, name = tempfile.mkstemp(prefix='.pending-', dir=path.parent)
@@ -319,7 +352,8 @@ class NodeLogs:
                 text += hook
                 clipped = clipped or hook_clipped
             if source == 'runtime':
-                containers = self.containers(request['project'], request['environment'])
+                containers = (self.containers(request['project'], request['environment'],request['service'])
+                              if request.get('service') else self.containers(request['project'], request['environment']))
                 if not containers:
                     result['error'] = 'container_unavailable'
                     return result

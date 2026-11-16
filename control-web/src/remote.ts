@@ -31,6 +31,21 @@ export interface DeploymentNode {
   online: boolean;
 }
 export interface Instance {
+  stack?: {
+    services: Record<
+      string,
+      {
+        version: string;
+        image: string;
+        lifecycle: "application" | "persistent";
+        health: string;
+      }
+    >;
+    jobs: Record<string, string>;
+    operation_id: string;
+    phase: string;
+    recovery_required: boolean;
+  };
   id: string;
   node_id: string;
   project: string;

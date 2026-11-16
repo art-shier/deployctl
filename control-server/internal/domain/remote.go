@@ -92,13 +92,14 @@ type Binding struct {
 	BindAddress string `json:"bind_address"`
 }
 type Observation struct {
-	ID                 string   `json:"id"`
-	Project            string   `json:"project"`
-	Environment        string   `json:"environment"`
-	ActualVersion      string   `json:"actual_version"`
-	Health             string   `json:"health"`
-	Binding            *Binding `json:"binding"`
-	PendingTransaction bool     `json:"pending_transaction"`
+	Stack              *StackObservation `json:"stack,omitempty"`
+	ID                 string            `json:"id"`
+	Project            string            `json:"project"`
+	Environment        string            `json:"environment"`
+	ActualVersion      string            `json:"actual_version"`
+	Health             string            `json:"health"`
+	Binding            *Binding          `json:"binding"`
+	PendingTransaction bool              `json:"pending_transaction"`
 }
 type Instance struct {
 	Observation
@@ -107,6 +108,11 @@ type Instance struct {
 }
 
 func (o Observation) Validate() error {
+	if o.Stack != nil {
+		if err := o.Stack.Validate(); err != nil {
+			return err
+		}
+	}
 	if !remoteID.MatchString(o.ID) || ValidateName(o.Project, 48) != nil || ValidateName(o.Environment, 32) != nil {
 		return ErrInvalid
 	}

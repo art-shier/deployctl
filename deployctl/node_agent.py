@@ -289,19 +289,21 @@ class RuntimeExecutor:
                 state = self.manager.state(home, instance['project'], instance['environment'])
                 result['pending_transaction'] = bool(state['transaction'])
                 current = state['current']
-                if not current:
-                    result['health'] = 'unknown' if state['transaction'] else 'not_installed'
-                    return result
-                result['actual_version'] = current['version']
+                if current: result['actual_version'] = current['version']
                 if state['schema_version'] == 3:
                     from .stack_manager import StackManager
                     binding = state['binding']
                     result['binding'] = {'host_port': binding['port'], 'bind_address': binding['address']} if binding else None
-                    if state['transaction']: return result
-                    observed = StackManager(self.manager, home, folder, instance['project'], instance['environment']).status(state)
-                    services = list(observed['services'].values())
-                    result['health'] = ('healthy' if services and all(item['healthy'] for item in services)
-                                        else 'stopped' if any(not item['running'] for item in services) else 'unhealthy')
+                    from .stack_observation import observe_stack
+                    detail = observe_stack(StackManager(self.manager, home, folder, instance['project'], instance['environment']), state)
+                    result['stack'] = detail
+                    health = [item['health'] for item in detail['services'].values()]
+                    result['health'] = ('unknown' if detail['recovery_required'] or not health else
+                                        'healthy' if all(value == 'healthy' for value in health) else
+                                        'stopped' if 'stopped' in health else 'unhealthy')
+                    return result
+                if not current:
+                    result['health'] = 'unknown' if state['transaction'] else 'not_installed'
                     return result
                 binding = current['binding']
                 result['binding'] = {'host_port': binding['port'], 'bind_address': binding['address']}

@@ -7,6 +7,7 @@ export interface LogTarget {
   node: string;
   environment: string;
   task?: string;
+  services?: string[];
 }
 interface LogSource {
   id: string;
@@ -42,6 +43,7 @@ export function LogViewer({
   close: () => void;
 }) {
   const [source, setSource] = useState(target.task ? "deployment" : "runtime");
+  const [service, setService] = useState(target.services?.[0] || "");
   const [archive, setArchive] = useState("");
   const [sources, setSources] = useState<LogSource[]>([]);
   const [draft, setDraft] = useState({
@@ -66,6 +68,7 @@ export function LogViewer({
     const body = {
       source: source === "archives" && archive ? "archive" : source,
       tail: Number(filters.tail),
+      ...(source === "runtime" && service ? { service } : {}),
       search: filters.search,
       ...(source === "deployment" ? { task_id: target.task } : {}),
       ...(source === "archives" && archive ? { archive_id: archive } : {}),
@@ -102,6 +105,7 @@ export function LogViewer({
     target.instance,
     target.task,
     source,
+    service,
     archive,
     filters,
     revision,
@@ -135,6 +139,7 @@ export function LogViewer({
         </p>
         <form
           className="form-stack"
+          noValidate
           onSubmit={(event) => {
             event.preventDefault();
             if (
@@ -167,6 +172,21 @@ export function LogViewer({
                 <option value="failure">最近失败快照</option>
               </select>
             </label>
+            {source === "runtime" && !!target.services?.length && (
+              <label>
+                服务或任务
+                <select
+                  value={service}
+                  onChange={(event) => setService(event.target.value)}
+                >
+                  {target.services.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label>
               最多行数
               <select

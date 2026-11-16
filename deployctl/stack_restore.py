@@ -151,7 +151,12 @@ def resume_restore(stack, state):
         stack.save(state)
     if target['current'] != snapshot.ref or target['transaction']:
         if target['transaction']:
-            candidate.recover(target, target['transaction']['journal']['id'])
+            if target['transaction']['target'] != snapshot.ref:
+                raise ValueError('candidate transaction changed')
+            # The frozen selection belongs to this freshly allocated generation.
+            # JobRunner reconciles recorded executions and starts only jobs that
+            # have no durable execution record; failed/unknown attempts refuse.
+            candidate.apply(target, snapshot, meta['selection'], resuming=True)
         else:
             candidate.apply(target, snapshot, meta['selection'])
         target = stack.manager.state(candidate_home, stack.app, stack.env)

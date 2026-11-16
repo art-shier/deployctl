@@ -231,3 +231,11 @@ class RuntimeArchiveIntegrationTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'log_read_timeout'):
             node_logs.bounded_command([sys.executable,'-c','import time; time.sleep(20)'],1024,timeout=0.05)
         self.assertLess(time.monotonic()-started,2)
+
+
+def test_service_selector_rejects_paths_and_nonruntime_sources():
+    import pytest
+    base = dict(project='notes',environment='prod',source='runtime',tail=200)
+    node_logs.validate_query(dict(base,service='postgres'))
+    with pytest.raises(ValueError): node_logs.validate_query(dict(base,service='../secrets'))
+    with pytest.raises(ValueError): node_logs.validate_query(dict(base,source='failure',service='postgres'))

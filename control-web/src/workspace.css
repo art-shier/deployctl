@@ -974,3 +974,25 @@ td {
   width: auto;
   flex: 0 0 auto;
 }
+
+.stack-details {
+  max-width: 26rem;
+  margin-top: 0.5rem;
+  white-space: normal;
+}
+.stack-details summary {
+  cursor: pointer;
+}
+.stack-details summary:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+.stack-service {
+  padding-block: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.stack-image {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}

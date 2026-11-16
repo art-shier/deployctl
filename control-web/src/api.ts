@@ -58,6 +58,9 @@ export interface Group {
   created_at: string;
 }
 export interface Release {
+  schema_version?: number;
+  images?: Record<string, string>;
+  minimum_deployctl_version?: string;
   deployment_type?: DeploymentType;
   archive_format?: "zip" | "tar.gz";
   expanded_size?: number;

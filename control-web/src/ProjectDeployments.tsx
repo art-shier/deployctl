@@ -1,3 +1,4 @@
+import { StackDetails } from "./StackDetails";
 import { LogViewer, type LogTarget } from "./LogViewer";
 import {
   useEffect,
@@ -171,6 +172,9 @@ export function ProjectDeployments({
       clearTimeout(timer);
     };
   }, [base, draft.environment, revision]);
+  const selectedRelease = releases.find(
+    (release) => release.version === draft.version,
+  );
   const environmentTasks = tasks.filter(
     (task) => task.environment === draft.environment,
   );
@@ -354,9 +358,26 @@ export function ProjectDeployments({
                         </code>
                       </td>
                       <td>
-                        {instance.pending_transaction
-                          ? "待回滚恢复"
-                          : "无待处理事务"}
+                        {instance.stack?.recovery_required
+                          ? "需要恢复检查"
+                          : instance.pending_transaction
+                            ? "待回滚恢复"
+                            : "无待处理事务"}
+                        {instance.stack && (
+                          <StackDetails
+                            stack={instance.stack}
+                            fresh={
+                              !error &&
+                              !!nodes.find(
+                                (node) => node.id === instance.node_id,
+                              )?.online &&
+                              currentHealth(
+                                { ...instance, health: "healthy" },
+                                true,
+                              ) !== "unknown"
+                            }
+                          />
+                        )}
                       </td>
                       <td>
                         <button
@@ -365,6 +386,12 @@ export function ProjectDeployments({
                               instance: instance.id,
                               node: nodeName(instance.node_id),
                               environment: instance.environment,
+                              services: instance.stack
+                                ? [
+                                    ...Object.keys(instance.stack.services),
+                                    ...Object.keys(instance.stack.jobs),
+                                  ]
+                                : undefined,
                             })
                           }
                         >
@@ -485,6 +512,25 @@ export function ProjectDeployments({
               </select>
             </label>
           </div>
+          {draft.action !== "rollback" && selectedRelease?.images && (
+            <details className="stack-details">
+              <summary>
+                查看版本镜像（{Object.keys(selectedRelease.images).length}{" "}
+                个组件）
+              </summary>
+              <p className="muted small">
+                版本 {selectedRelease.version} · 节点 ctl 至少{" "}
+                {selectedRelease.minimum_deployctl_version || "—"}
+                。节点执行前会核对当前配置与数据卷；数据库镜像变更需单独执行维护或恢复。
+              </p>
+              {Object.entries(selectedRelease.images).map(([name, image]) => (
+                <p key={name}>
+                  <strong>{name}</strong>
+                  <code className="stack-image">{image}</code>
+                </p>
+              ))}
+            </details>
+          )}
           <div className="form-two">
             <label>
               主机端口

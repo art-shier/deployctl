@@ -99,7 +99,7 @@ def main():
             assert manager.state(home,app,'test')['transaction'] is None
             print('PASS: real app upgrade, rollback, failed upgrade and stop/restart preserve PostgreSQL container, mounts, volume and SQL data')
             maintained = copy.deepcopy(config)
-            maintained['services']['postgres']['resources'] = {'memory_limit':'512m'}
+            maintained['services']['postgres']['resources'] = {'memory_limit':'768m'}
             maintenance_package = release(maintained, 'v1.0.3')
             dump = docker('exec',pg['Id'],'pg_dump','-U','postgres','--no-owner','postgres')
             request = {'services':['postgres'], 'backup_sha256':hashlib.sha256(dump.encode()).hexdigest()}
@@ -108,6 +108,7 @@ def main():
             manager.deploy(app,'test',maintenance_package,upgrade=True,managed_configuration=values,maintenance=request)
             maintained_pg = container(project,'postgres')
             assert maintained_pg['Id'] != pg['Id']
+            assert maintained_pg['HostConfig']['Memory'] == 768*1024*1024
             assert json.loads(docker('volume','inspect',project+'-data'))[0] == volume
             assert docker('exec',maintained_pg['Id'],'psql','-U','postgres','-Atc','SELECT value FROM retained_probe') == 'survives'
             assert container(project,'api')['State']['Running']

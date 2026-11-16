@@ -7,6 +7,7 @@ import (
 )
 
 type LogQuery struct {
+	Service     string `json:"service,omitempty"`
 	ID          string `json:"id,omitempty"`
 	NodeID      string `json:"node_id,omitempty"`
 	InstanceID  string `json:"instance_id,omitempty"`
@@ -22,6 +23,9 @@ type LogQuery struct {
 }
 
 func (q LogQuery) Validate() error {
+	if q.Service != "" && (q.Source != "runtime" || ValidateName(q.Service, 48) != nil) {
+		return ErrInvalid
+	}
 	if !slices.Contains([]string{"runtime", "deployment", "archives", "archive", "failure"}, q.Source) || q.Tail < 1 || q.Tail > 2000 || len(q.Search) > 256 || !utf8.ValidString(q.Search) {
 		return ErrInvalid
 	}
