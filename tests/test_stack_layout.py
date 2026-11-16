@@ -35,6 +35,30 @@ def test_legacy_source_rejects_running_or_changed_identity(runtime):
     with patch.object(manager,'reference_environment',return_value=(home,{'image':'image'},snap,{})):
         first=legacy_inventory(stack,legacy());assert first['container_id']=='c'*64
         resource['State']['Running']=True
+        assert legacy_inventory(stack,legacy(),allow_running=True)==first
+        def stop(args,**kwargs):
+            if args[:2]==['docker','stop']:
+                resource['State']['Running']=False;return ''
+            return json.dumps([resource])
+        manager.driver._run=stop
+        assert legacy_inventory(stack,legacy(),stop=True,expected=first)==first
+        assert resource['State']['Running'] is False
+        resource['Id']='e'*64
+        resource['State']['Running']=True
+        with pytest.raises(ValueError,match='identity changed before stop'):
+            legacy_inventory(stack,legacy(),stop=True,expected=first)
+        assert resource['State']['Running'] is True
+        resource['Id']='c'*64
+        def crash_stop(args,**kwargs):
+            if args[:2]==['docker','stop']:
+                resource['State']['Running']=False
+                raise RuntimeError('crash after stop')
+            return json.dumps([resource])
+        manager.driver._run=crash_stop
+        with pytest.raises(RuntimeError,match='crash after stop'):
+            legacy_inventory(stack,legacy(),stop=True,expected=first)
+        assert legacy_inventory(stack,legacy(),stop=True,expected=first)==first
+        resource['State']['Running']=True
         with pytest.raises(ValueError,match='stopped'):legacy_inventory(stack,legacy())
         resource['State']['Running']=False;resource['Config']['Labels']['io.team-deploy.configuration']='f'*32
         with pytest.raises(ValueError,match='identity'):legacy_inventory(stack,legacy())

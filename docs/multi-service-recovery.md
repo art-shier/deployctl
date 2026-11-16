@@ -43,17 +43,16 @@ requirements independently of ctl's deployment plan.
 
 ## Single-service to multi-service layout upgrade
 
-A project migration script can prepare and validate its data separately, stop the
+A project may initialize from backup in its bootstrap job. Ordinary upgrade stops the
 old application, then invoke the ordinary upgrade entry point with a multi-service
 release. The existing app/environment/public binding are preserved:
 
 ```sh
-ctl stop example --env prod
 ctl upgrade example --env prod --version VERSION --plan
 ctl upgrade example --env prod --version VERSION
 ```
 
-ctl requires a verified, stopped legacy snapshot/container. It retains the old
+ctl verifies the legacy snapshot/container, journals the transition, and stops the exact old API container as part of upgrade. It retains the old
 container and mounts, records a durable layout operation, and allocates new owned
 resources in a separate namespace. It executes only the jobs/dependencies declared
 by the project. Success requires completed jobs and healthy declared services.

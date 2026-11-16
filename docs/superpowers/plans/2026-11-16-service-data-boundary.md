@@ -57,3 +57,11 @@ one skipped and four known macOS-specific exclusions; Linux CI runs those cases.
 Both real-Docker fixture declarations validate, published pyz help contains no
 restore command, and whitespace checks pass. Re-review closed the generic-job
 policy issue. New full Linux acceptance is the remaining release gate.
+
+## User-approved simplification (supersedes manual source preparation)
+
+Use existing OSS backup during Lifelog bootstrap; no separate source freeze or
+final snapshot. Generic layout upgrade now accepts a running source, pulls first,
+journals intent, verifies full source identity and stops the exact old API ID.
+Resume safely handles a crash after stop. Old data stays retained. Release this
+additional generic improvement as 1.20.1; do not move the existing 1.20.0 tag.

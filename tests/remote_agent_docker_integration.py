@@ -164,12 +164,9 @@ def verify_legacy_stack_cutover(base, deployment, image):
     try:
         manager.deploy(app,'prod',legacy_package)
         old_id=docker('ps','-aq','--filter','label=com.docker.compose.project='+project,'--filter','label=com.docker.compose.service=app')
-        try:manager.plan(app,'prod',package,upgrade=True,managed_configuration={'config':{},'secrets':{}})
-        except ValueError as error:assert 'stopped' in str(error)
-        else:raise AssertionError('running legacy source accepted')
-        manager.operate(app,'prod','stop')
         args={'upgrade':True,'managed_configuration':{'config':{},'secrets':{}}}
         plan=manager.plan(app,'prod',package,**args)
+        assert json.loads(docker('inspect',old_id))[0]['State']['Running'] is True
         target_project=project[:50]+'-g'+plan['generation'];projects.append(target_project)
         state=manager.deploy(app,'prod',package,**args)
         assert state['current']['version']=='v2.0.0' and state['previous'] is None and state['transaction'] is None

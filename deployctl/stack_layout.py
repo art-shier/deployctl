@@ -13,7 +13,7 @@ def _hash(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
 
 
-def legacy_inventory(stack, state):
+def legacy_inventory(stack, state, *, allow_running=False, stop=False, expected=None):
     """An explicit legacy cutover may retain, never adopt, a stopped source."""
     from .deployment_state import normalize_state
     state = normalize_state(state, stack.app, stack.env)
@@ -31,7 +31,8 @@ def legacy_inventory(stack, state):
                 'io.team-deploy.configuration':ref['configuration']}
     if not resource.get('Id') or conf.get('Image') != release['image'] or any(labels.get(k)!=v for k,v in required.items()):
         raise ValueError('legacy source container identity mismatch')
-    if (resource.get('State') or {}).get('Running') is not False:
+    running=(resource.get('State') or {}).get('Running')
+    if running is not False and not (running is True and (allow_running or stop)):
         raise ValueError('legacy application must be stopped before changing service layout')
     mounts = sorted(resource.get('Mounts') or [],key=lambda m:m.get('Destination',''))
     volumes = []
@@ -40,15 +41,22 @@ def legacy_inventory(stack, state):
             raw = json.loads(stack.manager.driver._run(['docker','volume','inspect',mount['Name']]))
             if len(raw)!=1 or not raw[0].get('CreatedAt'): raise ValueError('legacy source volume identity missing')
             volumes.append({'name':mount['Name'],'identity':raw[0]['CreatedAt']})
-    return {'container_id':resource['Id'], 'fingerprint':_hash({'config':conf,'host':resource.get('HostConfig'),
+    observed={'container_id':resource['Id'], 'fingerprint':_hash({'config':conf,'host':resource.get('HostConfig'),
             'mounts':mounts,'volumes':volumes}), 'volumes':volumes}
+    if stop:
+        if observed!=expected: raise ValueError('legacy source identity changed before stop')
+        if running:
+            stack.manager.driver._run(['docker','stop','--time','30',resource['Id']])
+            if legacy_inventory(stack,state)!=expected:
+                raise ValueError('legacy source changed after stop')
+    return observed
 
 
 def plan_layout(stack, state, legacy, release, values, requested, overrides, management):
     if state['current'] or state['transaction']:
         raise ValueError('layout transition requires a stopped legacy installation')
     stack.manager.driver.check()
-    observed = legacy_inventory(stack,legacy)
+    observed = legacy_inventory(stack,legacy,allow_running=True)
     selection = select_jobs(release,{},values,requested)
     for spec in release['deployment']['services'].values(): service_values(spec,values)
     primary = release['deployment'].get('primary_endpoint')
@@ -97,8 +105,13 @@ def resume_layout(stack,state):
     path=home/'source-state.json';reject_links(path)
     if not path.is_file() or path.stat().st_size>MAX_STATE:raise ValueError('legacy source audit missing')
     legacy=json.loads(path.read_text())
-    if _hash(legacy)!=meta['source_sha256'] or legacy_inventory(stack,legacy)!=meta['observed']:
+    if _hash(legacy)!=meta['source_sha256'] or legacy_inventory(stack,legacy,allow_running=True)!=meta['observed']:
         raise ValueError('legacy source changed during layout transition')
+    # Durable intent already exists; stop only the verified old API container.
+    # Its data and external companions remain untouched. Recovery repeats this
+    # check safely if the process exits after Docker stops the container.
+    if legacy_inventory(stack,legacy,stop=True,expected=meta['observed'])!=meta['observed']:
+        raise ValueError('legacy source changed while stopping for upgrade')
     candidate=StackManager(stack.manager,home,stack.folder,stack.app,stack.env)
     if not (home/'state.json').exists():
         target=empty_stack_state(stack.app,stack.env);target['generation']=generation;candidate.save(target)
