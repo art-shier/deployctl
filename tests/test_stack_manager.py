@@ -352,3 +352,80 @@ def test_agent_forwards_source_identity_and_runs_restore_once(runtime, tmp_path)
         result = RuntimeExecutor(manager, client).execute(task, lambda stage: None)
     assert result['health'] == 'healthy'
     assert [call for call in engine.calls if call[0]=='job'] == [('job','restore')]
+
+
+class SimulatedProcessLoss(BaseException):
+    pass
+
+
+def interrupted_restore(manager, tmp_path):
+    class LostAdapter(JobAdapter):
+        def inspect_job(self, identity):
+            current = super().inspect_job(identity)
+            if current: raise SimulatedProcessLoss()
+            return current
+    initial = values(); initial['secrets']['RESTORE_TOKEN'] = 'bootstrap-only-key'
+    with patch('deployctl.stack_jobs.JobDockerAdapter', LostAdapter), pytest.raises(SimulatedProcessLoss):
+        manager.deploy('lifelog','prod',job_package(tmp_path),managed_configuration=initial,job_sources={'restore':'a'*64})
+    home, _ = manager.paths('lifelog','prod')
+    return manager.state(home,'lifelog','prod')
+
+
+def test_recover_acknowledges_finished_job_without_repeating_restore(runtime, tmp_path):
+    manager, engine = runtime; state = interrupted_restore(manager,tmp_path)
+    operation = state['transaction']['journal']['id']
+    with patch('deployctl.stack_jobs.JobDockerAdapter', JobAdapter):
+        result = manager.recover('lifelog','prod',operation)
+    assert result['transaction'] is None and result['jobs']['restore']['status'] == 'succeeded'
+    assert engine.containers['postgres']['running'] and engine.containers['api']['running']
+    assert [call for call in engine.calls if call[0]=='job'] == [('job','restore')]
+
+
+def test_recover_rejects_wrong_operation_and_missing_job_container(runtime, tmp_path):
+    manager, engine = runtime; state = interrupted_restore(manager,tmp_path)
+    before = list(engine.calls)
+    with pytest.raises(ValueError, match='operation'):
+        manager.recover('lifelog','prod','f'*32)
+    assert engine.calls == before
+    engine.jobs.clear()
+    with patch('deployctl.stack_jobs.JobDockerAdapter', JobAdapter), pytest.raises(RuntimeError, match='unknown'):
+        manager.recover('lifelog','prod',state['transaction']['journal']['id'])
+    assert engine.calls == before
+    home, _ = manager.paths('lifelog','prod'); pending = manager.state(home,'lifelog','prod')
+    assert pending['transaction'] and pending['jobs']['restore']['status'] == 'unknown'
+
+
+def test_recovery_preserves_data_barrier_if_application_start_fails(runtime, tmp_path):
+    manager, engine = runtime; state = interrupted_restore(manager,tmp_path)
+    engine.fail = 'v2.0.0'
+    with patch('deployctl.stack_jobs.JobDockerAdapter', JobAdapter), pytest.raises(RuntimeError):
+        manager.recover('lifelog','prod',state['transaction']['journal']['id'])
+    home, _ = manager.paths('lifelog','prod'); pending = manager.state(home,'lifelog','prod')
+    assert pending['transaction']['journal']['rollback_barrier'] is True
+    assert pending['transaction']['journal']['phase'] == 'recovery-required'
+
+
+def test_cli_recover_uses_original_operation_id(runtime, tmp_path, capsys):
+    from deployctl.cli import main
+    manager, engine = runtime; state = interrupted_restore(manager,tmp_path)
+    with patch('deployctl.cli.local_manager', return_value=manager), patch('deployctl.stack_jobs.JobDockerAdapter', JobAdapter):
+        result = main(['recover','lifelog','--env','prod','--operation',state['transaction']['journal']['id'],
+                       '--root',str(manager.root),'--config-root',str(manager.config_root)])
+    assert result == 0, capsys.readouterr().err
+    assert [call for call in engine.calls if call[0]=='job'] == [('job','restore')]
+
+
+def test_database_identity_is_durable_before_starting_logical_restore(runtime, tmp_path):
+    manager, engine = runtime
+    config = source()
+    config['jobs'] = {'restore':{'image':API_IMAGE,'trigger':'bootstrap','command':['restore'],
+        'depends_on':{'postgres':'healthy'}}}
+    config['services']['api']['depends_on'] = {'restore':'succeeded'}
+    pkg = build_release(config, {'api':API_IMAGE,'postgres':IMAGE,'restore':API_IMAGE},'v2.0.0',tmp_path/'packages')
+    class InspectJournal(JobAdapter):
+        def start_job(self, identity, spec):
+            home, _ = manager.paths('lifelog','prod'); durable = manager.state(home,'lifelog','prod')
+            assert durable['services']['postgres']['container_id'] == engine.containers['postgres']['Id']
+            super().start_job(identity,spec)
+    with patch('deployctl.stack_jobs.JobDockerAdapter',InspectJournal):
+        manager.deploy('lifelog','prod',pkg,managed_configuration=values(),job_sources={'restore':'a'*64})

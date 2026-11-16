@@ -139,14 +139,17 @@ class StackManager:
         driver.rollback_drivers = old_drivers
         origin = copy.deepcopy(state['current'])
         baseline = copy.deepcopy(state['services'])
+        barrier = bool((state.get('transaction') or {}).get('journal', {}).get('rollback_barrier'))
 
         def journal(value):
+            if value['phase'] == 'checked':
+                self.capture(state, snapshot, driver, old_drivers)
             state['transaction'] = {'target': snapshot.ref, 'origin': origin, 'journal': value}
             self.save(state)
 
         try:
             ServiceExecutor(driver, journal).apply(plan, snapshot.release['deployment']['services'],
-                {name:snapshot.release['deployment']['jobs'][name] for name in selection['active']}, baseline)
+                {name:snapshot.release['deployment']['jobs'][name] for name in selection['active']}, baseline, rollback_barrier=barrier)
             self.capture(state, snapshot, driver, old_drivers)
         except BaseException:
             # Do not pretend an interrupted/unknown deployment has rolled back.
@@ -234,6 +237,40 @@ class StackManager:
                         order=selection['order'], version=effective['version'])
             return plan
         snapshot = create_stack_snapshot(self.folder, effective, values, overrides, management, active_jobs=selection['active'])
+        return self.apply(state, snapshot, selection)
+
+    def recover(self, state, operation):
+        from .stack_jobs import bind_job_runner, select_jobs, target_volumes, volume_identities
+        tx = state['transaction']
+        if (not isinstance(operation, str) or not re.fullmatch('[a-f0-9]{32}', operation)
+                or not tx or tx['journal'].get('id') != operation):
+            raise ValueError('recovery operation does not match pending transaction')
+        snapshot = self.load(tx['target'])
+        self.manager.driver.check()
+        _, driver, _ = self.observe(state, snapshot)
+        jobs = snapshot.release['deployment']['jobs']
+        active, sources = [], {}
+        for name in jobs:
+            if name not in snapshot.bundles: continue
+            prior = state['jobs'].get(name)
+            if not prior:
+                raise ValueError('job was not durably started; explicit recovery required')
+            if prior.get('snapshot') != snapshot.ref or prior.get('fingerprint') != service_fingerprint(jobs[name], snapshot.values):
+                raise ValueError('job snapshot identity changed; recovery required')
+            targets = target_volumes(snapshot.release['deployment'], name)
+            if prior.get('target_volumes') != volume_identities(state, targets):
+                raise ValueError('job target volume identity changed; recovery required')
+            if prior.get('status') not in ('starting', 'running', 'succeeded'):
+                raise ValueError('job outcome requires verified recovery; automatic repeat prohibited')
+            if prior['status'] != 'succeeded':
+                active.append(name); sources[name] = prior['source']
+        # JobRunner inspects an existing deterministic container; it cannot start
+        # a new attempt because every selected job has a durable prior record.
+        runner = bind_job_runner(driver, snapshot, state, {'active':active, 'sources':sources}, self.save)
+        for name in active: runner(name)
+        selection = select_jobs(snapshot.release, state, snapshot.values)
+        if selection['active']:
+            raise ValueError('unstarted jobs require explicit verified recovery')
         return self.apply(state, snapshot, selection)
 
     def rollback(self, state):

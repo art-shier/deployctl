@@ -12,7 +12,7 @@ class ServiceExecutor:
         self.driver = driver
         self.save = save
 
-    def apply(self, plan, services, jobs, previous):
+    def apply(self, plan, services, jobs, previous, rollback_barrier=False):
         if not plan.get('applicable'):
             raise ValueError('deployment requires maintenance or recovery before apply')
         changes = {name: action for name, action in plan['services'].items() if action != 'unchanged'}
@@ -22,7 +22,7 @@ class ServiceExecutor:
             raise ValueError('persistent service requires explicit maintenance')
         journal = {'id': uuid.uuid4().hex, 'phase': 'prepared', 'action': None,
                    'previous': copy.deepcopy(previous), 'attempted': [], 'completed': [],
-                   'jobs': {}, 'rollback_barrier': False}
+                   'jobs': {}, 'rollback_barrier': rollback_barrier}
 
         def record(phase, kind=None, name=None):
             journal['phase'] = phase

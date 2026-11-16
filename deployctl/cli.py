@@ -98,7 +98,7 @@ def parser():
     package.add_argument('--version', required=True)
     package.add_argument('--output', default='dist')
     package.add_argument('--commit', default='')
-    for name in ('install', 'upgrade', 'rollback', 'status', 'logs', 'restart', 'stop'):
+    for name in ('install', 'upgrade', 'rollback', 'recover', 'status', 'logs', 'restart', 'stop'):
         command = sub.add_parser(name)
         command.add_argument('application')
         command.add_argument('--env')
@@ -128,6 +128,8 @@ def parser():
             command.add_argument('--bind', help='override IPv4 bind address; default 127.0.0.1')
         if name in ('status', 'logs', 'restart', 'stop'):
             command.add_argument('--service', help='select a managed service')
+        if name == 'recover':
+            command.add_argument('--operation', required=True, help='original pending multi-service transaction ID')
         if name == 'logs':
             command.add_argument('--tail', type=int, default=100)
     return result
@@ -374,6 +376,13 @@ def main(argv=None):
                         with progress.stage('Submitting deployment receipt (best effort)'):
                             report_receipt(client,resolution,args.config_root,True)
                 print(f"OK: {args.application}/{args.env} running {state['current']['version']}")
+            elif args.command == 'recover':
+                args.env = local_environment(args.root,args.application,args.env)
+                if local_deployment_type(args.root,args.application,args.env) == 'static':
+                    raise ValueError('recover requires a multi-service deployment')
+                manager = local_manager(args.root,args.config_root,args.application,args.env)
+                state = manager.recover(args.application, args.env, args.operation)
+                print(f"OK: recovered {args.application}/{args.env}; current={state['current']['version']}")
             elif args.command == 'rollback':
                 args.env = local_environment(args.root,args.application,args.env)
                 manager=local_manager(args.root,args.config_root,args.application,args.env)

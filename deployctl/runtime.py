@@ -647,6 +647,15 @@ class Manager:
                 params=merge_install_params(install_params or {}, managed_params),
                 job_sources=job_sources, requested_jobs=requested_jobs, preview=True)
 
+    def recover(self, app, env, operation):
+        home, folder = self.paths(app, env)
+        with service_lock(home / '.lock'):
+            state = self.state(home, app, env)
+            if state['schema_version'] != 3:
+                raise ValueError('recovery operation requires a multi-service deployment')
+            from .stack_manager import StackManager
+            return StackManager(self, home, folder, app, env).recover(state, operation)
+
     def rollback(self, app, env):
         home, folder = self.paths(app, env)
         with service_lock(home / '.lock'):

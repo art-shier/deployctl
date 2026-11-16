@@ -1,6 +1,8 @@
 """Real retained-PostgreSQL lifecycle checks; disposable Linux Docker runner only."""
 import copy
 import json
+import hashlib
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -35,6 +37,7 @@ def main():
     postgres, api = pinned('postgres:18-alpine'), pinned('python:3.12-alpine')
     app = 'stack-ci-'+uuid.uuid4().hex[:12]
     project = project_name(app, 'test')
+    projects = [project]
     config = {'schema_version':2, 'application':app, 'platform':'linux/amd64',
         'volumes':{'data':{'retain':True}}, 'services':{
             'postgres':{'lifecycle':'persistent', 'image':postgres, 'mirror':'project',
@@ -93,15 +96,76 @@ def main():
             manager.operate(app,'test','restart'); unchanged_database()
             home, _ = manager.paths(app,'test')
             assert manager.state(home,app,'test')['transaction'] is None
+            verify_restore(config, {'api':api,'postgres':postgres}, values, pg, base, projects)
             print('PASS: real app upgrade, rollback, failed upgrade and stop/restart preserve PostgreSQL container, mounts, volume and SQL data')
     finally:
         # This script owns only this randomly named fixture project. Production
         # runtime never performs volume cleanup; disposable CI cleanup does.
-        ids = docker('ps','-aq','--filter','label=com.docker.compose.project='+project).split()
-        if ids: docker('rm','-f',*ids)
-        for kind in ('network','volume'):
-            names = docker(kind,'ls','--filter','label=io.team-deploy.project='+project,'--format','{{.Name}}').split()
-            for name in names: docker(kind,'rm',name)
+        for project in projects:
+            cleanup(project)
+
+
+def cleanup(project):
+    ids = docker('ps','-aq','--filter','label=com.docker.compose.project='+project).split()
+    if ids: docker('rm','-f',*ids)
+    for kind in ('network','volume'):
+        names = docker(kind,'ls','--filter','label=io.team-deploy.project='+project,'--format','{{.Name}}').split()
+        for name in names: docker(kind,'rm',name)
+
+
+def verify_restore(source, images, values, source_pg, base, projects):
+    from deployctl.service_jobs import JobRunner
+    dump = docker('exec',source_pg['Id'],'pg_dump','-U','postgres','--no-owner','--no-acl','postgres') + '\n'
+    digest = hashlib.sha256(dump.encode()).hexdigest()
+    config = copy.deepcopy(source); config['application'] += '-restore'
+    app = config['application']; project = project_name(app,'test'); projects.append(project)
+    config['volumes']['restore-scratch'] = {'retain':True}
+    config['jobs'] = {'restore':{'image':images['postgres'],'trigger':'bootstrap',
+        'depends_on':{'postgres':'healthy'}, 'timeout_seconds':60,
+        'volumes':{'restore-scratch':'/var/lib/postgresql'},
+        'environment':{'PGHOST':{'literal':'postgres'},'PGUSER':{'literal':'postgres'},
+                       'PGPASSWORD':{'secret':'password'},'BACKUP_SHA256':{'literal':digest}},
+        'secret_files':{'dump':'/run/secrets/backup.sql'},
+        'command':['sh','-ec',
+            'test "$(sha256sum /run/secrets/backup.sql | cut -d " " -f1)" = "$BACKUP_SHA256"; '
+            'test "$(psql -Atc "SELECT count(*) FROM pg_tables WHERE schemaname=\'public\'")" = 0; '
+            'psql -v ON_ERROR_STOP=1 -f /run/secrets/backup.sql; '
+            'test "$(psql -Atc "SELECT value FROM retained_probe")" = survives']}}
+    config['services']['api']['depends_on'] = {'restore':'succeeded'}
+    images = dict(images,restore=images['postgres'])
+    package = build_release(config,images,'v1.0.0',base/'restore-packages')
+    restore_values = copy.deepcopy(values); restore_values['secrets']['dump'] = dump
+    manager = Manager(base/'restore-runtime',base/'restore-config')
+    pid = os.fork()
+    if pid == 0:
+        # Simulate SIGKILL between Docker exit and durable success acknowledgement.
+        original = JobRunner._record
+        def crash_before_ack(runner, name, execution, status):
+            if status == 'succeeded': os._exit(79)
+            return original(runner,name,execution,status)
+        JobRunner._record = crash_before_ack
+        try:
+            manager.deploy(app,'test',package,managed_configuration=restore_values,job_sources={'restore':digest})
+        except BaseException:
+            import traceback
+            traceback.print_exc()
+            os._exit(1)
+        os._exit(2)
+    _, status = os.waitpid(pid,0)
+    assert os.waitstatus_to_exitcode(status) == 79, 'fixture did not reach post-restore crash point'
+    home, _ = manager.paths(app,'test'); state = manager.state(home,app,'test')
+    assert state['jobs']['restore']['status'] == 'running'
+    before = container(project,'restore')['Id']; postgres = container(project,'postgres')['Id']
+    result = manager.recover(app,'test',state['transaction']['journal']['id'])
+    assert result['transaction'] is None and result['jobs']['restore']['status'] == 'succeeded'
+    assert container(project,'restore')['Id'] == before
+    assert container(project,'postgres')['Id'] == postgres
+    assert docker('exec',postgres,'psql','-U','postgres','-Atc','SELECT value FROM retained_probe') == 'survives'
+    updated = build_release(config,images,'v1.0.1',base/'restore-upgrade')
+    manager.deploy(app,'test',updated,upgrade=True,managed_configuration=values)
+    assert container(project,'restore')['Id'] == before, 'completed restore repeated on upgrade'
+    assert container(project,'postgres')['Id'] == postgres
+    print('PASS: verified pg_dump restore, process loss before acknowledgement, recovery without repeat, upgrade without old backup credentials')
 
 
 if __name__ == '__main__':
