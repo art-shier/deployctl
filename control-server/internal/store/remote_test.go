@@ -38,7 +38,7 @@ func TestRemoteEnrollmentAndFrozenTaskLifecycle(t *testing.T) {
 	}
 	req := domain.TaskRequest{NodeID: n.ID, Environment: "prod", Action: "install", RequestID: domain.NewID()}
 	rejected := req
-	rejected.JobSources = map[string]string{"restore": strings.Repeat("a", 64)}
+	rejected.RequestedJobs = []string{"restore"}
 	if _, err = s.CreateTask(ctx, "notes", rejected, owner); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatal("legacy task accepted job inputs", err)
 	}

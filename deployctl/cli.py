@@ -98,16 +98,15 @@ def parser():
     package.add_argument('--version', required=True)
     package.add_argument('--output', default='dist')
     package.add_argument('--commit', default='')
-    for name in ('install', 'upgrade', 'maintain', 'restore', 'rollback', 'recover', 'status', 'logs', 'restart', 'stop'):
+    for name in ('install', 'upgrade', 'maintain', 'rollback', 'recover', 'status', 'logs', 'restart', 'stop'):
         command = sub.add_parser(name)
         command.add_argument('application')
         command.add_argument('--env')
         command.add_argument('--prod', action='store_true', help='alias for --env prod')
         command.add_argument('--root', default=os.environ.get('DEPLOY_ROOT', '/opt/deployments'))
         command.add_argument('--config-root', default=os.environ.get('DEPLOY_CONFIG_ROOT', '/etc/deployctl'))
-        if name in ('install', 'upgrade', 'maintain', 'restore'):
+        if name in ('install', 'upgrade', 'maintain'):
             command.add_argument('--quiet', action='store_true', help='hide progress; preserve result and errors')
-            command.add_argument('--job-source', action='append', default=[], metavar='NAME=SHA256', help='verified backup identity for a bootstrap job')
             command.add_argument('--run-job', action='append', default=[], metavar='NAME', help='select an explicit one-shot job')
             command.add_argument('--plan', action='store_true', help='preview multi-service changes without changing deployed resources')
             command.add_argument('--release', help='legacy local archive or HTTPS URL')
@@ -120,19 +119,16 @@ def parser():
                                  help='runtime value persisted after success; repeat for each key')
             command.add_argument('--set', action='append', default=[], metavar='KEY=value',
                                  help='invocation-local installation hook parameter; repeat for each key')
-        if name in ('upgrade','maintain','restore'):
+        if name in ('upgrade','maintain'):
             command.add_argument('--unset-env', action='append', default=[], metavar='KEY',
                                  help='remove a persisted runtime override; repeat for each key')
-        if name in ('install','upgrade','maintain','restore'):
+        if name in ('install','upgrade','maintain'):
             command.add_argument('--port', type=int, help='override host port; preserved across upgrades')
             command.add_argument('--bind', help='override IPv4 bind address; default 127.0.0.1')
         if name in ('status', 'logs', 'restart', 'stop'):
             command.add_argument('--service', help='select a managed service')
         if name == 'maintain':
             command.add_argument('--service', action='append', required=True)
-            command.add_argument('--backup-sha256', required=True)
-            command.add_argument('--plan-id')
-        if name == 'restore':
             command.add_argument('--plan-id')
         if name == 'recover':
             command.add_argument('--operation', required=True, help='original pending multi-service transaction ID')
@@ -259,7 +255,7 @@ def main(argv=None):
                 args.env = 'prod'
             if args.env: validate_name(args.env, 'environment', 32)
             manager = None
-            if args.command in ('install', 'upgrade', 'maintain', 'restore'):
+            if args.command in ('install', 'upgrade', 'maintain'):
                 from .progress import Progress
                 progress = Progress(enabled=not args.quiet)
                 if args.release and args.version: raise ValueError('--release conflicts with --version')
@@ -270,23 +266,12 @@ def main(argv=None):
                     if args.target_dir is not None:raise ValueError('--target-dir applies to managed static projects; legacy --release is Docker only')
                     if local_deployment_type(args.root,args.application,args.env)=='static':raise ValueError('static projects require managed releases; --release is Docker only')
                 job_options = {}
-                if args.command=='restore':
-                    job_options['restoration']={'plan_id':args.plan_id}
                 if args.command=='maintain':
-                    job_options['maintenance']={'services':args.service,'backup_sha256':args.backup_sha256,'plan_id':args.plan_id}
-                if args.job_source or args.run_job:
-                    import re
-                    sources = {}
-                    for assignment in args.job_source:
-                        name, separator, digest = assignment.partition('=')
-                        validate_name(name, 'job')
-                        if not separator or not re.fullmatch('[a-f0-9]{64}', digest):
-                            raise ValueError('--job-source requires NAME=SHA256')
-                        if name in sources: raise ValueError('duplicate job source')
-                        sources[name] = digest
+                    job_options['maintenance']={'services':args.service,'plan_id':args.plan_id}
+                if args.run_job:
                     for name in args.run_job: validate_name(name, 'job')
                     if len(set(args.run_job)) != len(args.run_job): raise ValueError('duplicate selected job')
-                    job_options.update(job_sources=sources, requested_jobs=args.run_job)
+                    job_options.update(requested_jobs=args.run_job)
                 runtime_env = parse_assignments(args.env_var, 'env-var')
                 install_params = parse_assignments(args.set, 'installation parameters', reserve_platform=False)
                 unset_env = getattr(args, 'unset_env', [])
@@ -354,7 +339,7 @@ def main(argv=None):
                     manager.progress=progress
                     if args.plan:
                         plan = manager.plan(args.application, args.env, package,
-                                            upgrade=args.command in ('upgrade','maintain','restore'),
+                                            upgrade=args.command in ('upgrade','maintain'),
                                             port=args.port, bind=args.bind, runtime_env=runtime_env,
                                             unset_env=unset_env, install_params=install_params, **managed, **job_options)
                         print(json.dumps(plan, ensure_ascii=False, sort_keys=True))
@@ -373,7 +358,7 @@ def main(argv=None):
                         manager.driver.docker_config = docker_config
                         try:
                             state = manager.deploy(args.application, args.env, package,
-                                           upgrade=args.command in ('upgrade','maintain','restore'),
+                                           upgrade=args.command in ('upgrade','maintain'),
                                            port=getattr(args, 'port', None), bind=getattr(args, 'bind', None),
                                            runtime_env=runtime_env, unset_env=unset_env, install_params=install_params, **managed, **job_options)
                         except (ValueError,OSError,RuntimeError):

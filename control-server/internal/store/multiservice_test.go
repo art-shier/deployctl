@@ -110,15 +110,15 @@ func TestMultiReleaseCapableAgentReceivesCompleteFrozenResolution(t *testing.T) 
 	if _, _, err = s.HeartbeatNodeCapabilities(ctx, n.ID, "1.20.0", "linux", true, nil, []string{"multi_service_v1"}); err != nil {
 		t.Fatal(err)
 	}
-	req := domain.TaskRequest{JobSources: map[string]string{"restore": strings.Repeat("d", 64)}, RequestedJobs: []string{"restore"}, NodeID: n.ID, Environment: "prod", Action: "install", RequestID: domain.NewID()}
+	req := domain.TaskRequest{RequestedJobs: []string{"restore"}, NodeID: n.ID, Environment: "prod", Action: "install", RequestID: domain.NewID()}
 	task, err := s.CreateTask(ctx, "notes", req, auth.Principal{ID: "owner", Role: "owner"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	changed := req
-	changed.JobSources = map[string]string{"restore": strings.Repeat("e", 64)}
+	changed.RequestedJobs = []string{"other-job"}
 	if _, err = s.CreateTask(ctx, "notes", changed, auth.Principal{ID: "owner", Role: "owner"}); !errors.Is(err, domain.ErrConflict) {
-		t.Fatal("accepted changed backup identity on retry", err)
+		t.Fatal("accepted changed job selection on retry", err)
 	}
 	polled, err := s.PollNode(ctx, n.ID)
 	if err != nil || polled == nil {
@@ -127,7 +127,7 @@ func TestMultiReleaseCapableAgentReceivesCompleteFrozenResolution(t *testing.T) 
 	if polled.Resolution["schema_version"] != 3 || len(polled.Resolution["release"].(map[string]any)["images"].(map[string]string)) != 2 {
 		t.Fatal("incomplete task resolution")
 	}
-	if polled.JobSources["restore"] != strings.Repeat("d", 64) || len(polled.RequestedJobs) != 1 || polled.RequestedJobs[0] != "restore" {
+	if len(polled.RequestedJobs) != 1 || polled.RequestedJobs[0] != "restore" {
 		t.Fatal("job inputs lost in frozen task")
 	}
 	// Capability loss after polling is rechecked before any execution starts.

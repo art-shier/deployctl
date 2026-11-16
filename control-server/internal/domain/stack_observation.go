@@ -20,7 +20,7 @@ func (s StackObservation) Validate() error {
 	if len(s.Services) > 128 || len(s.Jobs) > 128 || (s.OperationID != "" && !remoteID.MatchString(s.OperationID)) {
 		return ErrInvalid
 	}
-	phases := []string{"", "prepared", "pulling", "resources", "job-running", "job-succeeded", "applying", "checking", "checked", "quiescing", "quiesced", "succeeded", "rolling-back", "rolled-back", "recovery-required", "stop", "restart", "restoring", "retiring"}
+	phases := []string{"", "prepared", "pulling", "resources", "job-running", "job-succeeded", "applying", "checking", "checked", "quiescing", "quiesced", "succeeded", "rolling-back", "rolled-back", "recovery-required", "stop", "restart", "changing-layout", "retiring"}
 	if !slices.Contains(phases, s.Phase) {
 		return ErrInvalid
 	}

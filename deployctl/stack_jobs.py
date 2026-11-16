@@ -25,15 +25,12 @@ def volume_identities(state, names):
             for name in names}
 
 
-def select_jobs(release, state, values, sources=None, requested=None):
-    sources, requested = sources or {}, requested or []
+def select_jobs(release, state, values, requested=None):
+    requested = requested or []
     config = release['deployment']; jobs = config['jobs']
-    if not isinstance(sources, dict) or not isinstance(requested, list) or any(not isinstance(name, str) for name in requested) or len(set(requested)) != len(requested):
+    if not isinstance(requested,list) or any(not isinstance(name,str) for name in requested) or len(set(requested))!=len(requested):
         raise ValueError('invalid job selection')
-    if set(sources) - set(jobs) or set(requested) - set(jobs): raise ValueError('unknown selected job')
-    for name, source in sources.items():
-        if not isinstance(source, str) or not re.fullmatch('[a-f0-9]{64}', source):
-            raise ValueError('job source identity must be a verified SHA256')
+    if set(requested)-set(jobs): raise ValueError('unknown selected job')
     active, succeeded, identities = [], set(), {}
     order = dependency_order(config['services'], jobs)
     for name in order:
@@ -56,11 +53,7 @@ def select_jobs(release, state, values, sources=None, requested=None):
             continue
         if spec['trigger'] == 'explicit' and name not in requested: continue
         service_values(spec, values)
-        if not spec['rollback_compatible']:
-            if name not in sources: raise ValueError('data-changing job requires verified source identity')
-            if not targets or any(volume in state.get('volumes', {}) for volume in targets):
-                raise ValueError('bootstrap data job requires a fresh isolated target volume')
-        identities[name] = sources.get(name, service_fingerprint(spec, values))
+        identities[name] = service_fingerprint(spec, values)
         active.append(name)
     enabled = set(config['services']) | set(active)
     for name in enabled:
@@ -96,7 +89,7 @@ class JobDockerAdapter:
 
     def start_job(self, execution, spec):
         if spec != self.spec: raise ValueError('job specification changed')
-        # Raw data-file restore must never share a mounted volume with a running database.
+        # A one-shot writer must not share its mounted volume with an active service.
         for name, service in self.driver.config['services'].items():
             if set(service['volumes']) & set(spec['volumes']):
                 container = self.driver.container(name)

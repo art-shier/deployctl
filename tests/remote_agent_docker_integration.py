@@ -152,31 +152,31 @@ def verify_legacy_stack_cutover(base, deployment, image):
     old['required_config']=[]
     legacy_package=build_release(old,image,'v1.0.0',base/'legacy-packages')
     source='verified-fixture-data';digest=hashlib.sha256(source.encode()).hexdigest()
-    config={'schema_version':2,'application':app,'primary_endpoint':'api.http','volumes':{'data':{'retain':True}},
+    config={'schema_version':2,'application':app,'platform':'linux/amd64','primary_endpoint':'api.http','volumes':{'data':{'retain':True}},
         'services':{
             'api':{'image':image,'lifecycle':'application','depends_on':{'restore':'succeeded','cache':'healthy'},
                 'endpoints':{'http':{'container_port':8080,'host_port':port}},'health':{'http':'/health/ready'}},
             'cache':{'image':image,'lifecycle':'persistent','volumes':{'data':'/app'},'depends_on':{'restore':'succeeded'},
                 'command':['python','-c','import time;time.sleep(3600)'],'health':{'exec':['python','-c','pass']}}},
         'jobs':{'restore':{'image':image,'trigger':'bootstrap','volumes':{'data':'/app'},
-            'command':['python','-c',f'import hashlib,pathlib; v={source!r}; assert hashlib.sha256(v.encode()).hexdigest()=={digest!r}; pathlib.Path("/app/restored").write_text(v)']}}}
+            'command':['python','-c',f'import hashlib,pathlib; v={source!r}; assert hashlib.sha256(v.encode()).hexdigest()=={digest!r}; pathlib.Path("/app/app.py").write_text(v)']}}}
     package=build_release(config,dict.fromkeys(['api','cache','restore'],image),'v2.0.0',base/'legacy-packages')
     try:
         manager.deploy(app,'prod',legacy_package)
         old_id=docker('ps','-aq','--filter','label=com.docker.compose.project='+project,'--filter','label=com.docker.compose.service=app')
-        try:manager.plan(app,'prod',package,upgrade=True,managed_configuration={'config':{},'secrets':{}},job_sources={'restore':digest},restoration={'plan_id':None})
+        try:manager.plan(app,'prod',package,upgrade=True,managed_configuration={'config':{},'secrets':{}})
         except ValueError as error:assert 'stopped' in str(error)
         else:raise AssertionError('running legacy source accepted')
         manager.operate(app,'prod','stop')
-        args={'upgrade':True,'managed_configuration':{'config':{},'secrets':{}},'job_sources':{'restore':digest}}
-        plan=manager.plan(app,'prod',package,restoration={'plan_id':None},**args)
+        args={'upgrade':True,'managed_configuration':{'config':{},'secrets':{}}}
+        plan=manager.plan(app,'prod',package,**args)
         target_project=project[:50]+'-g'+plan['generation'];projects.append(target_project)
-        state=manager.deploy(app,'prod',package,restoration={'plan_id':plan['plan_id']},**args)
+        state=manager.deploy(app,'prod',package,**args)
         assert state['current']['version']=='v2.0.0' and state['previous'] is None and state['transaction'] is None
         assert state['binding']['port']==port
         assert json.loads(docker('inspect',old_id))[0]['State']['Running'] is False
         cache=docker('ps','-aq','--filter','label=com.docker.compose.project='+target_project,'--filter','label=com.docker.compose.service=cache')
-        assert docker('exec',cache,'cat','/app/restored')==source
+        assert docker('exec',cache,'cat','/app/app.py')==source
         next_package=build_release(config,dict.fromkeys(['api','cache','restore'],image),'v2.0.1',base/'legacy-packages')
         manager.deploy(app,'prod',next_package,upgrade=True,managed_configuration={'config':{},'secrets':{}})
         assert docker('ps','-aq','--filter','label=com.docker.compose.project='+target_project,'--filter','label=com.docker.compose.service=cache')==cache

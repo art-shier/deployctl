@@ -54,34 +54,27 @@ def _job_record(item):
 def _journal(value):
     if not isinstance(value,dict): raise ValueError('invalid transaction journal')
     phase = value.get('phase')
-    if phase == 'restoring':
-        fields = {'id','phase','action','rollback_barrier','restore'}
-        mapping(value, fields, fields, 'restoration journal')
-        validate_generation(value['id'])
-        if not value['id'] or value['rollback_barrier'] is not True or value['action'] is not None:
-            raise ValueError('invalid restoration journal')
-        meta = value['restore']
-        mapping(meta, {'plan_id','selection','stage','legacy'}, {'plan_id','selection','stage'}, 'restoration metadata')
-        if 'legacy' in meta:
-            old = mapping(meta['legacy'], {'state_sha256','observed'}, {'state_sha256','observed'}, 'legacy restoration')
-            _digest(old['state_sha256'])
-            obs = mapping(old['observed'], {'container_id','fingerprint','volumes'}, {'container_id','fingerprint','volumes'}, 'legacy source observation')
-            _digest(obs['container_id']); _digest(obs['fingerprint'])
-            if not isinstance(obs['volumes'],list) or len(obs['volumes'])>128: raise ValueError('invalid legacy volumes')
-            for volume in obs['volumes']: _resource(volume)
-        _digest(meta['plan_id'])
-        if meta['plan_id'][:32] != value['id'] or meta['stage'] not in ('freezing','restoring'):
-            raise ValueError('invalid restoration identity/stage')
-        selection = meta['selection']
-        mapping(selection, {'active','sources','order'}, {'active','sources','order'}, 'restoration selection')
+    if phase == 'changing-layout':
+        fields={'id','phase','action','rollback_barrier','layout'}
+        mapping(value,fields,fields,'layout journal');validate_generation(value['id'])
+        if not value['id'] or value['action'] is not None or value['rollback_barrier'] is not True:
+            raise ValueError('invalid layout journal')
+        meta=mapping(value['layout'],{'plan_id','selection','source_sha256','observed'},
+                     {'plan_id','selection','source_sha256','observed'},'layout metadata')
+        _digest(meta['plan_id']);_digest(meta['source_sha256'])
+        if meta['plan_id'][:32]!=value['id']:raise ValueError('layout identity mismatch')
+        obs=mapping(meta['observed'],{'container_id','fingerprint','volumes'},
+                    {'container_id','fingerprint','volumes'},'legacy observation')
+        _digest(obs['container_id']);_digest(obs['fingerprint'])
+        if not isinstance(obs['volumes'],list) or len(obs['volumes'])>128:raise ValueError('invalid legacy volume inventory')
+        for volume in obs['volumes']:_resource(volume)
+        selection=mapping(meta['selection'],{'active','sources','order'},{'active','sources','order'},'job selection')
         for key in ('active','order'):
-            items = selection[key]
-            if not isinstance(items,list) or len(items)>128 or len(set(items))!=len(items):
-                raise ValueError('invalid restoration job order')
-            for name in items: validate_name(name,'restoration node')
-        if not isinstance(selection['sources'],dict) or set(selection['sources']) != set(selection['active']):
-            raise ValueError('invalid restoration sources')
-        for digest in selection['sources'].values(): _digest(digest)
+            items=selection[key]
+            if not isinstance(items,list) or len(items)>128 or any(not isinstance(n,str) for n in items) or len(set(items))!=len(items):raise ValueError('invalid job order')
+            for name in items:validate_name(name,'job')
+        if not isinstance(selection['sources'],dict) or set(selection['sources'])!=set(selection['active']):raise ValueError('invalid job fingerprints')
+        for digest in selection['sources'].values():_digest(digest)
         return
 
     phases = ('prepared','pulling','resources','job-running','job-succeeded','applying',
@@ -105,8 +98,8 @@ def _journal(value):
         for name in names: validate_name(name,'retiring service')
     if 'maintenance' in value:
         m=value['maintenance']
-        mapping(m,{'services','backup_sha256','plan_id'},{'services','backup_sha256','plan_id'},'maintenance')
-        _digest(m['backup_sha256']); _digest(m['plan_id'])
+        mapping(m,{'services','plan_id'},{'services','plan_id'},'maintenance')
+        _digest(m['plan_id'])
         if not isinstance(m['services'],list) or not m['services'] or len(m['services'])>128: raise ValueError('invalid maintenance services')
         for name in m['services']: validate_name(name,'service')
     if not isinstance(value['id'],str) or not re.fullmatch('[a-f0-9]{32}',value['id']): raise ValueError('invalid operation identity')
@@ -164,8 +157,8 @@ def validate_stack_state(state, app, env):
         validate_stack_ref(tx['target'])
         if tx['origin'] is not None: validate_stack_ref(tx['origin'])
         _journal(tx['journal'])
-        if tx['journal']['phase'] == 'restoring' and tx['target'].get('generation') != tx['journal']['id']:
-            raise ValueError('restoration target generation mismatch')
+        if tx['journal']['phase'] == 'changing-layout' and tx['target'].get('generation') != tx['journal']['id']:
+            raise ValueError('layout target generation mismatch')
     return copy.deepcopy(state)
 
 
@@ -306,14 +299,12 @@ class StackManager:
         return state
 
     def deploy(self, state, release, *, managed_configuration=None, updates=None, unset=None,
-               defaults=None, port=None, bind=None, management=None, params=None, job_sources=None, requested_jobs=None, preview=False, maintenance=None, restoration=None):
+               defaults=None, port=None, bind=None, management=None, params=None, requested_jobs=None, preview=False, maintenance=None):
         if release['schema_version'] != 3:
             raise ValueError('legacy release cannot replace managed multi-service resources')
         legacy = None
         if state['schema_version'] != 3:
             if state['current'] or state['previous']:
-                if restoration is None:
-                    raise ValueError('legacy installation requires explicit migration into a new managed stack')
                 legacy = copy.deepcopy(state)
             state = empty_stack_state(self.app, self.env)
             if legacy: state['binding'] = copy.deepcopy(legacy['binding'])
@@ -355,16 +346,13 @@ class StackManager:
                 if value is not None: endpoint[field] = value
             config['services'][name]['resources'].update({k:v for k,v in defaults.items() if k in ('cpus','memory_limit')})
         effective = validate_multiservice_release(effective)
-        if restoration is not None:
-            from .stack_restore import plan_restore, restore_stack
-            mapping(restoration, {'plan_id'}, {'plan_id'}, 'restoration request')
-            if maintenance: raise ValueError('restoration cannot be combined with maintenance')
-            if preview:
-                return plan_restore(self, state, effective, values, job_sources, requested_jobs, overrides, management, legacy)
-            return restore_stack(self, state, effective, values, job_sources, requested_jobs,
-                                 restoration['plan_id'], overrides, management, legacy)
+        if legacy is not None:
+            if maintenance: raise ValueError('layout transition cannot combine persistent maintenance')
+            from .stack_layout import plan_layout,apply_layout
+            if preview:return plan_layout(self,state,legacy,effective,values,requested_jobs,overrides,management)
+            return apply_layout(self,state,legacy,effective,values,requested_jobs,overrides,management)
         from .stack_jobs import select_jobs
-        selection = select_jobs(effective, state, values, job_sources, requested_jobs)
+        selection = select_jobs(effective, state, values, requested_jobs)
         if preview:
             from .stack_snapshot import StackSnapshot
             nodes = {**effective['deployment']['services'],
@@ -449,9 +437,9 @@ class StackManager:
         if (not isinstance(operation, str) or not re.fullmatch('[a-f0-9]{32}', operation)
                 or not tx or tx['journal'].get('id') != operation):
             raise ValueError('recovery operation does not match pending transaction')
-        if tx['journal'].get('phase') == 'restoring':
-            from .stack_restore import resume_restore
-            return resume_restore(self, state)
+        if tx['journal'].get('phase') == 'changing-layout':
+            from .stack_layout import resume_layout
+            return resume_layout(self, state)
         if tx['journal']['phase'] == 'retiring':
             return self.finish_retirement(state)
         snapshot = self.load(tx['target'])
@@ -497,7 +485,7 @@ class StackManager:
         if not target:
             raise ValueError('no previous stack snapshot; retained resources require explicit recovery')
         if target.get('generation') != state.get('generation'):
-            raise ValueError('cross-generation rollback requires verified data restoration')
+            raise ValueError('rollback across service layouts is prohibited')
         snapshot = self.load(target)
         extras = sorted(set(state['services']) - set(snapshot.release['deployment']['services']))
         extras = [name for name in extras if not state['services'][name].get('retired')]

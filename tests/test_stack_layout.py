@@ -2,7 +2,6 @@ import copy
 from unittest.mock import patch
 import pytest
 from deployctl.stack_manager import StackManager, empty_stack_state
-from deployctl.stack_restore import plan_restore
 from test_stack_manager import runtime
 from test_stack_jobs import with_restore
 from test_service_plan import values
@@ -18,15 +17,13 @@ def legacy():
 def test_legacy_restore_requires_stopped_verified_source_and_explicit_restore(runtime):
     manager,engine=runtime;home,folder=manager.paths('lifelog','prod')
     stack=StackManager(manager,home,folder,'lifelog','prod');v=values();v['secrets']['RESTORE_TOKEN']='private'
-    with pytest.raises(ValueError,match='explicit migration'):
-        stack.deploy(legacy(),with_restore(),managed_configuration=v,preview=True)
-    with patch('deployctl.stack_restore.legacy_inventory',return_value={'container_id':'c'*64,'fingerprint':'d'*64,'volumes':[]}):
-        plan=stack.deploy(legacy(),with_restore(),managed_configuration=v,preview=True,restoration={'plan_id':None},job_sources={'restore':'e'*64})
+    with patch('deployctl.stack_layout.legacy_inventory',return_value={'container_id':'c'*64,'fingerprint':'d'*64,'volumes':[]}):
+        plan=stack.deploy(legacy(),with_restore(),managed_configuration=v,preview=True)
     assert plan['legacy_source']['container_id']=='c'*64 and 'private' not in str(plan)
 
 
 def test_legacy_source_rejects_running_or_changed_identity(runtime):
-    from deployctl.stack_restore import legacy_inventory
+    from deployctl.stack_layout import legacy_inventory
     manager,_=runtime;home,folder=manager.paths('lifelog','prod');stack=StackManager(manager,home,folder,'lifelog','prod')
     snap=type('Snapshot',(),{})()
     labels={'com.docker.compose.project':stack.project,'com.docker.compose.service':'app',
@@ -67,14 +64,14 @@ def test_legacy_cutover_checkpoint_recovery_never_adopts_old_resources(runtime, 
         return run
     save=StackManager.save
     def crash(stack,state):
-        if stack.home.parent.name=='restorations': raise RuntimeError('process lost before candidate save')
+        if stack.home.parent.name=='layouts': raise RuntimeError('process lost before candidate save')
         return save(stack,state)
-    with patch('deployctl.stack_restore.legacy_inventory',return_value=observed),patch('deployctl.stack_jobs.bind_job_runner',bind):
-        plan=manager.plan('lifelog','prod',package,upgrade=True,managed_configuration=v,restoration={'plan_id':None},job_sources={'restore':'e'*64})
+    with patch('deployctl.stack_layout.legacy_inventory',return_value=observed),patch('deployctl.stack_jobs.bind_job_runner',bind):
+        plan=manager.plan('lifelog','prod',package,upgrade=True,managed_configuration=v)
         with patch.object(StackManager,'save',crash),pytest.raises(RuntimeError,match='process lost'):
-            manager.deploy('lifelog','prod',package,upgrade=True,managed_configuration=v,restoration={'plan_id':plan['plan_id']},job_sources={'restore':'e'*64})
+            manager.deploy('lifelog','prod',package,upgrade=True,managed_configuration=v)
         pending=manager.state(home,'lifelog','prod')
-        assert pending['current'] is None and pending['transaction']['journal']['restore']['legacy']
+        assert pending['current'] is None and pending['transaction']['journal']['layout']
         if changed:
             observed['fingerprint']='f'*64
             with pytest.raises(ValueError,match='source changed'):manager.recover('lifelog','prod',plan['generation'])
@@ -85,4 +82,20 @@ def test_legacy_cutover_checkpoint_recovery_never_adopts_old_resources(runtime, 
             assert result['generation']==plan['generation'] and calls==['restore']
             assert result['binding']==old['binding']
             assert all(item['name']!='old-data' for item in result['volumes'].values())
-            assert __import__('json').loads((home/'restorations'/plan['generation']/'source-state.json').read_text())==old
+            assert __import__('json').loads((home/'layouts'/plan['generation']/'source-state.json').read_text())==old
+
+
+def test_layout_upgrade_without_any_data_or_initialization_job(runtime,tmp_path):
+    from deployctl.service_state import write_inventory
+    from test_stack_manager import package
+    manager,engine=runtime;home,folder=manager.paths('lifelog','prod')
+    write_inventory(home/'state.json',legacy())
+    observed={'container_id':'c'*64,'fingerprint':'d'*64,'volumes':[]}
+    pkg=package(tmp_path)
+    with patch('deployctl.stack_layout.legacy_inventory',return_value=observed):
+        plan=manager.plan('lifelog','prod',pkg,upgrade=True,managed_configuration=values())
+        assert plan['jobs']==[]
+        result=manager.deploy('lifelog','prod',pkg,upgrade=True,managed_configuration=values())
+    assert result['schema_version']==3 and result['transaction'] is None
+    assert result['jobs']=={} and result['binding']['port']==8081
+    assert result['previous'] is None

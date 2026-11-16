@@ -14,15 +14,13 @@ def with_restore():
     return validate_multiservice_release(r)
 
 
-def test_bootstrap_requires_source_identity_and_an_unallocated_target():
+def test_bootstrap_selection_has_no_project_data_policy():
     from deployctl.stack_jobs import select_jobs
     r = with_restore(); v = values(); v['secrets']['RESTORE_TOKEN'] = 'token'
-    with pytest.raises(ValueError, match='source'): select_jobs(r, {}, v, {}, [])
-    selected = select_jobs(r, {}, v, {'restore':'a'*64}, [])
+    selected = select_jobs(r, {}, v, [])
     assert selected['active'] == ['restore']
     assert selected['order'] == ['restore','postgres','api']
-    with pytest.raises(ValueError, match='fresh'):
-        select_jobs(r, {'volumes':{'data':{'identity':'old'}}}, v, {'restore':'a'*64}, [])
+    assert select_jobs(r, {'volumes':{'data':{'identity':'old'}}}, v, [])['active']==['restore']
 
 
 def test_completed_restore_does_not_repeat_when_app_job_image_or_credentials_change():
@@ -31,10 +29,10 @@ def test_completed_restore_does_not_repeat_when_app_job_image_or_credentials_cha
     state = {'volumes':{'data':{'name':'project-data','identity':'volume-id'}},
              'jobs':{'restore':{'status':'succeeded','target_volumes':{'data':{'name':'project-data','identity':'volume-id'}}}}}
     # Credential removed after bootstrap: normal upgrades must not need it again.
-    plan = select_jobs(r, state, values(), {}, [])
+    plan = select_jobs(r, state, values(), [])
     assert plan['active'] == [] and plan['order'] == ['postgres','api']
     state['volumes']['data']['identity'] = 'replaced'
-    with pytest.raises(ValueError, match='volume'): select_jobs(r, state, values(), {}, [])
+    with pytest.raises(ValueError, match='volume'): select_jobs(r, state, values(), [])
 
 
 def test_explicit_jobs_are_not_run_by_ordinary_install():
@@ -43,9 +41,9 @@ def test_explicit_jobs_are_not_run_by_ordinary_install():
         'rollback_compatible':True, 'environment': {'TOKEN':{'secret':'UNAVAILABLE'}}}}
     from deployctl.multiservice_release import validate_multiservice_release
     r = validate_multiservice_release(r)
-    assert select_jobs(r, {}, values(), {}, [])['active'] == []
+    assert select_jobs(r, {}, values(), [])['active'] == []
     r['deployment']['services']['api']['depends_on']['cleanup'] = 'succeeded'
-    with pytest.raises(ValueError, match='explicit'): select_jobs(r, {}, values(), {}, [])
+    with pytest.raises(ValueError, match='explicit'): select_jobs(r, {}, values(), [])
 
 
 def job_driver(tmp_path):

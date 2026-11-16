@@ -102,7 +102,7 @@ def main():
             maintained['services']['postgres']['resources'] = {'memory_limit':'768m'}
             maintenance_package = release(maintained, 'v1.0.3')
             dump = docker('exec',pg['Id'],'pg_dump','-U','postgres','--no-owner','postgres')
-            request = {'services':['postgres'], 'backup_sha256':hashlib.sha256(dump.encode()).hexdigest()}
+            request = {'services':['postgres']}
             preview = manager.plan(app,'test',maintenance_package,upgrade=True,managed_configuration=values,maintenance=request)
             request['plan_id'] = preview['maintenance']['plan_id']
             manager.deploy(app,'test',maintenance_package,upgrade=True,managed_configuration=values,maintenance=request)
@@ -217,7 +217,7 @@ def verify_restore(source, images, values, source_pg, base, projects):
             return original(runner,name,execution,status)
         JobRunner._record = crash_before_ack
         try:
-            manager.deploy(app,'test',package,managed_configuration=restore_values,job_sources={'restore':digest})
+            manager.deploy(app,'test',package,managed_configuration=restore_values)
         except BaseException:
             import traceback
             traceback.print_exc()
@@ -243,31 +243,13 @@ def verify_restore(source, images, values, source_pg, base, projects):
     assert container(project,'restore')['Id'] == before, 'completed restore repeated on upgrade'
     assert container(project,'postgres')['Id'] == postgres
     print('PASS: verified pg_dump restore, process loss before acknowledgement, recovery without repeat, upgrade without old backup credentials')
-    # Simulate loss only in this disposable fixture; retain the scratch volume
-    # and source containers to verify the recovery operation never cleans them.
-    scratch = json.loads(docker('volume','inspect',project+'-restore-scratch'))[0]
+    # ctl reports missing managed storage; the project owns any recovery workflow.
     docker('rm','-f',postgres)
     docker('volume','rm',project+'-data')
-    request = {'plan_id':None}
-    preview = manager.plan(app,'test',updated,upgrade=True,managed_configuration=restore_values,
-                           job_sources={'restore':digest},restoration=request)
-    generation_project = project[:50]+'-g'+preview['generation']
-    projects.append(generation_project)
-    request['plan_id'] = preview['plan_id']
-    restored = manager.deploy(app,'test',updated,upgrade=True,managed_configuration=restore_values,
-                               job_sources={'restore':digest},restoration=request)
-    assert restored['generation'] == preview['generation'] and restored['transaction'] is None
-    new_pg = container(generation_project,'postgres')['Id']
-    assert docker('exec',new_pg,'psql','-U','postgres','-Atc','SELECT value FROM retained_probe') == 'survives'
-    assert not container(project,'api')['State']['Running']
-    assert json.loads(docker('volume','inspect',project+'-restore-scratch'))[0] == scratch
-    try: manager.rollback(app,'test')
-    except ValueError as exc: assert 'cross-generation' in str(exc)
-    else: raise AssertionError('unsafe cross-generation rollback accepted')
-    next_package = build_release(config,images,'v1.0.2',base/'restored-upgrade')
-    manager.deploy(app,'test',next_package,upgrade=True,managed_configuration=values)
-    assert container(generation_project,'postgres')['Id'] == new_pg
-    print('PASS: lost-volume isolated restoration, retained old resources, no stale rollback, stable database through next upgrade')
+    try:manager.deploy(app,'test',updated,upgrade=True,managed_configuration=restore_values)
+    except ValueError:pass
+    else:raise AssertionError('missing persistent volume silently recreated')
+    print('PASS: missing managed storage requires explicit project intervention')
 
 
 

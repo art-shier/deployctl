@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -67,13 +66,12 @@ func TestRemoteReportProtocolValidation(t *testing.T) {
 }
 
 func TestTaskJobInputsValidation(t *testing.T) {
-	valid := TaskRequest{NodeID: NewID(), Environment: "prod", Action: "install", RequestID: NewID(), JobSources: map[string]string{"restore": strings.Repeat("a", 64)}, RequestedJobs: []string{"restore"}}
+	valid := TaskRequest{NodeID: NewID(), Environment: "prod", Action: "install", RequestID: NewID(), RequestedJobs: []string{"restore"}}
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for _, mutate := range []func(*TaskRequest){
 		func(r *TaskRequest) { r.Action = "rollback" },
-		func(r *TaskRequest) { r.JobSources = map[string]string{"restore": "not-a-digest"} },
 		func(r *TaskRequest) { r.RequestedJobs = []string{"restore", "restore"} },
 		func(r *TaskRequest) { r.RequestedJobs = []string{"../restore"} },
 	} {

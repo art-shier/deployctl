@@ -1,4 +1,4 @@
-"""Durable one-shot job reconciliation; never blindly repeat a data restore."""
+"""Durable one-shot job reconciliation; never blindly repeat an uncertain task."""
 import copy
 import hashlib
 import json
@@ -19,15 +19,15 @@ class JobRunner:
         self.state[name] = copy.deepcopy(execution)
         self.save(copy.deepcopy(self.state))
 
-    def run(self, name, spec, target_volume, backup_identity, configuration_identity=''):
+    def run(self, name, spec, target_resources, execution_fingerprint, configuration_identity=''):
         validate_name(name, 'job')
-        if not target_volume or not backup_identity:
-            raise ValueError('job requires target volume and source identity')
-        identity = hashlib.sha256(json.dumps({'name': name, 'spec': spec, 'target': target_volume,
-            'source': backup_identity, 'configuration': configuration_identity}, sort_keys=True).encode()).hexdigest()
+        if not target_resources or not execution_fingerprint:
+            raise ValueError('job requires target resources and execution fingerprint')
+        identity = hashlib.sha256(json.dumps({'name': name, 'spec': spec, 'target': target_resources,
+            'source': execution_fingerprint, 'configuration': configuration_identity}, sort_keys=True).encode()).hexdigest()
         prior = self.state.get(name)
-        execution = {'id': identity, 'container': 'job-' + identity[:32], 'target': target_volume,
-                     'source': backup_identity, 'status': 'starting',
+        execution = {'id': identity, 'container': 'job-' + identity[:32], 'target': target_resources,
+                     'source': execution_fingerprint, 'status': 'starting',
                      'deadline_at': self.wall_clock() + spec['timeout_seconds']}
         if prior:
             if prior['id'] != identity:
@@ -42,7 +42,7 @@ class JobRunner:
                 self._record(name, execution, 'unknown')
                 raise RuntimeError('job outcome unknown; inspect target before recovery')
         else:
-            # Journal before start so a crash cannot be mistaken for a fresh restore.
+            # Journal before start so a crash cannot be mistaken for a fresh task.
             self._record(name, execution, 'starting')
             if self.driver.inspect_job(execution['container']) is not None:
                 self._record(name, execution, 'unknown')

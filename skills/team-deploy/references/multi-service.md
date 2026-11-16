@@ -1,13 +1,21 @@
-# 多服务部署（ctl v1.20.0）
+# 多服务部署（ctl >= 1.20.0）
 
-先升级管理服务，再升级节点 Agent，确认节点上报 `multi_service_v1`。发布包 schema 3 的最低版本为 1.20.0；旧节点不能执行新包，旧单服务和静态项目继续沿用原命令。
+源配置 schema 2、发布包 schema 3 支持一个项目/环境内多个独立镜像服务。
+`publish`、`install`、`upgrade`、在线升级和 ctl 自身更新入口保持不变。
+服务声明生命周期、依赖、配置/秘密映射、健康检查、端口与保留卷；任务声明
+命令、触发策略和退出依赖。秘密按组件显式分配。
 
-`deploy/deployment.yaml` 使用 schema 2 的 services、jobs、volumes 和 primary_endpoint。每个服务独立指定 build 或不可变 image；外部镜像使用 mirror: project，构建流程将所有镜像放在本项目授权仓库内。配置用 config/secret/literal 显式绑定；只有声明的键进入相应服务。发布工作流仍使用 build-release.yml，调用引用与 platform-ref 必须一致。动态普通构建参数使用 service-build-args JSON 按组件指定；不要传密钥。
+普通应用升级保留未变更的持久服务与数据卷。持久服务配置维护使用
+`maintain APP --env ENV --service NAME --plan`，执行同一版本及参数并传
+`--plan-id ID`。当前仅支持同镜像、同挂载的配置维护；镜像/挂载替换需另行准备。
+备份、恢复、数据库兼容性和业务数据切换由项目脚本负责，ctl 不提供 restore
+命令或备份 SHA 参数。业务校验参数可以作为项目普通配置绑定到其任务。
 
-publish、install、upgrade、self-update 和管理端在线升级入口保持不变。`install/upgrade --plan` 只读预览；`status/logs --service NAME` 选择服务，运行日志也支持任务。默认运行日志汇总所有活动服务。--port/--bind 对应 primary_endpoint。
+`status` 显示各服务，`logs --service NAME` 选择服务/任务日志。默认日志聚合
+活动服务，默认 stop/restart 只作用于应用生命周期服务。
+`recover APP --env ENV --operation ID` 核对原部署事务，不代表恢复业务数据。
+未知或失败任务不会盲目重跑；缺失持久卷必须由项目制定处理方案。
 
-应用升级不会重建无关 PostgreSQL 容器或数据卷。持久服务配置变化需要 `maintain --service postgres --backup-sha256 SHA --plan`，确认可恢复的备份和计划后，使用同一参数及 `--plan-id ID` 执行。数据库镜像或卷映射变更不能用普通升级或原地维护绕过。
-
-丢卷后使用包含恢复任务的包：`restore APP --env ENV --job-source restore=SHA --plan`，核对计划后传 `--plan-id ID`。新数据写入独立卷，旧服务先停写，旧容器与旧卷保留；恢复任务必须核对备份哈希、空目标和恢复数据，健康检查通过才切换当前部署。SHA 只是输入标识，不能代替真实恢复测试。
-
-pending 状态先读取 operation ID 和日志；`recover APP --env ENV --operation ID` 只核对并继续原操作。失败或不确定的数据导入不自动重复。跨恢复代次不允许回滚到旧数据；不能删 state.json、手改 Compose、直接重用旧卷或运行 down -v 来绕过检查。旧钩子数据库迁移必须停写、最终备份、隔离恢复和明确入口切换，不自动接管。
+旧单服务切换多服务仍使用 upgrade：项目完成迁移准备并停止旧应用后，
+先用 `upgrade --plan` 查看布局变更，再执行 upgrade。旧快照、容器和卷保留，
+新服务使用独立资源命名空间；不接管旧 hook 数据库，不自动回退到旧数据。

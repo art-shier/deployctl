@@ -458,7 +458,7 @@ class Manager:
 
     def deploy(self, app, env, package, upgrade=False, port=None, bind=None,
                runtime_env=None, unset_env=None, install_params=None, managed_runtime=None,
-               managed_params=None, management_source=None, deployment_defaults=None, managed_configuration=None, job_sources=None, requested_jobs=None, maintenance=None, restoration=None):
+               managed_params=None, management_source=None, deployment_defaults=None, managed_configuration=None, requested_jobs=None, maintenance=None):
         updates = validate_values(runtime_env or {}, 'env-var')
         unset = list(unset_env or [])
         validate_unset(unset)
@@ -488,8 +488,8 @@ class Manager:
                 return StackManager(self, home, folder, app, env).deploy(state, release,
                     managed_configuration=managed_configuration, updates=updates, unset=unset,
                     defaults=defaults, port=port, bind=bind, management=management, params=params,
-                    job_sources=job_sources, requested_jobs=requested_jobs, maintenance=maintenance, restoration=restoration)
-            if managed_configuration is not None or job_sources or requested_jobs or maintenance or restoration is not None:
+                    requested_jobs=requested_jobs, maintenance=maintenance)
+            if managed_configuration is not None or requested_jobs or maintenance:
                 raise ValueError('service configuration/jobs require a multi-service release')
             with self.progress.stage('Validating configuration'):
                 if params and not release.get('hooks'):
@@ -625,7 +625,7 @@ class Manager:
     def plan(self, app, env, package, upgrade=False, port=None, bind=None,
              runtime_env=None, unset_env=None, install_params=None, managed_runtime=None,
              managed_params=None, management_source=None, deployment_defaults=None,
-             managed_configuration=None, job_sources=None, requested_jobs=None, maintenance=None, restoration=None):
+             managed_configuration=None, requested_jobs=None, maintenance=None):
         validate_name(app); validate_name(env, 'environment', 32)
         home = self.root / app / env; folder = self.config_root / app / env
         reject_links(home); reject_links(folder)
@@ -648,7 +648,7 @@ class Manager:
                 managed_configuration=managed_configuration, updates=updates, unset=unset,
                 defaults=defaults, port=port, bind=bind, management=management_source,
                 params=merge_install_params(install_params or {}, managed_params),
-                job_sources=job_sources, requested_jobs=requested_jobs, preview=True, maintenance=maintenance, restoration=restoration)
+                requested_jobs=requested_jobs, preview=True, maintenance=maintenance)
 
     def recover(self, app, env, operation):
         home, folder = self.paths(app, env)

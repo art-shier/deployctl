@@ -102,15 +102,6 @@ class ServiceDockerDriver:
             raise ValueError('automatic stop is only allowed for application services')
         self.compose('stop', name)
 
-    def freeze(self, name, expected_id):
-        """Explicit restoration only: stop a verified old writer, retain all data."""
-        info = self.observe(name, expected_id=expected_id)
-        if not info['container_id']: return
-        if not expected_id: raise ValueError('unregistered source writer')
-        self.commands._run(['docker', 'stop', '--time', '30', expected_id], self.environment)
-        after = self.observe(name, expected_id=expected_id)
-        if after['running']: raise ValueError('source service writer did not stop')
-
     def container(self, name):
         ids = self.commands._run(['docker', 'ps', '--all', '--filter', 'label=com.docker.compose.project='+self.project,
                                   '--filter', 'label=com.docker.compose.service='+name, '--format', '{{.ID}}']).splitlines()
