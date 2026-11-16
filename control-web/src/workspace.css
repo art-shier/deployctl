@@ -996,3 +996,23 @@ td {
   overflow-wrap: anywhere;
   white-space: normal;
 }
+
+.release-images {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.5rem 0.75rem;
+  margin: 0;
+}
+.release-images dt {
+  font-weight: 600;
+}
+.release-images dd {
+  margin: 0;
+  min-width: 0;
+}
+.release-images-compact {
+  gap: 0.25rem 0.75rem;
+}
+.release-images-compact code {
+  white-space: nowrap;
+}

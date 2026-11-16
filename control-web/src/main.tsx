@@ -42,6 +42,7 @@ import {
   overrideVariable,
   type DraftRow,
 } from "./environmentForm";
+import { ReleaseImages } from "./ReleaseImages";
 import { LandingPage } from "./LandingPage";
 import { CredentialForm } from "./CredentialForm";
 import { RemoveResource } from "./RemoveResource";
@@ -1147,11 +1148,11 @@ function ReleasesView({ project }: { project: Project }) {
                     </button>
                   </td>
                   <td>
-                    <code className="truncate" title={r.image}>
-                      {staticProject
-                        ? `${r.archive_format} / ${(r.size / 1024 / 1024).toFixed(2)} MiB`
-                        : r.image}
-                    </code>
+                    {staticProject ? (
+                      <code className="truncate">{`${r.archive_format} / ${(r.size / 1024 / 1024).toFixed(2)} MiB`}</code>
+                    ) : (
+                      <ReleaseImages release={r} compact />
+                    )}
                   </td>
                   <td className="muted">{date(r.created_at)}</td>
                   <td>
@@ -1197,9 +1198,10 @@ function ReleasesView({ project }: { project: Project }) {
                 个条目
               </p>
             ) : (
-              <label>
-                镜像<code className="code-block">{selected.image}</code>
-              </label>
+              <section aria-label="镜像">
+                <p>镜像</p>
+                <ReleaseImages release={selected} />
+              </section>
             )}
             <label>
               发布包 SHA256<code className="code-block">{selected.sha256}</code>
