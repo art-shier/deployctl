@@ -12,6 +12,7 @@ SKILL = ROOT / 'skills' / 'team-deploy'
 class SkillBundleTests(unittest.TestCase):
     def test_bundled_managed_commands_and_version(self):
         from deployctl import __version__
+        self.assertIn('v' + __version__, (SKILL / 'SKILL.md').read_text())
         artifact=SKILL/'assets/deployctl.pyz'
         result=subprocess.run([sys.executable,'-I','-S',str(artifact),'--version'],capture_output=True,text=True)
         self.assertEqual(result.stdout.strip(),__version__)
