@@ -123,3 +123,21 @@ CREATE TABLE IF NOT EXISTS ctl_node_installations (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ctl_node_installations_active_host
   ON ctl_node_installations(host,port) WHERE status='running';
+
+CREATE TABLE IF NOT EXISTS ctl_log_policies (
+ project text NOT NULL REFERENCES ctl_projects(slug), environment text NOT NULL,
+ version bigint NOT NULL DEFAULT 0, data jsonb NOT NULL,
+ PRIMARY KEY(project,environment)
+);
+CREATE TABLE IF NOT EXISTS ctl_application_logs (
+ id bigserial PRIMARY KEY, project text NOT NULL REFERENCES ctl_projects(slug), environment text NOT NULL,
+ event_id text NOT NULL, received_at timestamptz NOT NULL DEFAULT now(), data jsonb NOT NULL,
+ UNIQUE(project,environment,event_id)
+);
+CREATE INDEX IF NOT EXISTS ctl_app_logs_scope ON ctl_application_logs(project,environment,id DESC);
+CREATE INDEX IF NOT EXISTS ctl_app_logs_received ON ctl_application_logs(received_at);
+CREATE TABLE IF NOT EXISTS ctl_application_log_ids (
+ project text NOT NULL REFERENCES ctl_projects(slug), environment text NOT NULL, event_id text NOT NULL,
+ received_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(project,environment,event_id)
+);
+CREATE INDEX IF NOT EXISTS ctl_app_log_ids_received ON ctl_application_log_ids(received_at);

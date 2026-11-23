@@ -6,7 +6,7 @@ import {
   type ReactNode,
   type FormEvent,
 } from "react";
-import { Plus, RefreshCw } from "lucide-react";
+import { Plus, RefreshCw, Terminal } from "lucide-react";
 import { api, send, type Group, type Project } from "./api";
 import { NodeInstall } from "./NodeInstall";
 import { NodeResources } from "./NodeResources";
@@ -381,6 +381,7 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
   const [busy, setBusy] = useState("");
   const [editing, setEditing] = useState<DeploymentNode | null>(null);
   const [onboarding, setOnboarding] = useState(false);
+  const [installOpen, setInstallOpen] = useState(false);
   const [fresh, setFresh] = useState<Enrollment | null>(null);
   const [revision, reload] = useState(0);
   useEffect(() => {
@@ -458,16 +459,20 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
   };
   return (
     <div className="remote-page">
-      <div className="page-heading">
+      <div className="page-heading nodes-heading">
         <div>
           <p className="eyebrow">DEPLOYMENT NODES</p>
           <h1>部署节点</h1>
           <p className="muted">管理远程 Linux Docker 主机及部署授权。</p>
         </div>
-        <div className="actions">
+        <div className="actions nodes-heading-actions">
           <button onClick={() => reload((value) => value + 1)}>
             <RefreshCw size={16} />
             刷新
+          </button>
+          <button onClick={() => setInstallOpen(true)} title="通过 SSH 登录远程主机并安装节点">
+            <Terminal size={16} />
+            SSH 安装节点
           </button>
           <button className="primary" onClick={() => setOnboarding(true)}>
             <Plus size={16} />
@@ -475,7 +480,7 @@ export function NodesPage({ Dialog }: { Dialog: DialogType }) {
           </button>
         </div>
       </div>
-      <NodeInstall Dialog={Dialog} />
+      <NodeInstall Dialog={Dialog} open={installOpen} close={() => setInstallOpen(false)} />
       <p className="notice">
         在线表示最近 90
         秒收到已登记节点的心跳。失联与业务健康分别记录。禁用后停止接收新任务，业务容器继续运行。

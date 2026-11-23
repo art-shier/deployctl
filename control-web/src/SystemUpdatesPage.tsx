@@ -6,17 +6,12 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
-import {
-  RegisterSystemRelease,
-  VersionRegistrationAccess,
-  SystemReleaseDetails,
-} from "./SystemReleaseRegistration";
+import { SystemReleaseDetails } from "./SystemReleaseRegistration";
 import { RefreshCw } from "lucide-react";
 import { api, send } from "./api";
 import { remoteDate, type DeploymentNode } from "./remote";
 import {
   activeUpdate,
-  blockedReason,
   catalogErrorText,
   eligibility,
   UpdateSubmission,
@@ -140,8 +135,8 @@ function Setup({
 }
 
 export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
-  const [registerOpen, setRegisterOpen] = useState(false);
-  const [registrationAccess, setRegistrationAccess] = useState(false);
+  const [tab, setTab] = useState<"catalog" | "targets" | "history">("targets");
+  const [targetKind, setTargetKind] = useState<"center" | "node">("center");
   const [releaseDetails, setReleaseDetails] = useState<SystemRelease | null>(
     null,
   );
@@ -363,6 +358,7 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
           ],
         }));
         setReview(null);
+        setTab("targets");
         setDraft(null);
         setSelected([]);
         setNotice("更新任务已提交，将等待相关业务任务结束后执行。");
@@ -411,6 +407,37 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
     } finally {
       if (!controller.signal.aborted) setBusy(false);
     }
+  };
+  const latestJob = (kind: string, id: string) =>
+    state.jobs
+      .filter((j) => j.kind === kind && j.target_id === id)
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
+  const lastSuccess = (kind: string, id: string) => {
+    const job = state.jobs
+      .filter(
+        (j) =>
+          j.kind === kind && j.target_id === id && j.status === "succeeded",
+      )
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
+    return job ? remoteDate(job.updated_at) : "暂无成功更新记录";
+  };
+  const progress = (kind: string, id: string) => {
+    const job = latestJob(kind, id);
+    return job
+      ? `${statusName(job.status)} · ${stageName(job.stage)}`
+      : "暂无更新任务";
+  };
+  const taskActions = (kind: string, id: string) => {
+    const job = latestJob(kind, id);
+    return job?.status === "queued" ? (
+      <button disabled={locked} onClick={() => void jobAction(job, "cancel")}>
+        取消排队
+      </button>
+    ) : job?.status === "needs_attention" && !job.resolved_at ? (
+      <button disabled={locked} onClick={() => void jobAction(job, "resolve")}>
+        确认已恢复
+      </button>
+    ) : null;
   };
   const centerActive = state.jobs.some(
     (job) =>
@@ -466,23 +493,6 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
           </button>
         </div>
       )}
-      {registerOpen && (
-        <RegisterSystemRelease
-          Dialog={Dialog}
-          close={() => setRegisterOpen(false)}
-          saved={() => {
-            setRegisterOpen(false);
-            setCatalogNotice("版本已登记");
-            void loadCatalog(false);
-          }}
-        />
-      )}
-      {registrationAccess && (
-        <VersionRegistrationAccess
-          Dialog={Dialog}
-          close={() => setRegistrationAccess(false)}
-        />
-      )}
       {releaseDetails && (
         <SystemReleaseDetails
           release={releaseDetails}
@@ -490,358 +500,467 @@ export function SystemUpdatesPage({ Dialog }: { Dialog: DialogType }) {
           close={() => setReleaseDetails(null)}
         />
       )}
-      <section className="panel form-stack">
-        <div className="section-heading">
-          <h2>可用版本</h2>
-          {catalog?.source === "registered" && (
-            <div className="actions">
-              <button
-                onClick={() => setRegisterOpen(true)}
-                disabled={locked || !!review}
-              >
-                登记版本
-              </button>
-              <button
-                onClick={() => setRegistrationAccess(true)}
-                disabled={locked || !!review}
-              >
-                流水线登记接入
-              </button>
+      <div className="tabs" role="tablist" aria-label="系统更新流程">
+        {(
+          [
+            ["targets", "更新"],
+            ["catalog", "可用版本"],
+            ["history", "更新历史"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            id={`update-tab-${key}`}
+            role="tab"
+            aria-selected={tab === key}
+            aria-controls={`update-panel-${key}`}
+            className={tab === key ? "active" : ""}
+            onClick={() => setTab(key)}
+          >
+            {label}
+            {key === "history" &&
+              state.jobs.filter((j) => activeUpdate(j.status) && !j.resolved_at)
+                .length > 0 && (
+                <span className="badge">
+                  {
+                    state.jobs.filter(
+                      (j) => activeUpdate(j.status) && !j.resolved_at,
+                    ).length
+                  }{" "}
+                  进行中
+                </span>
+              )}
+          </button>
+        ))}
+      </div>
+      <div className="system-update-workspace">
+        <section
+          hidden={tab !== "catalog"}
+          role="tabpanel"
+          id="update-panel-catalog"
+          aria-labelledby="update-tab-catalog"
+          className="panel form-stack update-catalog-panel"
+        >
+          <div className="section-heading">
+            <h2>可用版本</h2>
+            <button
+              disabled={catalogBusy || locked || !!review}
+              onClick={() => void loadCatalog(false)}
+            >
+              {catalog?.source === "registered"
+                ? "刷新版本"
+                : catalogSyncing
+                  ? "正在同步…"
+                  : "立即同步清单"}
+            </button>
+          </div>
+          <p className="muted small">
+            查看已发布的兼容版本和详情。执行更新请前往“更新”页签。
+          </p>
+          {catalogBusy && !catalog && <p role="status">正在加载版本清单…</p>}
+          {catalog && (
+            <div className="muted small">
+              <p>
+                清单来源：
+                <span>
+                  {
+                    {
+                      bundled: "镜像内置清单",
+                      cache: "本地缓存",
+                      remote: "在线同步",
+                      none: "暂无清单",
+                      registered: "中心版本记录",
+                    }[catalog.source]
+                  }
+                </span>
+                {catalog.generated_at && (
+                  <> · 清单生成于 {remoteDate(catalog.generated_at)}</>
+                )}
+              </p>
+              {catalog.source !== "registered" && (
+                <p>
+                  {catalog.last_success_at ? (
+                    <>上次成功同步：{remoteDate(catalog.last_success_at)}</>
+                  ) : (
+                    <span>尚未完成在线同步</span>
+                  )}
+                  {catalog.last_attempt_at && (
+                    <> · 上次尝试：{remoteDate(catalog.last_attempt_at)}</>
+                  )}
+                </p>
+              )}
+              {catalog.stale && releases.length > 0 && (
+                <p>
+                  当前使用已有清单，可能不是最新版本。中心会自动重试，也可立即同步。
+                </p>
+              )}
             </div>
           )}
-          <button
-            disabled={catalogBusy || locked || !!review}
-            onClick={() => void loadCatalog(catalog?.source !== "registered")}
-          >
-            {catalog?.source === "registered"
-              ? "刷新版本"
-              : catalogSyncing
-                ? "正在同步…"
-                : "立即同步清单"}
-          </button>
-        </div>
-        <p className="muted small">
-          版本由发布流水线或管理员登记，登记不会执行更新，也不验证下载地址可达性。支持协议
-          1 的 1.15.0 至 2.0.0 之前版本。建议先选择一个节点试点，再分批更新。
-        </p>
-        {catalogBusy && !catalog && <p role="status">正在加载版本清单…</p>}
-        {catalog && (
-          <div className="muted small">
-            <p>
-              清单来源：
-              <span>
-                {
-                  {
-                    bundled: "镜像内置清单",
-                    cache: "本地缓存",
-                    remote: "在线同步",
-                    none: "暂无清单",
-                    registered: "中心版本记录",
-                  }[catalog.source]
-                }
-              </span>
-              {catalog.generated_at && (
-                <> · 清单生成于 {remoteDate(catalog.generated_at)}</>
-              )}
-            </p>
-            {catalog.source !== "registered" && (
-              <p>
-                {catalog.last_success_at ? (
-                  <>上次成功同步：{remoteDate(catalog.last_success_at)}</>
-                ) : (
-                  <span>尚未完成在线同步</span>
-                )}
-                {catalog.last_attempt_at && (
-                  <> · 上次尝试：{remoteDate(catalog.last_attempt_at)}</>
-                )}
-              </p>
-            )}
-            {catalog.stale && releases.length > 0 && (
-              <p>
-                当前使用已有清单，可能不是最新版本。中心会自动重试，也可立即同步。
-              </p>
-            )}
-          </div>
-        )}
-        {catalog?.source === "registered" && releases.length > 0 && (
-          <div className="table-wrap">
-            <table aria-label="登记版本列表">
-              <thead>
-                <tr>
-                  <th>版本</th>
-                  <th>发布时间</th>
-                  <th>来源</th>
-                  <th>详情</th>
-                </tr>
-              </thead>
-              <tbody>
-                {releases.map((release) => (
-                  <tr key={release.version}>
-                    <td>{release.version}</td>
-                    <td>{remoteDate(release.published_at)}</td>
-                    <td>
-                      {{
-                        pipeline: "流水线登记",
-                        manual: "手动登记",
-                        imported: "历史清单导入",
-                      }[release.registration_source || "imported"] || "已登记"}
-                    </td>
-                    <td>
-                      <button onClick={() => setReleaseDetails(release)}>
-                        查看 {release.version}
-                      </button>
-                    </td>
+          {releases.length > 0 && (
+            <div
+              className="table-wrap update-catalog-list"
+              tabIndex={0}
+              role="region"
+              aria-label="可用版本列表，可滚动"
+            >
+              <table aria-label="登记版本列表">
+                <thead>
+                  <tr>
+                    <th>版本</th>
+                    <th>发布时间</th>
+                    <th>来源</th>
+                    <th>详情</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {catalogNotice && (
-          <p className="notice" role="status">
-            {catalogNotice}
-          </p>
-        )}
-        {catalogFailure && (
-          <div className="notice error" role="alert">
-            {catalogFailure}
-            {releases.length > 0 && (
-              <p>已保留现有版本清单，可继续选择已知版本。</p>
-            )}
-          </div>
-        )}
-        {!catalogBusy && !releases.length && (
-          <p className="notice">
-            {catalog?.source === "registered"
-              ? "暂无可用的兼容版本，请登记版本或等待发布流水线登记。"
-              : "暂无可用的兼容版本，请点击「立即同步清单」。"}
-          </p>
-        )}
-        <div className="form-two">
-          <label>
-            目标版本
-            <select
-              aria-label="目标版本"
-              value={version}
-              disabled={locked || catalogBusy || !releases.length}
-              onChange={(event) => {
-                setVersion(event.target.value);
-                setSelected([]);
-              }}
-            >
-              <option value="">请选择官方版本</option>
-              {releases.map((item) => (
-                <option key={item.version} value={item.version}>
-                  {item.version} · {remoteDate(item.published_at)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            节点批次并发
-            <select
-              aria-label="节点批次并发"
-              value={parallelism}
-              disabled={locked}
-              onChange={(event) => setParallelism(Number(event.target.value))}
-            >
-              {[1, 2, 3, 4, 5].map((value) => (
-                <option key={value} value={value}>
-                  {value === 1 ? "1 · 逐个更新（默认）" : value + " · 并行更新"}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <p className="muted small">
-          一次最多选择 50
-          个节点。中心更新单独执行，维护期间暂停领取新的业务部署任务，已有任务会先完成。
-        </p>
-      </section>
-      <section className="panel form-stack">
-        <div className="section-heading">
-          <h2>更新目标</h2>
-          <span className="muted small">每 5 秒刷新</span>
-        </div>
-        <div className="update-targets">
-          {targets.map((target) => {
-            const updater = target.updater;
-            const disabledReason = reason(target);
-            return (
-              <article
-                className="update-target"
-                key={target.kind + target.target_id}
-              >
-                <div className="section-heading">
-                  <h3>{target.name}</h3>
-                  <span className="badge">
-                    {target.kind === "center" ? "管理中心" : "节点 Agent"}
-                  </span>
-                </div>
-                <dl className="update-details">
-                  <dt>安装版本</dt>
-                  <dd>
-                    {updater?.current_version ||
-                      target.node?.agent_version ||
-                      "尚未上报"}
-                  </dd>
-                  <dt>连接</dt>
-                  <dd>
-                    {updater ? (updater.online ? "在线" : "失联") : "尚未连接"}
-                  </dd>
-                  <dt>就绪</dt>
-                  <dd>
-                    {!updater
-                      ? "等待更新服务自动接入"
-                      : updater.ready
-                        ? "已就绪"
-                        : blockedReason(updater.blocked_reason)}
-                  </dd>
-                </dl>
-                {updater && (
-                  <p className="muted small">
-                    更新服务 {updater.helper_version} · 协议 {updater.protocol}{" "}
-                    · {updater.platform}
-                    <br />
-                    最近心跳 {remoteDate(updater.last_seen)}
-                  </p>
-                )}
-                {disabledReason && updater && (
-                  <p className="muted small">{disabledReason}</p>
-                )}
-                <div className="actions">
-                  <button onClick={() => setSetup(target)}>
-                    更新说明 {target.name}
-                  </button>
-                  {target.kind === "node" && updater && (
-                    <label className="scope-option">
-                      <input
-                        type="checkbox"
-                        aria-label={`选择 ${target.name}`}
-                        checked={selected.includes(updater.id)}
-                        disabled={
-                          locked ||
-                          (!selected.includes(updater.id) &&
-                            (!!disabledReason ||
-                              catalogBusy ||
-                              catalogUnavailable ||
-                              !!loadError ||
-                              selected.length >= 50))
-                        }
-                        onChange={(event) =>
-                          setSelected((current) =>
-                            event.target.checked
-                              ? [...current, updater.id]
-                              : current.filter((id) => id !== updater.id),
-                          )
-                        }
-                      />
-                      <span>选择更新</span>
-                    </label>
-                  )}
-                  {target.kind === "center" && updater && (
-                    <button
-                      className="primary"
-                      disabled={
-                        locked ||
-                        !!disabledReason ||
-                        catalogBusy ||
-                        catalogUnavailable ||
-                        !!loadError
+                </thead>
+                <tbody>
+                  {releases.map((release) => (
+                    <tr
+                      key={release.version}
+                      className={
+                        version === release.version ? "selected-release" : ""
                       }
-                      onClick={() => startReview("center")}
                     >
-                      审阅中心更新
-                    </button>
-                  )}
-                </div>
-              </article>
-            );
-          })}
-        </div>
-        <div className="actions">
-          <span className="muted small">已选 {selected.length} 个节点</span>
-          <button
-            className="primary"
-            disabled={
-              locked ||
-              !validSelection ||
-              catalogBusy ||
-              catalogUnavailable ||
-              !!loadError
-            }
-            onClick={() => startReview("node")}
-          >
-            审阅节点更新
-          </button>
-        </div>
-      </section>
-      <section className="panel form-stack">
-        <h2>进度与历史</h2>
-        {!state.jobs.length ? (
-          <p className="muted">暂无系统更新任务。</p>
-        ) : (
-          <div className="update-history">
-            {state.jobs.map((job) => (
-              <article className="update-target" key={job.id}>
-                <div className="section-heading">
-                  <h3>
-                    {job.kind === "center"
-                      ? "中心"
-                      : nodes.find((node) => node.id === job.target_id)?.name ||
-                        job.target_id}
-                  </h3>
-                  <span className="badge">{statusName(job.status)}</span>
-                </div>
-                <p>
-                  <code>
-                    {job.from_version || "未知"} → {job.version}
-                  </code>
-                </p>
-                <p>
-                  {stageName(job.stage)}
-                  {job.result_code && ` · ${resultName(job.result_code)}`}
-                </p>
-                {job.current_version && (
-                  <p className="muted small">
-                    已观测安装版本 {job.current_version}
-                  </p>
-                )}
-                <p className="muted small">
-                  更新于 {remoteDate(job.updated_at)} · 并发 {job.parallelism}
-                  <br />
-                  任务 {job.id}
-                </p>
-                {job.status === "needs_attention" && (
-                  <p className="notice">
-                    {job.resolved_at
-                      ? "已确认恢复，历史结果保留。"
-                      : "请先在主机修复安装和待处理状态，再确认恢复以解除业务任务暂停。"}
-                  </p>
-                )}
-                <div className="actions">
-                  {job.status === "queued" && (
-                    <button
-                      disabled={locked}
-                      onClick={() => void jobAction(job, "cancel")}
-                    >
-                      取消排队任务
-                    </button>
-                  )}
-                  {job.status === "needs_attention" && !job.resolved_at && (
-                    <button
-                      disabled={locked}
-                      onClick={() => void jobAction(job, "resolve")}
-                    >
-                      确认已恢复
-                    </button>
-                  )}
-                </div>
-              </article>
+                      <td>{release.version}</td>
+                      <td>{remoteDate(release.published_at)}</td>
+                      <td>
+                        {{
+                          pipeline: "流水线登记",
+                          manual: "手动登记",
+                          imported: "历史清单导入",
+                        }[release.registration_source || "imported"] ||
+                          "已登记"}
+                      </td>
+                      <td>
+                        <div className="actions">
+                          <button onClick={() => setReleaseDetails(release)}>
+                            详情
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {catalogNotice && (
+            <p className="notice" role="status">
+              {catalogNotice}
+            </p>
+          )}
+          {catalogFailure && (
+            <div className="notice error" role="alert">
+              {catalogFailure}
+              {releases.length > 0 && (
+                <p>已保留现有版本清单，可继续选择已知版本。</p>
+              )}
+            </div>
+          )}
+          {!catalogBusy && !releases.length && (
+            <p className="notice">
+              {catalog?.source === "registered"
+                ? "暂无可用的兼容版本，请登记版本或等待发布流水线登记。"
+                : "暂无可用的兼容版本，请点击「立即同步清单」。"}
+            </p>
+          )}
+        </section>
+        <section
+          hidden={tab !== "targets"}
+          role="tabpanel"
+          id="update-panel-targets"
+          aria-labelledby="update-tab-targets"
+          className="panel form-stack update-targets-panel"
+        >
+          <div className="tabs" role="tablist" aria-label="更新类型">
+            {(
+              [
+                ["center", "管理中心"],
+                ["node", "Agent 节点"],
+              ] as const
+            ).map(([kind, label]) => (
+              <button
+                key={kind}
+                role="tab"
+                aria-selected={targetKind === kind}
+                disabled={locked}
+                onClick={() => setTargetKind(kind)}
+              >
+                {label}
+              </button>
             ))}
           </div>
-        )}
-      </section>
+          <div className="section-heading">
+            <h2>
+              {targetKind === "center" ? "管理中心更新" : "Agent 节点更新"}
+            </h2>
+            <span className="muted small">每 5 秒刷新</span>
+          </div>
+          <div className="form-two">
+            <label>
+              目标版本
+              <select
+                aria-label="目标版本"
+                value={version}
+                disabled={locked || catalogBusy || !releases.length}
+                onChange={(event) => {
+                  setVersion(event.target.value);
+                  setSelected([]);
+                }}
+              >
+                <option value="">请选择官方版本</option>
+                {releases.map((item) => (
+                  <option key={item.version} value={item.version}>
+                    {item.version} · {remoteDate(item.published_at)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {targetKind === "node" && (
+              <label>
+                节点批次并发
+                <select
+                  aria-label="节点批次并发"
+                  value={parallelism}
+                  disabled={locked}
+                  onChange={(event) =>
+                    setParallelism(Number(event.target.value))
+                  }
+                >
+                  {[1, 2, 3, 4, 5].map((value) => (
+                    <option key={value} value={value}>
+                      {value === 1
+                        ? "1 · 逐个更新（默认）"
+                        : value + " · 并行更新"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          <p className="muted small">
+            一次最多选择 50
+            个节点。中心更新单独执行，维护期间暂停领取新的业务部署任务，已有任务会先完成。
+          </p>
+          {targetKind === "center" ? (
+            <div className="update-target">
+              <dl className="update-details">
+                <dt>当前版本</dt>
+                <dd>{centerUpdater?.current_version || "尚未上报"}</dd>
+                <dt>连接状态</dt>
+                <dd>{centerUpdater?.online ? "在线" : "尚未连接"}</dd>
+                <dt>上次更新时间</dt>
+                <dd>{lastSuccess("center", "center")}</dd>
+                <dt>更新进度</dt>
+                <dd>{progress("center", "center")}</dd>
+              </dl>
+              <p className="muted small">{reason(targets[0])}</p>
+              <div className="actions">
+                <button onClick={() => setSetup(targets[0])}>更新说明</button>
+                <button
+                  className="primary"
+                  disabled={
+                    locked ||
+                    !centerUpdater ||
+                    !!reason(targets[0]) ||
+                    catalogBusy ||
+                    catalogUnavailable ||
+                    !!loadError
+                  }
+                  onClick={() => startReview("center")}
+                >
+                  更新管理中心
+                </button>
+              </div>
+              {taskActions("center", "center")}
+            </div>
+          ) : (
+            <>
+              <div className="table-wrap">
+                <table aria-label="Agent 节点更新">
+                  <thead>
+                    <tr>
+                      <th>选择</th>
+                      <th>设备名称 / IP</th>
+                      <th>当前版本</th>
+                      <th>上次更新时间</th>
+                      <th>更新进度</th>
+                      <th>状态 / 说明</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {targets
+                      .filter((t) => t.kind === "node")
+                      .map((target) => {
+                        const updater = target.updater;
+                        const why = reason(target);
+                        return (
+                          <tr key={target.target_id}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                aria-label={`选择 ${target.name}`}
+                                checked={
+                                  !!updater && selected.includes(updater.id)
+                                }
+                                disabled={
+                                  !updater ||
+                                  locked ||
+                                  (!selected.includes(updater.id) &&
+                                    (!!why ||
+                                      catalogBusy ||
+                                      catalogUnavailable ||
+                                      !!loadError ||
+                                      selected.length >= 50))
+                                }
+                                onChange={(e) => {
+                                  if (updater)
+                                    setSelected((current) =>
+                                      e.target.checked
+                                        ? [...current, updater.id]
+                                        : current.filter(
+                                            (id) => id !== updater.id,
+                                          ),
+                                    );
+                                }}
+                              />
+                            </td>
+                            <td>
+                              <strong>{target.name}</strong>
+                              <div className="muted small">IP：未上报</div>
+                            </td>
+                            <td>
+                              {updater?.current_version ||
+                                target.node?.agent_version ||
+                                "尚未上报"}
+                            </td>
+                            <td>{lastSuccess("node", target.target_id)}</td>
+                            <td>
+                              {progress("node", target.target_id)}
+                              {taskActions("node", target.target_id)}
+                            </td>
+                            <td>
+                              <span className="badge">
+                                {updater?.online ? "在线" : "未连接"}
+                              </span>
+                              <div className="muted small">
+                                {why || "可更新"}
+                              </div>
+                              <button onClick={() => setSetup(target)}>
+                                更新说明
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+              {!nodes.length && (
+                <p className="update-empty muted">
+                  暂无 Agent 节点，请先在“部署节点”接入设备。
+                </p>
+              )}
+              <div className="actions">
+                <span className="muted small">
+                  已选 {selected.length} 个节点
+                </span>
+                <button
+                  className="primary"
+                  disabled={
+                    locked ||
+                    !validSelection ||
+                    catalogBusy ||
+                    catalogUnavailable ||
+                    !!loadError
+                  }
+                  onClick={() => startReview("node")}
+                >
+                  更新选中节点
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+        <section
+          hidden={tab !== "history"}
+          role="tabpanel"
+          id="update-panel-history"
+          aria-labelledby="update-tab-history"
+          className="panel form-stack update-history-panel"
+        >
+          <h2>更新历史</h2>
+          {!state.jobs.length ? (
+            <div className="update-empty">
+              <h3>暂无更新任务</h3>
+              <p className="muted">
+                选择版本和更新目标，确认提交后在这里查看进度。
+              </p>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table aria-label="系统更新进度与历史">
+                <thead>
+                  <tr>
+                    <th>更新目标</th>
+                    <th>版本</th>
+                    <th>状态 / 阶段</th>
+                    <th>更新时间</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {state.jobs.map((job) => (
+                    <tr key={job.id}>
+                      <td>
+                        <strong>
+                          {job.kind === "center"
+                            ? "管理中心"
+                            : nodes.find((n) => n.id === job.target_id)?.name ||
+                              job.target_id}
+                        </strong>
+                        <details className="update-job-details">
+                          <summary>任务详情</summary>
+                          <span className="muted small">
+                            任务 {job.id}
+                            <br />
+                            并发 {job.parallelism}
+                            {job.current_version && (
+                              <>
+                                <br />
+                                已观测安装版本 {job.current_version}
+                              </>
+                            )}
+                          </span>
+                        </details>
+                      </td>
+                      <td>
+                        <code>
+                          {job.from_version || "未知"} → {job.version}
+                        </code>
+                      </td>
+                      <td>
+                        <span className="badge">{statusName(job.status)}</span>
+                        <div className="muted small">
+                          {stageName(job.stage)}
+                          {job.result_code &&
+                            ` · ${resultName(job.result_code)}`}
+                        </div>
+                        {job.status === "needs_attention" && (
+                          <p className="small">
+                            {job.resolved_at
+                              ? "已确认恢复，保留历史结果。"
+                              : "请先修复目标主机，再确认恢复。"}
+                          </p>
+                        )}
+                      </td>
+                      <td>{remoteDate(job.updated_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </div>
       {setup && (
         <Setup
           key={setup.kind + setup.target_id}

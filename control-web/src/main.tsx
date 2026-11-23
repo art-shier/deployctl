@@ -51,6 +51,7 @@ import { GroupsView } from "./ProjectGroups";
 import { AgentAccess } from "./AgentAccessPage";
 import { NodesPage } from "./NodesPage";
 import { SystemUpdatesPage } from "./SystemUpdatesPage";
+import { ApplicationLogs } from "./ApplicationLogs";
 import { ProjectDeployments } from "./ProjectDeployments";
 import { tokenScopeLabel } from "./tokenScope";
 import { projectFormPayload } from "./projectForm";
@@ -927,6 +928,7 @@ function Projects({
 const tabs = [
   ["releases", "版本"],
   ["deployments", "部署"],
+  ["logs", "日志"],
   ["images", "镜像管理"],
   ["environments", "环境配置"],
   ["receipts", "安装记录"],
@@ -1015,6 +1017,8 @@ function ProjectView({
       <div key={slug + tab} role="tabpanel">
         {tab === "releases" ? (
           <ReleasesView project={project} />
+        ) : tab === "logs" ? (
+          <ApplicationLogs project={project} Dialog={Modal} />
         ) : tab === "images" ? (
           <ImagesView project={project} Dialog={Modal} />
         ) : tab === "environments" ? (

@@ -1016,3 +1016,13 @@ td {
 .release-images-compact code {
   white-space: nowrap;
 }
+
+/* Node entry actions share the page toolbar. */
+.nodes-heading { align-items: center; flex-wrap: wrap; }
+.nodes-heading-actions { flex-wrap: wrap; gap: 8px; }
+.nodes-heading-actions button { white-space: nowrap; }
+.node-install-status:empty { display: none; }
+.node-install-status:not(:empty) { margin-bottom: 16px; }
+@media (max-width: 640px) {
+  .nodes-heading-actions { width: 100%; justify-content: flex-start; }
+}

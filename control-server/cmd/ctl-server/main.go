@@ -52,6 +52,22 @@ func main() {
 		log.Fatal("database migration failed")
 	}
 	done()
+	go func() {
+		tick := time.NewTicker(time.Hour)
+		defer tick.Stop()
+		for {
+			cleanup, finish := context.WithTimeout(ctx, 30*time.Second)
+			if err := db.PruneApplicationLogs(cleanup); err != nil && ctx.Err() == nil {
+				log.Print("application log retention cleanup failed")
+			}
+			finish()
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+		}
+	}()
 	catalog := httpapi.NewSystemReleaseCatalog(c.API.ArtifactsDir, c.UpdateIndexSeed)
 	if err = db.SeedSystemReleases(ctx, catalog.Snapshot().Releases); err != nil {
 		log.Fatal("version catalog import failed")

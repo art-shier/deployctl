@@ -275,15 +275,18 @@ function InstallForm({ submitted }: { submitted: () => void }) {
 }
 
 export function NodeInstall({
+  open,
+  close,
   Dialog,
 }: {
+  open: boolean;
+  close: () => void;
   Dialog: ComponentType<{
     title: string;
     close: () => void;
     children: ReactNode;
   }>;
 }) {
-  const [open, setOpen] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState("");
   const [revision, refresh] = useState(0);
@@ -312,13 +315,7 @@ export function NodeInstall({
     };
   }, [revision]);
   return (
-    <section className="remote-section" aria-label="SSH 节点安装">
-      <div className="actions">
-        <button onClick={() => setOpen(true)}>SSH 安装节点</button>
-        <span className="muted small">
-          输入远程登录信息，由节点安装器准备运行环境。
-        </span>
-      </div>
+    <section className="node-install-status" aria-label="SSH 节点安装">
       {error && (
         <p className="notice error" role="alert">
           {error}
@@ -358,10 +355,10 @@ export function NodeInstall({
         </details>
       )}
       {open && (
-        <Dialog title="SSH 安装节点" close={() => setOpen(false)}>
+        <Dialog title="SSH 安装节点" close={close}>
           <InstallForm
             submitted={() => {
-              setOpen(false);
+              close();
               refresh((v) => v + 1);
             }}
           />

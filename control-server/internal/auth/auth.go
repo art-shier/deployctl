@@ -31,7 +31,7 @@ func (p Principal) Can(action, project, environment string) bool {
 	}
 	switch p.Role {
 	case "publisher":
-		if slices.Contains([]string{"configuration.read", "configuration.write", "configuration.reveal"}, action) {
+		if slices.Contains([]string{"configuration.read", "configuration.write", "configuration.reveal", "logs.read", "logs.write", "logs.rules.write"}, action) {
 			return len(p.Environments) == 0 || slices.Contains(p.Environments, environment)
 		}
 		return slices.Contains([]string{"project.read", "project.update", "release.read", "release.publish", "artifact.read", "registry.pull", "registry.push"}, action)
@@ -39,7 +39,7 @@ func (p Principal) Can(action, project, environment string) bool {
 		if len(p.Environments) == 0 {
 			return false
 		}
-		if slices.Contains([]string{"resolve", "configuration.read", "receipt.write"}, action) {
+		if slices.Contains([]string{"resolve", "configuration.read", "receipt.write", "logs.read", "logs.write"}, action) {
 			return slices.Contains(p.Environments, environment)
 		}
 		return slices.Contains([]string{"project.read", "release.read", "artifact.read", "registry.pull"}, action)

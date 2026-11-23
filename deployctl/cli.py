@@ -134,13 +134,26 @@ def parser():
             command.add_argument('--operation', required=True, help='original pending multi-service transaction ID')
         if name == 'logs':
             command.add_argument('--tail', type=int, default=100)
+            command.add_argument('--source', choices=('runtime','app'), default='runtime')
+            command.add_argument('--client-config')
+            command.add_argument('--json', action='store_true')
+            command.add_argument('--before', type=int)
+            command.add_argument('--level', choices=('debug','info','warn','error','DEBUG','INFO','WARN','ERROR'))
+            for flag in ('user-id','device-id','model','request-id','trace-id','event','app-version','q','since','until','log-origin'):
+                command.add_argument('--'+flag)
     return result
 
 
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
-        if args.command == 'agent':
+        if args.command == 'logs' and args.source == 'app':
+            from .application_logs import dispatch
+            if args.prod:
+                if args.env and args.env != 'prod': raise ValueError('--prod conflicts with --env')
+                args.env = 'prod'
+            dispatch(args)
+        elif args.command == 'agent':
             from .node_agent import dispatch
             dispatch(args)
         elif args.command == 'updater':

@@ -57,6 +57,7 @@ func New(s *store.Store, o Options) *Server {
 	m := server.mux
 	server.logs = newLogBroker()
 	server.logRoutes()
+	server.applicationLogRoutes()
 	server.remoteRoutes()
 	server.sshProbes = make(chan struct{}, 4)
 	server.nodeInstallRoutes()

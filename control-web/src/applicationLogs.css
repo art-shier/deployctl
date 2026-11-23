@@ -1,0 +1,59 @@
+.app-log-filters {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: end;
+  margin: 18px 0;
+}
+.app-log-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 160px;
+  font-size: 13px;
+}
+.app-log-filters input,
+.app-log-filters select {
+  width: 100%;
+  min-width: 0;
+}
+.app-log-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.app-log-message {
+  max-width: 420px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 6px;
+}
+.app-log-json {
+  max-height: 65vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  font:
+    12px/1.8 ui-monospace,
+    monospace;
+}
+.app-log-test {
+  margin-top: 24px;
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+}
+.app-log-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.app-log-check input {
+  width: auto;
+}

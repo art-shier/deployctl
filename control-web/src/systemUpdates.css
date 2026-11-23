@@ -48,3 +48,69 @@
     padding: 14px;
   }
 }
+
+.system-update-workspace > .panel {
+  min-width: 0;
+  margin: 0;
+}
+.system-update-workspace > [hidden] {
+  display: none;
+}
+.update-selection-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 0;
+}
+.update-selection-bar strong {
+  margin-left: 8px;
+}
+.update-selection-bar button {
+  margin-left: auto;
+}
+.update-catalog-list {
+  max-height: 420px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.update-catalog-list thead {
+  position: sticky;
+  top: 0;
+  background: var(--surface, #fff);
+  z-index: 1;
+}
+.selected-release {
+  background: #eff6ff;
+}
+.update-step-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.update-empty {
+  padding: 32px 16px;
+  text-align: center;
+}
+.update-job-details {
+  margin-top: 8px;
+  max-width: 280px;
+  overflow-wrap: anywhere;
+}
+.update-job-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+.system-updates .tabs {
+  overflow-x: auto;
+}
+.system-updates .tabs button {
+  white-space: nowrap;
+}
+.system-updates .tabs .badge {
+  margin-left: 8px;
+}
+.system-updates { gap: 16px; }
+.system-updates > .page-heading { margin-bottom: 0; }
+.system-updates > .tabs { margin-bottom: 0; }
+.system-updates .update-selection-bar { padding: 4px 0; }

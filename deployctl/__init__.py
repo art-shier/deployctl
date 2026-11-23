@@ -1,3 +1,3 @@
 """Standard release packaging and Docker Compose deployment."""
 
-__version__ = '1.20.3'
+__version__ = '1.21.0'
