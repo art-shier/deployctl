@@ -407,6 +407,12 @@ class StackManager:
                 info = driver.observe(name)
             except ValueError:
                 if prior is None: raise
+                baseline = journal['previous'].get(name)
+                if journal['phase'] == 'rolled-back' and baseline and baseline['lifecycle'] == 'application':
+                    restored = self.driver(self.load(baseline['snapshot']), state).observe(name)
+                    if restored['container_id'] and restored['healthy']:
+                        state['services'][name] = dict(baseline, **restored)
+                        continue
                 old = self.driver(self.load(prior['snapshot']),state)
                 try:
                     old.observe(name,expected_id=prior['container_id'])

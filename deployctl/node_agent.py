@@ -416,9 +416,17 @@ class Agent:
             self.log_event('completed', 'Deployment succeeded')
             if observation and not observation.get('_busy'):
                 record['observation'] = observation
-        except (RuntimeError, ValueError, OSError):
+        except (RuntimeError, ValueError, OSError) as failure:
             record.update(status='failed', stage='execution_failed')
-            self.log_event(self.stage, 'Deployment failed; inspect stage and failure snapshot', 'error')
+            detail = None
+            seen = set()
+            while failure is not None and id(failure) not in seen:
+                seen.add(id(failure))
+                detail = getattr(failure, 'deployment_detail', None)
+                if detail:
+                    break
+                failure = failure.__cause__ or failure.__context__
+            self.log_event(self.stage, detail or 'Deployment failed; inspect stage and failure snapshot', 'error')
             try:
                 observation = self.executor.observe(task_instance(task))
                 if not observation.get('_busy'):

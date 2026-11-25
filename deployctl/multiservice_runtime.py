@@ -64,7 +64,15 @@ class ServiceExecutor:
                 record('checked')
             record('succeeded')
             return journal
-        except Exception:
+        except Exception as failure:
+            # Keep the failing operation before rollback rewrites the journal.
+            action = journal['action'] or {}
+            reason = str(failure)
+            if reason not in {'service image mismatch', 'service mount identity or permissions changed',
+                              'service resource limits changed', 'service configuration differs from verified snapshot',
+                              'service container ownership mismatch', 'service network identity changed'}:
+                reason = 'operation failed'
+            failure.deployment_detail = ' / '.join(filter(None, (journal['phase'], action.get('service'), reason)))
             if journal['rollback_barrier']:
                 record('recovery-required')
                 raise
